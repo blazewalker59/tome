@@ -1,0 +1,654 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ---------------------------------------------------------------------------
+   Tome — Botanical Journal palette
+   Inspired by pressed-flower field guides: forest green, terracotta clay,
+   ochre honey, parchment bone. Dark mode is the canonical surface; light
+   mode is a warm parchment alternate.
+   --------------------------------------------------------------------------- */
+
+/* Dark (canonical) ---------------------------------------------------------- */
+:root {
+  /* text */
+  --sea-ink: #ece4cf; /* parchment ink, primary text */
+  --sea-ink-soft: #a8a08b; /* faded ink */
+
+  /* accents */
+  --lagoon: #7bc28a; /* fern, primary accent */
+  --lagoon-deep: #5aa370; /* moss, hover/pressed */
+  --palm: #d6a44a; /* ochre, kicker */
+  --clay: #c97256; /* terracotta, secondary accent */
+
+  /* surface tones */
+  --sand: #1a231d; /* warm dark panel */
+  --foam: #131c17; /* slightly cooler panel */
+  --bg-base: #0d1411; /* deep moss, page ground */
+
+  --surface: rgba(20, 30, 24, 0.78);
+  --surface-strong: rgba(18, 28, 22, 0.92);
+  --line: rgba(236, 228, 207, 0.12);
+  --inset-glint: rgba(236, 228, 207, 0.08);
+
+  --kicker: var(--palm);
+  --header-bg: rgba(13, 20, 17, 0.84);
+  --chip-bg: rgba(20, 30, 24, 0.72);
+  --chip-line: rgba(123, 194, 138, 0.22);
+  --link-bg-hover: rgba(26, 38, 30, 0.84);
+
+  --hero-a: rgba(123, 194, 138, 0.18);
+  --hero-b: rgba(214, 164, 74, 0.12);
+  --hero-c: rgba(201, 114, 86, 0.1);
+
+  /* rarity (harmonized: lichen → fern → ochre → terracotta → garnet) */
+  --rarity-common: #6f6c5a;
+  --rarity-common-soft: rgba(180, 173, 150, 0.18);
+  --rarity-uncommon: #7bc28a;
+  --rarity-uncommon-soft: rgba(123, 194, 138, 0.18);
+  --rarity-rare: #d6a44a;
+  --rarity-rare-soft: rgba(214, 164, 74, 0.2);
+  --rarity-foil: #c97256;
+  --rarity-foil-soft: rgba(201, 114, 86, 0.2);
+  --rarity-legendary: #a8497a;
+  --rarity-legendary-soft: rgba(168, 73, 122, 0.22);
+
+  /* interactive (buttons, inputs, chips) — semantic so each mode tunes
+     them independently and components don't hard-code colors. */
+  --on-accent: #0d1411; /* dark text on a fern/lagoon-filled surface */
+  --btn-primary-bg: var(--lagoon);
+  --btn-primary-bg-hover: var(--lagoon-deep);
+  --btn-primary-text: var(--on-accent);
+  --btn-secondary-bg: rgba(20, 30, 24, 0.6);
+  --btn-secondary-bg-hover: rgba(26, 38, 30, 0.85);
+  --btn-secondary-text: var(--sea-ink);
+  --btn-secondary-border: var(--line);
+  --input-bg: rgba(13, 20, 17, 0.55);
+  --input-border: var(--line);
+  --input-border-focus: var(--lagoon);
+  --chip-active-bg: var(--lagoon);
+  --chip-active-text: var(--on-accent);
+  --track-bg: rgba(236, 228, 207, 0.08);
+
+  /* App chrome heights — used by .viewport-stage to size full-screen views.
+     `--chrome-top` accounts for the sticky header; `--chrome-bottom` for
+     the mobile bottom tab bar (zeroed out at sm). */
+  --chrome-top: calc(68px + env(safe-area-inset-top));
+  --chrome-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+
+/* Light (parchment alternate) ---------------------------------------------- */
+:root[data-theme="light"] {
+  --sea-ink: #1f2e25;
+  --sea-ink-soft: #5d6b60;
+
+  --lagoon: #3d7a4f;
+  --lagoon-deep: #2a5a38;
+  --palm: #a8543a;
+  --clay: #b56745;
+
+  --sand: #e8ddc4;
+  --foam: #f8f2e2;
+  --bg-base: #f1e9d6;
+
+  --surface: rgba(255, 252, 244, 0.78);
+  --surface-strong: rgba(255, 252, 244, 0.92);
+  --line: rgba(31, 46, 37, 0.14);
+  --inset-glint: rgba(255, 255, 255, 0.7);
+
+  --kicker: var(--palm);
+  --header-bg: rgba(248, 242, 226, 0.84);
+  --chip-bg: rgba(255, 252, 244, 0.82);
+  --chip-line: rgba(61, 122, 79, 0.22);
+  --link-bg-hover: rgba(255, 252, 244, 0.92);
+
+  --hero-a: rgba(61, 122, 79, 0.2);
+  --hero-b: rgba(168, 84, 58, 0.14);
+  --hero-c: rgba(214, 164, 74, 0.16);
+
+  --rarity-common: #87826b;
+  --rarity-common-soft: rgba(135, 130, 107, 0.18);
+  --rarity-uncommon: #3d7a4f;
+  --rarity-uncommon-soft: rgba(61, 122, 79, 0.16);
+  --rarity-rare: #b07b1d;
+  --rarity-rare-soft: rgba(176, 123, 29, 0.18);
+  --rarity-foil: #b56745;
+  --rarity-foil-soft: rgba(181, 103, 69, 0.2);
+  --rarity-legendary: #863e63;
+  --rarity-legendary-soft: rgba(134, 62, 99, 0.2);
+
+  --on-accent: #f8f2e2; /* light text on a forest-filled surface */
+  --btn-primary-bg: var(--lagoon);
+  --btn-primary-bg-hover: var(--lagoon-deep);
+  --btn-primary-text: var(--on-accent);
+  --btn-secondary-bg: rgba(255, 252, 244, 0.78);
+  --btn-secondary-bg-hover: rgba(255, 252, 244, 0.95);
+  --btn-secondary-text: var(--sea-ink);
+  --btn-secondary-border: var(--line);
+  --input-bg: rgba(255, 252, 244, 0.85);
+  --input-border: var(--line);
+  --input-border-focus: var(--lagoon);
+  --chip-active-bg: var(--lagoon);
+  --chip-active-text: var(--on-accent);
+  --track-bg: rgba(31, 46, 37, 0.1);
+}
+
+/* Auto (system) — no [data-theme] attribute means "follow OS"; default tokens
+   above are dark, so the light overrides only fire when the OS is light. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --sea-ink: #1f2e25;
+    --sea-ink-soft: #5d6b60;
+
+    --lagoon: #3d7a4f;
+    --lagoon-deep: #2a5a38;
+    --palm: #a8543a;
+    --clay: #b56745;
+
+    --sand: #e8ddc4;
+    --foam: #f8f2e2;
+    --bg-base: #f1e9d6;
+
+    --surface: rgba(255, 252, 244, 0.78);
+    --surface-strong: rgba(255, 252, 244, 0.92);
+    --line: rgba(31, 46, 37, 0.14);
+    --inset-glint: rgba(255, 255, 255, 0.7);
+
+    --kicker: var(--palm);
+    --header-bg: rgba(248, 242, 226, 0.84);
+    --chip-bg: rgba(255, 252, 244, 0.82);
+    --chip-line: rgba(61, 122, 79, 0.22);
+    --link-bg-hover: rgba(255, 252, 244, 0.92);
+
+    --hero-a: rgba(61, 122, 79, 0.2);
+    --hero-b: rgba(168, 84, 58, 0.14);
+    --hero-c: rgba(214, 164, 74, 0.16);
+
+    --rarity-common: #87826b;
+    --rarity-common-soft: rgba(135, 130, 107, 0.18);
+    --rarity-uncommon: #3d7a4f;
+    --rarity-uncommon-soft: rgba(61, 122, 79, 0.16);
+    --rarity-rare: #b07b1d;
+    --rarity-rare-soft: rgba(176, 123, 29, 0.18);
+    --rarity-foil: #b56745;
+    --rarity-foil-soft: rgba(181, 103, 69, 0.2);
+    --rarity-legendary: #863e63;
+    --rarity-legendary-soft: rgba(134, 62, 99, 0.2);
+
+    --on-accent: #f8f2e2;
+    --btn-primary-bg: var(--lagoon);
+    --btn-primary-bg-hover: var(--lagoon-deep);
+    --btn-primary-text: var(--on-accent);
+    --btn-secondary-bg: rgba(255, 252, 244, 0.78);
+    --btn-secondary-bg-hover: rgba(255, 252, 244, 0.95);
+    --btn-secondary-text: var(--sea-ink);
+    --btn-secondary-border: var(--line);
+    --input-bg: rgba(255, 252, 244, 0.85);
+    --input-border: var(--line);
+    --input-border-focus: var(--lagoon);
+    --chip-active-bg: var(--lagoon);
+    --chip-active-text: var(--on-accent);
+    --track-bg: rgba(31, 46, 37, 0.1);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--sea-ink);
+  font-family: var(--font-sans);
+  background-color: var(--bg-base);
+  background:
+    radial-gradient(1100px 620px at -8% -10%, var(--hero-a), transparent 58%),
+    radial-gradient(1050px 620px at 112% -12%, var(--hero-b), transparent 62%),
+    radial-gradient(720px 380px at 50% 115%, var(--hero-c), transparent 68%),
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--foam) 70%, var(--bg-base)) 0%,
+      var(--foam) 44%,
+      var(--bg-base) 100%
+    );
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.32;
+  background:
+    radial-gradient(
+      circle at 20% 15%,
+      color-mix(in oklab, var(--lagoon) 50%, transparent),
+      transparent 36%
+    ),
+    radial-gradient(
+      circle at 78% 26%,
+      color-mix(in oklab, var(--clay) 40%, transparent),
+      transparent 42%
+    ),
+    radial-gradient(
+      circle at 42% 82%,
+      color-mix(in oklab, var(--palm) 35%, transparent),
+      transparent 38%
+    );
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.1;
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--sea-ink) 12%, transparent) 1px, transparent 1px),
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--sea-ink) 12%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at 50% 30%, black, transparent 78%);
+}
+
+a {
+  color: var(--lagoon);
+  text-decoration-color: color-mix(in oklab, var(--lagoon) 50%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--lagoon-deep);
+}
+
+code {
+  font-size: 0.9em;
+  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--surface-strong) 82%, var(--bg-base) 18%);
+  border-radius: 7px;
+  padding: 2px 7px;
+}
+
+pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+.page-wrap {
+  width: min(1080px, calc(100% - 2rem));
+  margin-inline: auto;
+}
+
+.display-title {
+  font-family: "Fraunces", Georgia, serif;
+}
+
+.island-shell {
+  border: 1px solid var(--line);
+  background: linear-gradient(165deg, var(--surface-strong), var(--surface));
+  box-shadow:
+    0 1px 0 var(--inset-glint) inset,
+    0 22px 44px rgba(0, 0, 0, 0.18),
+    0 6px 18px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(6px);
+}
+
+.feature-card {
+  background: linear-gradient(
+    165deg,
+    color-mix(in oklab, var(--surface-strong) 93%, var(--sand) 7%),
+    var(--surface)
+  );
+  box-shadow:
+    0 1px 0 var(--inset-glint) inset,
+    0 18px 34px rgba(0, 0, 0, 0.14),
+    0 4px 14px rgba(0, 0, 0, 0.1);
+}
+
+.feature-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklab, var(--lagoon) 35%, var(--line));
+}
+
+button,
+.island-shell,
+a {
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+
+.island-kicker {
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 0.69rem;
+  color: var(--kicker);
+}
+
+.nav-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  color: var(--sea-ink-soft);
+}
+
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -6px;
+  width: 100%;
+  height: 2px;
+  transform: scaleX(0);
+  transform-origin: left;
+  background: linear-gradient(90deg, var(--lagoon), var(--palm));
+  transition: transform 170ms ease;
+}
+
+.nav-link:hover,
+.nav-link.is-active {
+  color: var(--sea-ink);
+}
+
+.nav-link:hover::after,
+.nav-link.is-active::after {
+  transform: scaleX(1);
+}
+
+@media (max-width: 640px) {
+  .nav-link::after {
+    bottom: -4px;
+  }
+}
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  background: color-mix(in oklab, var(--header-bg) 84%, transparent 16%);
+}
+
+.rise-in {
+  animation: rise-in 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Interactive primitives — use these instead of hard-coding bg/text colors
+   so light/dark always have proper contrast.
+   --------------------------------------------------------------------------- */
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  border: 1px solid color-mix(in oklab, var(--btn-primary-bg) 70%, transparent);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.18) inset,
+    0 10px 24px -10px color-mix(in oklab, var(--btn-primary-bg) 80%, transparent);
+}
+
+.btn-primary:hover {
+  background: var(--btn-primary-bg-hover);
+  color: var(--btn-primary-text);
+  transform: translateY(-1px);
+}
+
+.btn-primary:focus-visible {
+  outline: 2px solid var(--btn-primary-bg-hover);
+  outline-offset: 2px;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-text);
+  border: 1px solid var(--btn-secondary-border);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.btn-secondary:hover {
+  background: var(--btn-secondary-bg-hover);
+  color: var(--btn-secondary-text);
+  border-color: color-mix(in oklab, var(--lagoon) 40%, var(--btn-secondary-border));
+  transform: translateY(-1px);
+}
+
+.btn-secondary:focus-visible {
+  outline: 2px solid var(--lagoon);
+  outline-offset: 2px;
+}
+
+.input-field {
+  background: var(--input-bg);
+  color: var(--sea-ink);
+  border: 1px solid var(--input-border);
+  backdrop-filter: blur(6px);
+}
+
+.input-field::placeholder {
+  color: color-mix(in oklab, var(--sea-ink-soft) 80%, transparent);
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--input-border-focus);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--lagoon) 24%, transparent);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--btn-secondary-bg);
+  color: var(--sea-ink-soft);
+  border: 1px solid var(--btn-secondary-border);
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.chip:hover {
+  color: var(--sea-ink);
+  border-color: color-mix(in oklab, var(--lagoon) 40%, var(--btn-secondary-border));
+}
+
+.chip[aria-pressed="true"],
+.chip.is-active {
+  background: var(--chip-active-bg);
+  color: var(--chip-active-text);
+  border-color: var(--chip-active-bg);
+}
+
+/* Bottom tab bar (mobile-only) — sits above the iOS home indicator. */
+.bottom-tab {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  min-height: 56px;
+  padding: 0.5rem 0.75rem;
+  color: var(--sea-ink-soft);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 160ms ease;
+}
+
+.bottom-tab:hover {
+  color: var(--sea-ink);
+}
+
+.bottom-tab.is-active {
+  color: var(--lagoon);
+}
+
+.bottom-tab.is-active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 28px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: linear-gradient(90deg, var(--lagoon), var(--palm));
+}
+
+/* Reserve space at the bottom of every page so content isn't hidden under
+   the bottom tab bar on phones. Desktop has no bottom bar so the override
+   zeroes it out. */
+body {
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 640px) {
+  body {
+    padding-bottom: 0;
+  }
+
+  :root {
+    --chrome-bottom: 0px;
+  }
+}
+
+/* Viewport-locked stage: pins a section between the sticky header and the
+   mobile bottom tab bar so the page itself never scrolls. Children manage
+   their own internal scroll if needed via overflow-y-auto. */
+.viewport-stage {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--chrome-top);
+  bottom: var(--chrome-bottom);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Card stage: container-query-sized slot that fits a 2:3 card to whichever
+   axis constrains first (width OR height), capped at 320 px / 280 px. Use
+   inside a flex column with `flex-1 min-h-0` to give it a real height. */
+.card-stage {
+  flex: 1 1 0%;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  container-type: size;
+}
+
+.card-fit {
+  width: min(100cqw, calc(100cqh * 2 / 3), 320px);
+  aspect-ratio: 2 / 3;
+}
+
+@media (min-width: 640px) {
+  .card-fit {
+    width: min(100cqw, calc(100cqh * 2 / 3), 280px);
+  }
+}
+
+/* Touch-target enforcement: every interactive primitive ≥ 44 px tall. */
+.btn-primary,
+.btn-secondary {
+  min-height: 44px;
+}
+
+.chip {
+  min-height: 36px; /* compact filter chips, still finger-friendly */
+}
+
+@media (max-width: 639px) {
+  .chip {
+    min-height: 40px;
+  }
+}
+
+/* Bottom sheet — built on native <dialog>. Backdrop dims the page; the
+   panel slides up from the bottom edge. Mobile-only: on desktop we keep
+   filter UIs inline so this rarely opens, but the styles still work if it
+   does. */
+.bottom-sheet {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  position: fixed;
+  inset: 0;
+  color: var(--sea-ink);
+}
+
+.bottom-sheet::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.bottom-sheet-panel {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  background: var(--surface-strong);
+  border-top: 1px solid var(--line);
+  border-radius: 1.25rem 1.25rem 0 0;
+  padding: 1.25rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom));
+  box-shadow: 0 -20px 50px -10px rgba(0, 0, 0, 0.4);
+  animation: sheet-slide-up 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes sheet-slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
