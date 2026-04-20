@@ -11,3 +11,7 @@ dist-ssr
 .vinxi
 __unconfig*
 todos.json
+
+# Cloudflare Workers local dev secrets (never commit — use `wrangler
+# secret put` for production).
+.dev.vars

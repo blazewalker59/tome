@@ -1,0 +1,61 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Cancel any in-flight deploy when a newer commit lands on main.
+concurrency:
+  group: cf-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Needed for wrangler-action's OIDC auth with Cloudflare (falls back
+    # to CLOUDFLARE_API_TOKEN if OIDC isn't configured).
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm test
+
+      # `VITE_*` vars are baked into the client bundle by Vite at build
+      # time, so they MUST be present in the shell that runs the build.
+      # These come from repo-level GitHub secrets (Settings → Secrets
+      # and variables → Actions).
+      - name: Build for Cloudflare Workers
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: pnpm build:cf
+
+      # Runtime server vars (DATABASE_URL etc.) are NOT baked in — they
+      # are Worker secrets already set via `wrangler secret put`. This
+      # step just deploys the bundle; it does not push secrets.
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Wrangler reads `.wrangler/deploy/config.json` at the project
+          # root, which redirects it to Nitro's generated wrangler.json.
+          command: deploy

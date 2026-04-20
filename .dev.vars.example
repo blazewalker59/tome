@@ -1,0 +1,17 @@
+# Secrets consumed by `wrangler dev` (local Workers runtime preview).
+# Copy to `.dev.vars` (gitignored) and fill in real values. Production
+# uses `wrangler secret put <NAME>` instead of this file.
+#
+# These are the RUNTIME server variables only. Build-time public vars
+# (the VITE_* ones) go in .env.local and are baked into the client bundle
+# by Vite during `pnpm build:cf`.
+
+# Supabase transaction-pooler URL (port 6543), with `?pgbouncer=true`
+# if using the pooler. postgres-js runs with { prepare: false } so the
+# pooler works fine.
+DATABASE_URL=
+
+# Session-pooler URL (port 5432). Only needed if this Worker ever runs
+# migrations / DDL directly. Normally migrations run via `pnpm db:migrate`
+# from your dev machine, not from a Worker.
+DATABASE_MIGRATION_URL=

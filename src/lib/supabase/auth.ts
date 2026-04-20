@@ -101,7 +101,7 @@ export async function signOut(): Promise<void> {
 
 /**
  * Kick off Google OAuth. Supabase will redirect to Google, then back to
- * `${VITE_SITE_URL}/auth/callback`, which finishes the exchange.
+ * `${window.location.origin}/auth/callback`, which finishes the exchange.
  *
  * We pass `skipBrowserRedirect: true` so we can log what supabase-js wrote
  * to cookies (the PKCE code_verifier) BEFORE we navigate away. Without this
@@ -111,7 +111,12 @@ export async function signOut(): Promise<void> {
  */
 export async function signInWithGoogle(): Promise<void> {
   const supabase = getSupabase();
-  const siteUrl = (import.meta.env.VITE_SITE_URL as string | undefined) ?? window.location.origin;
+  // Always use the browser's current origin. That way the same bundle
+  // works across dev (localhost:3000), preview deploys, and production
+  // without any env-var coordination or per-environment rebuilds.
+  // Supabase still needs the full resulting URL to be in the project's
+  // Redirect-URLs allow-list.
+  const siteUrl = window.location.origin;
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {

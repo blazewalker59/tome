@@ -14,7 +14,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 
-import { db } from '@/db/client'
+import { getDb } from '@/db/client'
 import {
   books,
   collectionCards,
@@ -27,6 +27,34 @@ import {
 import { getSessionUser } from '@/lib/supabase/server'
 import { SHARD_YIELDS } from '@/lib/cards/pull'
 import type { BookRow } from '@/lib/cards/book-to-card'
+
+/**
+ * Wrap a handler so that any thrown error is logged with its full cause
+ * chain before being rethrown. Drizzle's "Failed query: …" errors keep
+ * the real postgres error on `.cause`, which TanStack Start's serializer
+ * drops on the way to the client — logging here is the only way to see
+ * the actual SQLSTATE / message in Worker tail.
+ */
+function withErrorLogging<Args extends unknown[], R>(
+  label: string,
+  fn: (...args: Args) => Promise<R>,
+): (...args: Args) => Promise<R> {
+  return async (...args: Args) => {
+    try {
+      return await fn(...args)
+    } catch (err) {
+      const cause = (err as { cause?: unknown }).cause
+      // eslint-disable-next-line no-console
+      console.error(
+        `[${label}]`,
+        err instanceof Error ? err.message : err,
+        cause instanceof Error ? `\n  cause: ${cause.message}` : cause ? `\n  cause: ${JSON.stringify(cause)}` : '',
+        err instanceof Error && err.stack ? `\n${err.stack}` : '',
+      )
+      throw err
+    }
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared types
@@ -76,15 +104,6 @@ const SHARD_VALUE_BY_RARITY: Record<string, number> = SHARD_YIELDS
 // through from the route.
 export const DEFAULT_PACK_SLUG = 'booker-shortlist-2024'
 
-function assertDb() {
-  if (!db) {
-    throw new Error(
-      '[server/collection] DATABASE_URL is not set — the server cannot reach the database.',
-    )
-  }
-  return db
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Read: editorial pack
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,8 +113,8 @@ function assertDb() {
  * required so the anonymous landing animation can still roll a visual pack.
  */
 export const getEditorialPackFn = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<PackPayload> => {
-    const database = assertDb()
+  withErrorLogging('getEditorialPackFn', async (): Promise<PackPayload> => {
+    const database = await getDb()
 
     const [pack] = await database
       .select({
@@ -138,7 +157,7 @@ export const getEditorialPackFn = createServerFn({ method: 'GET' }).handler(
       description: pack.description,
       books: rows,
     }
-  },
+  }),
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,11 +169,11 @@ export const getEditorialPackFn = createServerFn({ method: 'GET' }).handler(
  * callers so the UI can render a sign-in prompt instead of an empty state.
  */
 export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<CollectionPayload | null> => {
+  withErrorLogging('getCollectionFn', async (): Promise<CollectionPayload | null> => {
     const user = await getSessionUser()
     if (!user) return null
 
-    const database = assertDb()
+    const database = await getDb()
 
     // Pull collection rows + the pack-name snapshot used for "Found in pack: …".
     // LEFT JOIN because `first_acquired_from_pack_id` is nullable (rows
@@ -184,7 +203,7 @@ export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
       })),
       shardBalance: balance?.shards ?? 0,
     }
-  },
+  }),
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,13 +240,13 @@ export const recordRipFn = createServerFn({ method: 'POST' })
     }
     return { packId, pulledBookIds: pulledBookIds as string[] }
   })
-  .handler(async ({ data }): Promise<RecordRipResult> => {
+  .handler(withErrorLogging('recordRipFn', async ({ data }): Promise<RecordRipResult> => {
     const user = await getSessionUser()
     if (!user) {
       throw new Error('recordRip: not authenticated')
     }
 
-    const database = assertDb()
+    const database = await getDb()
     const { packId, pulledBookIds } = data
 
     return await database.transaction(async (tx) => {
@@ -369,4 +388,4 @@ export const recordRipFn = createServerFn({ method: 'POST' })
         newShardBalance: newBalance.shards,
       }
     })
-  })
+  }))

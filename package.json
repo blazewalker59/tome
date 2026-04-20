@@ -8,7 +8,12 @@
   "scripts": {
     "dev": "vite dev --port 3000",
     "build": "vite build",
+    "build:cf": "NITRO_PRESET=cloudflare-module vite build",
     "preview": "vite preview",
+    "cf:preview": "pnpm build:cf && wrangler dev",
+    "cf:deploy": "pnpm build:cf && wrangler deploy",
+    "cf:tail": "wrangler tail tome",
+    "cf:secret": "wrangler secret put --name tome",
     "test": "vitest run",
     "db:generate": "dotenv -e .env.local -- drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
@@ -53,7 +58,8 @@
     "tsx": "^4.21.0",
     "typescript": "^5.7.2",
     "vite": "^8.0.0",
-    "vitest": "^3.0.5"
+    "vitest": "^3.0.5",
+    "wrangler": "^4.84.0"
   },
   "packageManager": "pnpm@10.33.0",
   "pnpm": {
