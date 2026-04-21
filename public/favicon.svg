@@ -13,15 +13,16 @@
     We stop relying on prefers-color-scheme for legibility and instead
     brand the favicon with the app's light-theme panel color.
 
-    Stroke stays the deep lagoon ink so it has strong contrast against
-    the cream background in both modes.
+    Stroke is the light-theme lagoon (#3d7a4f) so the mark reads as the
+    app's brand green against the cream tile — same color pairing as
+    the in-app light mode for consistency on the installed Home Screen.
   -->
 
   <!-- Cream panel background, rounded to feel like an app tile. -->
   <rect x="0" y="0" width="24" height="24" rx="5" ry="5" fill="#f8f2e2" />
 
   <g
-    stroke="#1f2e25"
+    stroke="#3d7a4f"
     fill="none"
     stroke-width="2"
     stroke-linecap="round"
