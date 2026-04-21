@@ -65,6 +65,24 @@ const BOOK_BY_ID_QUERY = /* GraphQL */ `
 `;
 
 /**
+ * Search query against Hardcover's Typesense-backed `search` field.
+ * The `results` field is `jsonb` — it contains the raw Typesense hit
+ * envelope (`{ found, hits: [{ document: {...} }], ... }`). We project
+ * it into our own `HardcoverSearchHit` shape in `parseSearchResults`.
+ *
+ * Default query_type is `book` so omitting it is safe; we pass it
+ * explicitly for readability. `per_page: 20` is a conservative batch
+ * size — the form UI can page through more if needed later.
+ */
+const SEARCH_BOOKS_QUERY = /* GraphQL */ `
+  query SearchBooks($query: String!, $perPage: Int!, $page: Int!) {
+    search(query: $query, query_type: "book", per_page: $perPage, page: $page) {
+      results
+    }
+  }
+`;
+
+/**
  * FIFO queue of pending requests. Each enqueued function returns a
  * promise; we chain them so the next only runs `MIN_REQUEST_SPACING_MS`
  * after the previous *started*. Module-level state — intentional. The
@@ -115,6 +133,174 @@ export async function fetchBookById(id: number): Promise<HardcoverBook | null> {
     throw new HardcoverError(`Invalid Hardcover book id: ${id}`);
   }
 
+  const json = await hardcoverRequest<{
+    books_by_pk?: HardcoverBook | null;
+  }>("GetBook", BOOK_BY_ID_QUERY, { id });
+  return json.books_by_pk ?? null;
+}
+
+/**
+ * One hit in a book-search result. Derived from Typesense's `document`
+ * payload — fields we don't use (content_warnings, cover_color,
+ * audio_seconds, …) are intentionally omitted. The two that matter
+ * most for the ingest UI:
+ *   - `id` is what gets passed to `fetchBookById` when the operator
+ *     picks a book to ingest.
+ *   - `image.url` (and fallback `cached_image`) is how we show covers
+ *     in the search-results list so admins can eyeball the right edition.
+ */
+export interface HardcoverSearchHit {
+  id: number;
+  title: string | null;
+  subtitle: string | null;
+  authorNames: ReadonlyArray<string>;
+  releaseYear: number | null;
+  rating: number | null;
+  ratingsCount: number | null;
+  coverUrl: string | null;
+  /** URL slug on hardcover.app, useful for "open source" links. */
+  slug: string | null;
+}
+
+export interface HardcoverSearchResult {
+  hits: ReadonlyArray<HardcoverSearchHit>;
+  /** Total matches across all pages (Typesense `found`). */
+  found: number;
+  page: number;
+  perPage: number;
+}
+
+/**
+ * Search Hardcover's book index. Thin wrapper over the GraphQL `search`
+ * field; returns a flat shape so the UI doesn't need to know about
+ * Typesense's `{ hits: [{ document }] }` envelope.
+ *
+ * `query` is trimmed and required to be at least 2 chars — short
+ * queries waste a rate-limit slot on results that'll be too broad to
+ * be useful. The admin UI further enforces a 3-char minimum; the 2-char
+ * floor here is the absolute backstop.
+ */
+export async function searchBooks(
+  query: string,
+  opts: { page?: number; perPage?: number } = {},
+): Promise<HardcoverSearchResult> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) {
+    throw new HardcoverError(`Search query must be at least 2 characters; got "${query}"`);
+  }
+  const page = Math.max(1, Math.floor(opts.page ?? 1));
+  const perPage = Math.max(1, Math.min(50, Math.floor(opts.perPage ?? 20)));
+
+  const json = await hardcoverRequest<{
+    search?: { results?: unknown } | null;
+  }>("SearchBooks", SEARCH_BOOKS_QUERY, { query: trimmed, perPage, page });
+
+  return parseSearchResults(json.search?.results, page, perPage);
+}
+
+/**
+ * Shape of the Typesense envelope Hardcover forwards via `search.results`.
+ * Documented informally in their searching guide; we narrow defensively
+ * because Typesense has evolved the shape historically.
+ */
+interface TypesenseEnvelope {
+  found?: number;
+  hits?: Array<{ document?: Record<string, unknown> }>;
+}
+
+/** Parse the opaque Typesense result into our `HardcoverSearchResult`. */
+export function parseSearchResults(
+  raw: unknown,
+  page: number,
+  perPage: number,
+): HardcoverSearchResult {
+  if (!raw || typeof raw !== "object") {
+    return { hits: [], found: 0, page, perPage };
+  }
+  const env = raw as TypesenseEnvelope;
+  const found = typeof env.found === "number" ? env.found : 0;
+  const hits: HardcoverSearchHit[] = [];
+  for (const h of env.hits ?? []) {
+    const d = h.document ?? {};
+    const idRaw = (d as { id?: unknown }).id;
+    // Typesense ships ids as strings; Hardcover's `books_by_pk` wants an
+    // Int. Convert here so the UI can pass the id straight to ingest.
+    const id = typeof idRaw === "string" ? Number.parseInt(idRaw, 10) : Number(idRaw);
+    if (!Number.isInteger(id) || id <= 0) continue;
+
+    const title = pickString(d, "title");
+    if (!title) continue; // skip malformed / missing-title hits
+
+    const authorNamesRaw = (d as { author_names?: unknown }).author_names;
+    const authorNames = Array.isArray(authorNamesRaw)
+      ? authorNamesRaw.filter((x): x is string => typeof x === "string")
+      : [];
+
+    // Image can appear under a few keys depending on index version:
+    // `image.url`, `cached_image.url`, or a bare string. Prefer the most
+    // structured shape first.
+    const coverUrl =
+      pickNestedUrl(d, "image") ?? pickNestedUrl(d, "cached_image") ?? null;
+
+    hits.push({
+      id,
+      title,
+      subtitle: pickString(d, "subtitle"),
+      authorNames,
+      releaseYear: pickInt(d, "release_year"),
+      rating: pickNumber(d, "rating"),
+      ratingsCount: pickInt(d, "ratings_count"),
+      coverUrl,
+      slug: pickString(d, "slug"),
+    });
+  }
+  return { hits, found, page, perPage };
+}
+
+function pickString(d: Record<string, unknown>, key: string): string | null {
+  const v = d[key];
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t.length === 0 ? null : t;
+}
+
+function pickNumber(d: Record<string, unknown>, key: string): number | null {
+  const v = d[key];
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number.parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function pickInt(d: Record<string, unknown>, key: string): number | null {
+  const n = pickNumber(d, key);
+  return n === null ? null : Math.trunc(n);
+}
+
+function pickNestedUrl(d: Record<string, unknown>, key: string): string | null {
+  const v = d[key];
+  if (!v) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "object") {
+    const url = (v as { url?: unknown }).url;
+    return typeof url === "string" && url.length > 0 ? url : null;
+  }
+  return null;
+}
+
+/**
+ * Internal: perform a rate-limited GraphQL request. Throws
+ * `HardcoverError` on transport / auth / rate-limit / GraphQL failures;
+ * returns the `data` payload on success. Operations return their own
+ * slice of `data` (caller narrows).
+ */
+async function hardcoverRequest<T>(
+  operationName: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
   const token = await getEnv("HARDCOVER_API_TOKEN");
   if (!token) {
     throw new HardcoverError(
@@ -136,11 +322,7 @@ export async function fetchBookById(id: number): Promise<HardcoverBook | null> {
         // API docs request identifiable UAs; keep it short and grep-able.
         "user-agent": "tome-ingest (+https://tome.blazewalker59.workers.dev)",
       },
-      body: JSON.stringify({
-        operationName: "GetBook",
-        query: BOOK_BY_ID_QUERY,
-        variables: { id },
-      }),
+      body: JSON.stringify({ operationName, query, variables }),
     });
 
     if (res.status === 429) {
@@ -156,7 +338,7 @@ export async function fetchBookById(id: number): Promise<HardcoverBook | null> {
     }
 
     const json = (await res.json()) as {
-      data?: { books_by_pk?: HardcoverBook | null };
+      data?: T;
       errors?: Array<{ message: string }>;
     };
 
@@ -167,7 +349,9 @@ export async function fetchBookById(id: number): Promise<HardcoverBook | null> {
         json.errors,
       );
     }
-
-    return json.data?.books_by_pk ?? null;
+    if (!json.data) {
+      throw new HardcoverError(`Hardcover response missing data for ${operationName}`);
+    }
+    return json.data;
   });
 }

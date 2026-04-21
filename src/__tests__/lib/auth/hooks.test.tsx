@@ -79,10 +79,21 @@ vi.mock("@/lib/auth/client", () => ({
   signOut: (...args: unknown[]) => mocks.signOutMock(...args),
 }));
 
+// `useIsAdmin` calls `checkAdminFn` from `@/server/admin`. That module
+// transitively imports `@/lib/env` which dynamically imports the virtual
+// `cloudflare:workers` specifier — Vitest's vite loader chokes on that
+// resolve-time. We don't exercise the admin hook in these tests (it has
+// its own coverage), so mock the server module at the boundary.
+const checkAdminMock = vi.fn().mockResolvedValue({ signedIn: false, isAdmin: false });
+vi.mock("@/server/admin", () => ({
+  checkAdminFn: (...args: unknown[]) => checkAdminMock(...args),
+}));
+
 import {
   signInWithGoogle,
   signOut as authSignOut,
   useAuth,
+  useIsAdmin,
   useUser,
 } from "@/lib/auth/hooks";
 
@@ -173,5 +184,49 @@ describe("auth hooks", () => {
       error: { message: "oauth failed" },
     });
     await expect(signInWithGoogle()).rejects.toThrow(/oauth failed/);
+  });
+});
+
+describe("useIsAdmin", () => {
+  beforeEach(() => {
+    checkAdminMock.mockClear();
+    checkAdminMock.mockResolvedValue({ signedIn: false, isAdmin: false });
+    setSession({ data: null, isPending: true });
+  });
+
+  it("returns undefined while auth is still loading", () => {
+    const { result } = renderHook(() => useIsAdmin());
+    expect(result.current).toBeUndefined();
+    expect(checkAdminMock).not.toHaveBeenCalled();
+  });
+
+  it("returns false for anonymous users without hitting the server", async () => {
+    const { result } = renderHook(() => useIsAdmin());
+    act(() => setSession({ data: null, isPending: false }));
+    await waitFor(() => expect(result.current).toBe(false));
+    expect(checkAdminMock).not.toHaveBeenCalled();
+  });
+
+  it("calls checkAdminFn when the user is authenticated and reflects true", async () => {
+    checkAdminMock.mockResolvedValueOnce({
+      signedIn: true,
+      isAdmin: true,
+      email: "a@b.test",
+    });
+    const { result } = renderHook(() => useIsAdmin());
+    act(() =>
+      setSession({ data: { user: mockUser, session: mockSession }, isPending: false }),
+    );
+    await waitFor(() => expect(result.current).toBe(true));
+    expect(checkAdminMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed (returns false) if the probe rejects", async () => {
+    checkAdminMock.mockRejectedValueOnce(new Error("network"));
+    const { result } = renderHook(() => useIsAdmin());
+    act(() =>
+      setSession({ data: { user: mockUser, session: mockSession }, isPending: false }),
+    );
+    await waitFor(() => expect(result.current).toBe(false));
   });
 });

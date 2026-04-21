@@ -24,28 +24,90 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
 import { books, packBooks, packs } from "@/db/schema";
-import { getAdminEmails, getSessionUser, requireAdmin } from "@/lib/auth/session";
+import { requireAdmin } from "@/lib/auth/session";
 import { bookResponseToRow } from "@/lib/cards/hardcover";
-import { fetchBookById } from "./hardcover";
+import { fetchBookById, searchBooks, type HardcoverSearchResult } from "./hardcover";
 
 /**
  * Cheap read-only probe used by the admin route loader to decide whether
  * to render the form or redirect. Kept separate from `requireAdmin()` so
  * the loader can branch (redirect vs 403 UI) without catching thrown
  * errors as control flow.
+ *
+ * Re-exported from `./admin` so existing imports keep working; the real
+ * implementation lives there to avoid pulling this ingest module (with
+ * its DB + Hardcover-client imports) into the client bundle graph.
  */
-export const checkAdminFn = createServerFn({ method: "GET" }).handler(async () => {
-  const user = await getSessionUser();
-  if (!user) return { signedIn: false as const, isAdmin: false as const };
-  const allowed = await getAdminEmails();
-  const email = user.email?.toLowerCase();
-  const isAdmin = Boolean(email && allowed.has(email));
-  return { signedIn: true as const, isAdmin, email: user.email ?? null };
-});
+export { checkAdminFn } from "./admin";
+
+export interface SearchHardcoverInput {
+  query: string;
+  page?: number;
+  perPage?: number;
+}
+
+/**
+ * Admin-only search across Hardcover's Typesense book index. Used by
+ * the ingest UI's search pane so operators can find + queue books
+ * without pre-knowing their ids. Gated by `requireAdmin()` because
+ * every call consumes a slot of our 60 req/min rate budget; we don't
+ * want anonymous traffic burning it.
+ *
+ * Already-ingested books (by `hardcover_id`) are tagged in the result
+ * so the UI can render an "Already in catalog" badge and disable the
+ * "Add to queue" button. One DB round trip per search, capped to the
+ * returned hit set so it's O(per_page).
+ */
+export const searchHardcoverFn = createServerFn({ method: "GET" })
+  .inputValidator((raw: unknown): SearchHardcoverInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("searchHardcoverFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    return {
+      query: String(r.query ?? ""),
+      page: r.page === undefined ? undefined : Number(r.page),
+      perPage: r.perPage === undefined ? undefined : Number(r.perPage),
+    };
+  })
+  .handler(
+    async ({
+      data,
+    }): Promise<
+      HardcoverSearchResult & {
+        /** Map of hardcover_id → book id already in our catalog. */
+        existingByHardcoverId: Record<number, string>;
+      }
+    > => {
+      await requireAdmin();
+      const result = await searchBooks(data.query, {
+        page: data.page,
+        perPage: data.perPage,
+      });
+
+      if (result.hits.length === 0) {
+        return { ...result, existingByHardcoverId: {} };
+      }
+
+      // Single IN-list lookup: which of these hardcover_ids already exist?
+      const database = await getDb();
+      const ids = result.hits.map((h) => h.id);
+      const existingRows = await database
+        .select({ id: books.id, hardcoverId: books.hardcoverId })
+        .from(books)
+        .where(inArray(books.hardcoverId, ids));
+      const existingByHardcoverId: Record<number, string> = {};
+      for (const r of existingRows) {
+        existingByHardcoverId[r.hardcoverId] = r.id;
+      }
+
+      return { ...result, existingByHardcoverId };
+    },
+  );
 
 export interface IngestBookInput {
   hardcoverId: number;

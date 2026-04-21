@@ -1,5 +1,6 @@
 import { graphql, http, HttpResponse } from "msw";
 import hardcoverBook from "./fixtures/hardcover-book.json" with { type: "json" };
+import hardcoverSearch from "./fixtures/hardcover-search.json" with { type: "json" };
 
 const HARDCOVER_GRAPHQL = "https://api.hardcover.app/v1/graphql";
 
@@ -17,6 +18,13 @@ export const handlers = [
       return HttpResponse.json({ data: { books_by_pk: null } });
     }
     return HttpResponse.json({ data: { books_by_pk: hardcoverBook } });
+  }),
+
+  // Hardcover GraphQL — book search. Returns the fixture's Typesense
+  // envelope wrapped in the `search.results` shape. Tests can override
+  // the hit list per-call via `server.use(...)`.
+  graphql.link(HARDCOVER_GRAPHQL).query("SearchBooks", () => {
+    return HttpResponse.json({ data: { search: { results: hardcoverSearch } } });
   }),
 
   // Generic catch-all for cover images so jsdom doesn't blow up on <img src>.

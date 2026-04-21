@@ -5,6 +5,8 @@ import {
   __resetRateLimitForTests,
   fetchBookById,
   HardcoverError,
+  parseSearchResults,
+  searchBooks,
 } from "@/server/hardcover";
 
 const HARDCOVER_GRAPHQL = "https://api.hardcover.app/v1/graphql";
@@ -54,7 +56,7 @@ describe("fetchBookById", () => {
     server.use(
       graphql.link(HARDCOVER_GRAPHQL).query("GetBook", async ({ request }) => {
         capturedAuth = request.headers.get("authorization") ?? undefined;
-        const body = (await request.clone().json()) as { operationName?: string };
+        const body = (await request.clone().json()) as unknown as { operationName?: string };
         capturedOperation = body.operationName;
         return HttpResponse.json({
           data: {
@@ -128,5 +130,130 @@ describe("fetchBookById", () => {
     const err = await fetchBookById(12345).catch((e) => e);
     expect(err).toBeInstanceOf(HardcoverError);
     expect(err.status).toBe(502);
+  });
+});
+
+describe("searchBooks", () => {
+  beforeEach(() => {
+    process.env.HARDCOVER_API_TOKEN = "test-token-abc";
+    __resetRateLimitForTests();
+  });
+
+  afterEach(() => {
+    delete process.env.HARDCOVER_API_TOKEN;
+  });
+
+  it("returns parsed hits from the Typesense envelope fixture", async () => {
+    const result = await searchBooks("wayfarers");
+    expect(result.found).toBe(2);
+    expect(result.hits).toHaveLength(2);
+    expect(result.hits[0]).toMatchObject({
+      id: 12345,
+      title: "The Long Way to a Small, Angry Planet",
+      authorNames: ["Becky Chambers"],
+      releaseYear: 2014,
+      rating: 4.32,
+      ratingsCount: 42000,
+    });
+    expect(result.hits[0].coverUrl).toContain("12345.jpg");
+  });
+
+  it("rejects empty / too-short queries before the network", async () => {
+    await expect(searchBooks("")).rejects.toThrow(HardcoverError);
+    await expect(searchBooks("a")).rejects.toThrow(/at least 2 characters/);
+  });
+
+  it("clamps perPage to the 1..50 range", async () => {
+    let capturedVars: Record<string, unknown> | undefined;
+    server.use(
+      graphql.link(HARDCOVER_GRAPHQL).query("SearchBooks", async ({ request }) => {
+        const body = (await request.clone().json()) as unknown as {
+          variables?: Record<string, unknown>;
+        };
+        capturedVars = body.variables;
+        return HttpResponse.json({ data: { search: { results: { found: 0, hits: [] } } } });
+      }),
+    );
+    await searchBooks("octavia butler", { perPage: 9999 });
+    expect(capturedVars?.perPage).toBe(50);
+    __resetRateLimitForTests();
+    await searchBooks("octavia butler", { perPage: 0 });
+    expect(capturedVars?.perPage).toBe(1);
+  });
+
+  it("forwards query, page, and perPage as GraphQL variables", async () => {
+    let capturedVars: Record<string, unknown> | undefined;
+    server.use(
+      graphql.link(HARDCOVER_GRAPHQL).query("SearchBooks", async ({ request }) => {
+        const body = (await request.clone().json()) as unknown as {
+          variables?: Record<string, unknown>;
+        };
+        capturedVars = body.variables;
+        return HttpResponse.json({ data: { search: { results: { found: 0, hits: [] } } } });
+      }),
+    );
+    await searchBooks("  le guin  ", { page: 3, perPage: 5 });
+    expect(capturedVars).toEqual({ query: "le guin", page: 3, perPage: 5 });
+  });
+});
+
+describe("parseSearchResults", () => {
+  it("returns empty for null / non-object input", () => {
+    expect(parseSearchResults(null, 1, 20).hits).toHaveLength(0);
+    expect(parseSearchResults("nope", 1, 20).hits).toHaveLength(0);
+  });
+
+  it("skips hits with no id or no title", () => {
+    const envelope = {
+      found: 3,
+      hits: [
+        { document: { id: "1", title: "keep" } },
+        { document: { id: "", title: "no id, dropped" } },
+        { document: { id: "2", title: "   " } }, // blank title
+      ],
+    };
+    const result = parseSearchResults(envelope, 1, 20);
+    expect(result.hits).toHaveLength(1);
+    expect(result.hits[0].id).toBe(1);
+  });
+
+  it("accepts ids as strings (Typesense) or numbers", () => {
+    const envelope = {
+      found: 2,
+      hits: [
+        { document: { id: "42", title: "A" } },
+        { document: { id: 43, title: "B" } },
+      ],
+    };
+    const result = parseSearchResults(envelope, 1, 20);
+    expect(result.hits.map((h) => h.id)).toEqual([42, 43]);
+  });
+
+  it("falls back to cached_image when image.url is absent", () => {
+    const envelope = {
+      found: 1,
+      hits: [
+        {
+          document: {
+            id: "1",
+            title: "A",
+            cached_image: { url: "https://x/cached.jpg" },
+          },
+        },
+      ],
+    };
+    expect(parseSearchResults(envelope, 1, 20).hits[0].coverUrl).toBe("https://x/cached.jpg");
+  });
+
+  it("tolerates missing optional fields", () => {
+    const envelope = {
+      found: 1,
+      hits: [{ document: { id: "1", title: "A" } }],
+    };
+    const hit = parseSearchResults(envelope, 1, 20).hits[0];
+    expect(hit.authorNames).toEqual([]);
+    expect(hit.releaseYear).toBeNull();
+    expect(hit.rating).toBeNull();
+    expect(hit.coverUrl).toBeNull();
   });
 });

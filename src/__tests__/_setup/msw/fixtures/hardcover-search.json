@@ -1,0 +1,31 @@
+{
+  "found": 2,
+  "hits": [
+    {
+      "document": {
+        "id": "12345",
+        "title": "The Long Way to a Small, Angry Planet",
+        "subtitle": null,
+        "author_names": ["Becky Chambers"],
+        "release_year": 2014,
+        "rating": 4.32,
+        "ratings_count": 42000,
+        "image": { "url": "https://assets.hardcover.app/covers/12345.jpg" },
+        "slug": "the-long-way-to-a-small-angry-planet"
+      }
+    },
+    {
+      "document": {
+        "id": "67890",
+        "title": "A Closed and Common Orbit",
+        "subtitle": "Wayfarers, Book 2",
+        "author_names": ["Becky Chambers"],
+        "release_year": 2016,
+        "rating": 4.28,
+        "ratings_count": 28000,
+        "image": { "url": "https://assets.hardcover.app/covers/67890.jpg" },
+        "slug": "a-closed-and-common-orbit"
+      }
+    }
+  ]
+}
