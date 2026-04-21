@@ -5,15 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1776650113801,
-      "tag": "0000_sharp_komodo",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1776710790655,
-      "tag": "0001_auth_user_sync_trigger",
+      "when": 1776731795678,
+      "tag": "0000_spicy_synch",
       "breakpoints": true
     }
   ]

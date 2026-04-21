@@ -2,6 +2,23 @@ CREATE TYPE "public"."card_rarity" AS ENUM('common', 'uncommon', 'rare', 'foil',
 CREATE TYPE "public"."deck_visibility" AS ENUM('public', 'unlisted', 'private');--> statement-breakpoint
 CREATE TYPE "public"."pack_kind" AS ENUM('editorial', 'deck');--> statement-breakpoint
 CREATE TYPE "public"."read_status" AS ENUM('unread', 'reading', 'read');--> statement-breakpoint
+CREATE TABLE "accounts" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"user_id" uuid NOT NULL,
+	"account_id" text NOT NULL,
+	"provider_id" text NOT NULL,
+	"access_token" text,
+	"refresh_token" text,
+	"access_token_expires_at" timestamp with time zone,
+	"refresh_token_expires_at" timestamp with time zone,
+	"scope" text,
+	"id_token" text,
+	"password" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "accounts_provider_uq" UNIQUE("provider_id","account_id")
+);
+--> statement-breakpoint
 CREATE TABLE "books" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"hardcover_id" bigint NOT NULL,
@@ -100,6 +117,18 @@ CREATE TABLE "packs" (
 	CONSTRAINT "packs_slug_unique" UNIQUE("slug")
 );
 --> statement-breakpoint
+CREATE TABLE "sessions" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"user_id" uuid NOT NULL,
+	"token" text NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
+	"ip_address" text,
+	"user_agent" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "sessions_token_unique" UNIQUE("token")
+);
+--> statement-breakpoint
 CREATE TABLE "shard_balances" (
 	"user_id" uuid PRIMARY KEY NOT NULL,
 	"shards" integer DEFAULT 0 NOT NULL,
@@ -107,14 +136,30 @@ CREATE TABLE "shard_balances" (
 );
 --> statement-breakpoint
 CREATE TABLE "users" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"name" text NOT NULL,
+	"email" text NOT NULL,
+	"email_verified" boolean DEFAULT false NOT NULL,
+	"image" text,
 	"username" text NOT NULL,
 	"display_name" text,
 	"avatar_url" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "users_email_unique" UNIQUE("email"),
 	CONSTRAINT "users_username_unique" UNIQUE("username")
 );
 --> statement-breakpoint
+CREATE TABLE "verifications" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"identifier" text NOT NULL,
+	"value" text NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+ALTER TABLE "accounts" ADD CONSTRAINT "accounts_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "collection_cards" ADD CONSTRAINT "collection_cards_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "collection_cards" ADD CONSTRAINT "collection_cards_book_id_books_id_fk" FOREIGN KEY ("book_id") REFERENCES "public"."books"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "collection_cards" ADD CONSTRAINT "collection_cards_first_acquired_from_pack_id_packs_id_fk" FOREIGN KEY ("first_acquired_from_pack_id") REFERENCES "public"."packs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
@@ -129,9 +174,13 @@ ALTER TABLE "pack_books" ADD CONSTRAINT "pack_books_book_id_books_id_fk" FOREIGN
 ALTER TABLE "pack_credits" ADD CONSTRAINT "pack_credits_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pack_rips" ADD CONSTRAINT "pack_rips_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pack_rips" ADD CONSTRAINT "pack_rips_pack_id_packs_id_fk" FOREIGN KEY ("pack_id") REFERENCES "public"."packs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "shard_balances" ADD CONSTRAINT "shard_balances_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "accounts_user_idx" ON "accounts" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "books_rarity_idx" ON "books" USING btree ("rarity");--> statement-breakpoint
 CREATE INDEX "books_genre_idx" ON "books" USING btree ("genre");--> statement-breakpoint
 CREATE INDEX "decks_user_idx" ON "decks" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "pack_rips_user_idx" ON "pack_rips" USING btree ("user_id","ripped_at");--> statement-breakpoint
-CREATE INDEX "packs_kind_idx" ON "packs" USING btree ("kind");
+CREATE INDEX "packs_kind_idx" ON "packs" USING btree ("kind");--> statement-breakpoint
+CREATE INDEX "sessions_user_idx" ON "sessions" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "verifications_identifier_idx" ON "verifications" USING btree ("identifier");
