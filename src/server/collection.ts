@@ -69,6 +69,15 @@ export interface PackPayload {
 
 export interface AcquisitionEntry {
   bookId: string
+  /** ID of the pack this book was first acquired from, or null if
+   *  attribution is missing (legacy rows, manual imports). Stable key
+   *  suitable for grouping in the UI. */
+  packId: string | null
+  /** URL-safe pack identifier; same nullability as `packId`. */
+  packSlug: string | null
+  /** Human label — e.g. "Booker Shortlist 2024" — falls back to
+   *  "Editorial pack" when attribution is missing so the UI never has
+   *  to render an empty string. */
   packName: string
   acquiredAt: number // epoch ms
 }
@@ -181,6 +190,8 @@ export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
       .select({
         bookId: collectionCards.bookId,
         firstAcquiredAt: collectionCards.firstAcquiredAt,
+        packId: packs.id,
+        packSlug: packs.slug,
         packName: packs.name,
       })
       .from(collectionCards)
@@ -197,6 +208,8 @@ export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
       ownedBookIds: rows.map((r) => r.bookId),
       acquisitions: rows.map((r) => ({
         bookId: r.bookId,
+        packId: r.packId ?? null,
+        packSlug: r.packSlug ?? null,
         packName: r.packName ?? 'Editorial pack',
         acquiredAt: r.firstAcquiredAt.getTime(),
       })),

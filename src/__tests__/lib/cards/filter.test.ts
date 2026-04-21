@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   filterCards,
   groupByGenre,
+  groupCards,
   rarityCounts,
   sortCards,
   uniqueGenres,
@@ -179,6 +180,92 @@ describe("groupByGenre", () => {
     const onlyPoetry = cards.filter((c) => c.genre === "poetry");
     const result = groupByGenre(onlyPoetry);
     expect(result.map((g) => g.genre)).toEqual(["poetry"]);
+  });
+});
+
+describe("groupCards", () => {
+  it("returns a single 'all' bucket for view=all", () => {
+    const result = groupCards(cards, "all");
+    expect(result).toHaveLength(1);
+    expect(result[0].key).toBe("all");
+    expect(result[0].cards).toHaveLength(cards.length);
+  });
+
+  it("groups by rarity in legendary→common order, omitting empty buckets", () => {
+    // Every rarity has exactly one card in the fixture, so expect all 5
+    // in the canonical order.
+    const result = groupCards(cards, "rarity");
+    expect(result.map((g) => g.label)).toEqual([
+      "Legendary",
+      "Foil",
+      "Rare",
+      "Uncommon",
+      "Common",
+    ]);
+    // Restrict to two rarities to verify empty buckets are dropped.
+    const subset = cards.filter((c) => c.rarity === "common" || c.rarity === "legendary");
+    const trimmed = groupCards(subset, "rarity");
+    expect(trimmed.map((g) => g.label)).toEqual(["Legendary", "Common"]);
+  });
+
+  it("groups by genre with count-desc ordering and Title-Case labels", () => {
+    const result = groupCards(cards, "genre");
+    expect(result.map((g) => g.label)).toEqual([
+      "Romance",
+      "Graphic Novel",
+      "Poetry",
+      "Science",
+    ]);
+    expect(result[0].cards.map((c) => c.id)).toEqual(["c1", "c5"]);
+  });
+
+  it("groups by author, duplicating books under every co-author", () => {
+    const coAuthored: CardData[] = [
+      ...cards,
+      {
+        id: "c6",
+        title: "Good Omens",
+        authors: ["Neil Gaiman", "Terry Pratchett"],
+        coverUrl: "x",
+        description: "",
+        pageCount: 400,
+        publishedYear: 1990,
+        genre: "fantasy",
+        rarity: "rare",
+        moodTags: ["funny"],
+      },
+    ];
+    const result = groupCards(coAuthored, "author");
+    const byLabel = new Map(result.map((g) => [g.label, g]));
+    // Good Omens must appear under both authors.
+    expect(byLabel.get("Neil Gaiman")?.cards.map((c) => c.id)).toEqual(["c6"]);
+    expect(byLabel.get("Terry Pratchett")?.cards.map((c) => c.id)).toEqual(["c6"]);
+    // Every other card still appears exactly once.
+    expect(byLabel.get("Emily Henry")?.cards.map((c) => c.id)).toEqual(["c1"]);
+  });
+
+  it("groups by pack using the acquisition map, falling back to label key when packId is missing", () => {
+    const acquisitions = new Map<string, { packId: string | null; packName: string }>([
+      ["c1", { packId: "p1", packName: "Editorial Pack" }],
+      ["c2", { packId: "p1", packName: "Editorial Pack" }],
+      ["c3", { packId: "p2", packName: "Booker 2024" }],
+      // c4, c5 deliberately absent — they should cluster in "Unknown".
+    ]);
+    const result = groupCards(cards, "pack", { acquisitions });
+    const byLabel = new Map(result.map((g) => [g.label, g]));
+    expect(byLabel.get("Editorial Pack")?.cards.map((c) => c.id).sort()).toEqual(["c1", "c2"]);
+    expect(byLabel.get("Booker 2024")?.cards.map((c) => c.id)).toEqual(["c3"]);
+    expect(byLabel.get("Unknown")?.cards.map((c) => c.id).sort()).toEqual(["c4", "c5"]);
+  });
+
+  it("orders groups by count desc, then alphabetically by label", () => {
+    // Two genres of size 1 should appear alphabetically after the size-2 group.
+    const result = groupCards(cards, "genre");
+    const sizes = result.map((g) => g.cards.length);
+    // Counts monotonically non-increasing.
+    for (let i = 1; i < sizes.length; i++) {
+      expect(sizes[i]).toBeLessThanOrEqual(sizes[i - 1]);
+    }
   });
 });
 

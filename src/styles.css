@@ -76,9 +76,18 @@
 
   /* App chrome heights — used by .viewport-stage to size full-screen views.
      `--chrome-top` accounts for the sticky header; `--chrome-bottom` for
-     the mobile bottom tab bar (zeroed out at sm). */
+     the mobile bottom tab bar (zeroed out at sm).
+
+     `--chrome-bottom` is also the single source of truth for how much
+     space the bottom nav reserves from page content. The default value
+     below is a best-effort estimate used only for the first paint; the
+     `BottomTabs` component overwrites it with a measured height as soon
+     as the nav mounts. See the component for the full rationale —
+     short version: iOS PWA can report `env(safe-area-inset-bottom)` as
+     0 at mount and only resolve it later, so trusting a pure-CSS
+     calc() here leaves a visible gap on non-scrolling routes. */
   --chrome-top: calc(68px + env(safe-area-inset-top));
-  --chrome-bottom: calc(72px + env(safe-area-inset-bottom));
+  --chrome-bottom: calc(56px + env(safe-area-inset-bottom));
 }
 
 /* Light (parchment alternate) ---------------------------------------------- */
@@ -530,6 +539,54 @@ a {
   border-color: var(--chip-active-bg);
 }
 
+/* View tabs — top-level pivot control on the collection page. Scrolls
+   horizontally on narrow viewports so additional view modes can be
+   added without redesigning the toolbar. Hide the scrollbar: the scroll
+   gesture + gradient fade (via the container padding) are the visual
+   affordance. */
+.view-tabs {
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+}
+
+.view-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.view-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 1.1rem;
+  border-radius: 9999px;
+  border: 1px solid var(--btn-secondary-border);
+  background: var(--btn-secondary-bg);
+  color: var(--sea-ink-soft);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  scroll-snap-align: start;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+  backdrop-filter: blur(6px);
+}
+
+.view-tab:hover {
+  color: var(--sea-ink);
+  border-color: color-mix(in oklab, var(--lagoon) 40%, var(--btn-secondary-border));
+}
+
+.view-tab.is-active,
+.view-tab[aria-selected="true"] {
+  background: var(--chip-active-bg);
+  color: var(--chip-active-text);
+  border-color: var(--chip-active-bg);
+}
+
 /* Bottom tab bar (mobile-only) — sits above the iOS home indicator. */
 .bottom-tab {
   position: relative;
@@ -565,10 +622,12 @@ a {
 }
 
 /* Reserve space at the bottom of every page so content isn't hidden under
-   the bottom tab bar on phones. Desktop has no bottom bar so the override
-   zeroes it out. */
+   the bottom tab bar on phones. Driven by `--chrome-bottom`, which
+   `BottomTabs` keeps in sync with the nav's actual rendered height
+   (including the safe-area inset) via a ResizeObserver. Desktop
+   overrides the var to 0 below — nav is hidden there. */
 body {
-  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  padding-bottom: var(--chrome-bottom);
 }
 
 @media (min-width: 640px) {
