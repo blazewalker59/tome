@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { X } from "lucide-react";
+import { ArrowDown, ArrowUp, X } from "lucide-react";
 
 import { AdminForbidden } from "@/components/AdminForbidden";
 import { checkAdminFn } from "@/server/admin";
@@ -10,7 +10,9 @@ import {
   setBookPacksFn,
   updateBookCurationFn,
   type AdminBookRow,
+  type AdminBooksSortKey,
   type AdminPackSummary,
+  type SortDir,
 } from "@/server/catalog";
 
 /**
@@ -57,6 +59,8 @@ function BooksWorkspace() {
   const [total, setTotal] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>({ kind: "idle" });
   const [searchInput, setSearchInput] = useState("");
+  const [sort, setSort] = useState<AdminBooksSortKey>("ingested");
+  const [dir, setDir] = useState<SortDir>("desc");
   const [allPacks, setAllPacks] = useState<AdminPackSummary[]>([]);
   const [assignTarget, setAssignTarget] = useState<AdminBookRow | null>(null);
 
@@ -67,7 +71,9 @@ function BooksWorkspace() {
     const mySeq = ++reqSeqRef.current;
     const timer = setTimeout(() => {
       setLoadState({ kind: "loading" });
-      listBooksFn({ data: { search: q || undefined, limit: 200 } })
+      listBooksFn({
+        data: { search: q || undefined, limit: 200, sort, dir },
+      })
         .then((result) => {
           if (mySeq !== reqSeqRef.current) return;
           setBooks([...result.items]);
@@ -83,7 +89,25 @@ function BooksWorkspace() {
         });
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchInput]);
+  }, [searchInput, sort, dir]);
+
+  /**
+   * Clicking a sortable header either flips direction (if it was already
+   * the active column) or switches columns, seeding direction with the
+   * sensible default for that column: `desc` for ingested (newest first),
+   * `asc` for alphabetical columns.
+   */
+  const onSortHeaderClick = useCallback(
+    (nextSort: AdminBooksSortKey) => {
+      if (sort === nextSort) {
+        setDir((d) => (d === "asc" ? "desc" : "asc"));
+      } else {
+        setSort(nextSort);
+        setDir(nextSort === "ingested" ? "desc" : "asc");
+      }
+    },
+    [sort],
+  );
 
   // Packs list: load once at mount. We refetch only if the modal opens
   // after a new pack was created elsewhere in this session (rare — admin
@@ -204,7 +228,33 @@ function BooksWorkspace() {
           <table className="w-full text-sm">
             <thead className="border-b border-[var(--line)] text-left text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
               <tr>
-                <th className="w-[40%] px-4 py-3">Book</th>
+                <th className="w-[28%] px-4 py-3">
+                  <SortHeader
+                    label="Title"
+                    column="title"
+                    activeSort={sort}
+                    activeDir={dir}
+                    onClick={onSortHeaderClick}
+                  />
+                </th>
+                <th className="w-[18%] px-3 py-3">
+                  <SortHeader
+                    label="Author"
+                    column="author"
+                    activeSort={sort}
+                    activeDir={dir}
+                    onClick={onSortHeaderClick}
+                  />
+                </th>
+                <th className="px-3 py-3">
+                  <SortHeader
+                    label="Ingested"
+                    column="ingested"
+                    activeSort={sort}
+                    activeDir={dir}
+                    onClick={onSortHeaderClick}
+                  />
+                </th>
                 <th className="px-3 py-3">Genre</th>
                 <th className="px-3 py-3">Mood tags</th>
                 <th className="px-3 py-3">Rarity</th>
@@ -215,7 +265,7 @@ function BooksWorkspace() {
               {books.length === 0 && loadState.kind !== "loading" ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={7}
                     className="px-4 py-10 text-center text-xs text-[var(--sea-ink-soft)]"
                   >
                     No books match.
@@ -316,9 +366,6 @@ function BookRow({
                 </span>
               )}
             </p>
-            <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
-              {book.authors.join(", ") || "Unknown author"}
-            </p>
             <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
               hc#{book.hardcoverId}
               {book.averageRating != null &&
@@ -328,6 +375,31 @@ function BookRow({
             </p>
           </div>
         </div>
+      </td>
+      <td className="px-3 py-3 text-xs text-[var(--sea-ink)]">
+        {book.authors.length === 0 ? (
+          <span className="text-[var(--sea-ink-soft)]">Unknown</span>
+        ) : (
+          // First author on its own line (what we sort by); remaining
+          // authors follow in softer text so the column stays scannable
+          // for anthologies / collaborations.
+          <>
+            <span className="font-semibold">{book.authors[0]}</span>
+            {book.authors.length > 1 && (
+              <span className="block text-[var(--sea-ink-soft)]">
+                +{book.authors.slice(1).join(", ")}
+              </span>
+            )}
+          </>
+        )}
+      </td>
+      <td className="px-3 py-3 text-xs text-[var(--sea-ink-soft)] whitespace-nowrap">
+        <time
+          dateTime={new Date(book.createdAt).toISOString()}
+          title={new Date(book.createdAt).toLocaleString()}
+        >
+          {formatIngestDate(book.createdAt)}
+        </time>
       </td>
       <td className="px-3 py-3">
         <input
@@ -404,6 +476,76 @@ function RarityBadge({ rarity }: { rarity: string }) {
       {rarity}
     </span>
   );
+}
+
+/**
+ * Clickable column header that toggles sort on click. Shows an arrow
+ * glyph only for the currently-active column so the table stays quiet
+ * when the operator is scanning across it.
+ */
+function SortHeader({
+  label,
+  column,
+  activeSort,
+  activeDir,
+  onClick,
+}: {
+  label: string;
+  column: AdminBooksSortKey;
+  activeSort: AdminBooksSortKey;
+  activeDir: SortDir;
+  onClick: (column: AdminBooksSortKey) => void;
+}) {
+  const isActive = activeSort === column;
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(column)}
+      aria-sort={isActive ? (activeDir === "asc" ? "ascending" : "descending") : "none"}
+      className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${
+        isActive ? "text-[var(--sea-ink)]" : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+      }`}
+    >
+      {label}
+      {isActive ? (
+        activeDir === "asc" ? (
+          <ArrowUp aria-hidden className="h-3 w-3" />
+        ) : (
+          <ArrowDown aria-hidden className="h-3 w-3" />
+        )
+      ) : (
+        // Reserve the arrow slot so column widths don't jump when the
+        // active sort moves between columns.
+        <span aria-hidden className="inline-block w-3" />
+      )}
+    </button>
+  );
+}
+
+/**
+ * Compact ingest-time formatter: "2h ago", "3d ago", "Oct 14", or
+ * "Oct 14 2024" once we're in a different calendar year. Full ISO
+ * timestamp is on the `title` attribute for exact lookups.
+ */
+function formatIngestDate(epochMs: number): string {
+  const now = Date.now();
+  const diffMs = now - epochMs;
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (diffMs < minute) return "just now";
+  if (diffMs < hour) return `${Math.floor(diffMs / minute)}m ago`;
+  if (diffMs < day) return `${Math.floor(diffMs / hour)}h ago`;
+  if (diffMs < 7 * day) return `${Math.floor(diffMs / day)}d ago`;
+
+  const d = new Date(epochMs);
+  const sameYear = d.getFullYear() === new Date(now).getFullYear();
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

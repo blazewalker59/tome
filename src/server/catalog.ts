@@ -133,15 +133,25 @@ export interface AdminBookRow {
   ratingsCount: number;
   averageRating: string | null;
   publishedYear: number | null;
+  /** Epoch ms when the row was first inserted. Drives the default
+   * "most recently ingested" sort in the admin table. */
+  createdAt: number;
   /** Packs this book belongs to, slug-keyed for display. */
   packs: ReadonlyArray<{ id: string; slug: string; name: string }>;
 }
+
+export type AdminBooksSortKey = "ingested" | "author" | "title";
+export type SortDir = "asc" | "desc";
 
 export interface ListBooksInput {
   /** Optional case-insensitive substring match over title + author array. */
   search?: string;
   limit?: number;
   offset?: number;
+  /** Column to sort by. Default: `ingested` (newest first). */
+  sort?: AdminBooksSortKey;
+  /** Sort direction. Default: `desc` for ingested, `asc` for author/title. */
+  dir?: SortDir;
 }
 
 export interface ListBooksResult {
@@ -161,10 +171,20 @@ export interface ListBooksResult {
 export const listBooksFn = createServerFn({ method: "GET" })
   .inputValidator((raw: unknown): ListBooksInput => {
     const r = (raw ?? {}) as Record<string, unknown>;
+    const sortRaw = typeof r.sort === "string" ? r.sort : undefined;
+    const sort: AdminBooksSortKey | undefined =
+      sortRaw === "ingested" || sortRaw === "author" || sortRaw === "title"
+        ? sortRaw
+        : undefined;
+    const dirRaw = typeof r.dir === "string" ? r.dir : undefined;
+    const dir: SortDir | undefined =
+      dirRaw === "asc" || dirRaw === "desc" ? dirRaw : undefined;
     return {
       search: typeof r.search === "string" ? r.search : undefined,
       limit: r.limit === undefined ? undefined : Number(r.limit),
       offset: r.offset === undefined ? undefined : Number(r.offset),
+      sort,
+      dir,
     };
   })
   .handler(
@@ -175,6 +195,11 @@ export const listBooksFn = createServerFn({ method: "GET" })
       const limit = Math.min(Math.max(data.limit ?? 50, 1), 200);
       const offset = Math.max(data.offset ?? 0, 0);
       const search = data.search?.trim() ?? "";
+      const sort: AdminBooksSortKey = data.sort ?? "ingested";
+      // Sensible default direction per column: newest-first for ingested,
+      // A→Z for the alphabetical columns.
+      const dir: SortDir =
+        data.dir ?? (sort === "ingested" ? "desc" : "asc");
 
       // `authors` is `text[]`; we search it by unnesting into a single
       // whitespace-separated string via `array_to_string` + `ilike`. Not
@@ -185,6 +210,33 @@ export const listBooksFn = createServerFn({ method: "GET" })
             sql`array_to_string(${books.authors}, ' ') ilike ${"%" + search + "%"}`,
           )
         : undefined;
+
+      // Sorting.
+      //
+      //   * `ingested` → `books.created_at`. Straightforward timestamp sort.
+      //   * `title`    → plain text sort on `books.title`.
+      //   * `author`   → sort on the *first* author only. `authors` is a
+      //     `text[]`; `authors[1]` in SQL (1-indexed) collapses the array
+      //     to a single sortable text value. Books with no authors (empty
+      //     array) get NULL there; `NULLS LAST` pushes them to the bottom
+      //     regardless of direction so they don't hog the top of A→Z.
+      //
+      // We always add `books.id` as a secondary tiebreaker so paging is
+      // stable across calls even when primary-sort values collide.
+      const primary =
+        sort === "ingested"
+          ? books.createdAt
+          : sort === "title"
+          ? books.title
+          : sql`${books.authors}[1]`;
+      const orderExpr =
+        sort === "author"
+          ? dir === "asc"
+            ? sql`${primary} asc nulls last, ${books.id} asc`
+            : sql`${primary} desc nulls last, ${books.id} desc`
+          : dir === "asc"
+          ? sql`${primary} asc, ${books.id} asc`
+          : sql`${primary} desc, ${books.id} desc`;
 
       const baseQuery = database
         .select({
@@ -199,11 +251,12 @@ export const listBooksFn = createServerFn({ method: "GET" })
           ratingsCount: books.ratingsCount,
           averageRating: books.averageRating,
           publishedYear: books.publishedYear,
+          createdAt: books.createdAt,
         })
         .from(books);
 
       const rows = await (searchClause ? baseQuery.where(searchClause) : baseQuery)
-        .orderBy(asc(books.title))
+        .orderBy(orderExpr)
         .limit(limit)
         .offset(offset);
 
@@ -238,7 +291,11 @@ export const listBooksFn = createServerFn({ method: "GET" })
       }
 
       return {
-        items: rows.map((r) => ({ ...r, packs: packsByBook.get(r.id) ?? [] })),
+        items: rows.map((r) => ({
+          ...r,
+          createdAt: r.createdAt.getTime(),
+          packs: packsByBook.get(r.id) ?? [],
+        })),
         total,
       };
     }),
