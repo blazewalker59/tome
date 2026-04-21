@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { signInWithGoogle, useAuth } from "@/lib/supabase/auth";
+import { signInWithGoogle, useAuth } from "@/lib/auth/hooks";
 
 export const Route = createFileRoute("/sign-in")({
   component: SignInPage,

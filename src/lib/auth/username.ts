@@ -19,11 +19,11 @@
  * dashes removed) and retry once. If THAT is somehow also taken we fall
  * through to the raw 8-char uuid prefix which is effectively unique.
  */
-import type { NeonHttpDatabase } from "drizzle-orm/neon-http";
+import type { NeonDatabase } from "drizzle-orm/neon-serverless";
 import { eq } from "drizzle-orm";
 import * as schema from "@/db/schema";
 
-type DB = NeonHttpDatabase<typeof schema>;
+type DB = NeonDatabase<typeof schema>;
 
 const USERNAME_RE = /[^a-z0-9_-]+/g;
 
