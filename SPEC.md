@@ -116,7 +116,7 @@ A **deck** is a user-curated subset of cards from their collection.
 
 ## 6. Social (v1)
 
-- **Auth:** Supabase Google OAuth.
+- **Auth:** Better Auth with Google OAuth.
 - **Profile:** username, avatar, joined date, public collection count, public deck count.
 - **Following:** users can follow other users.
 - **Feed:** chronological feed of (a) decks published by people you follow, (b) `legendary` pulls from people you follow.
@@ -149,7 +149,8 @@ These exist as future work, explicitly **not** in v1:
 | UI           | React 19 + Tailwind v4                      |
 | Components   | shadcn/ui (manual install)                  |
 | Animation    | Framer Motion (pack-rip reveal)             |
-| Auth + DB    | Supabase (Postgres + Google OAuth)          |
+| DB           | Neon Postgres                               |
+| Auth         | Better Auth (Google OAuth)                  |
 | ORM          | Drizzle                                     |
 | Books data   | Hardcover GraphQL API (cached in our DB)    |
 | Client cache | TanStack Query                              |
@@ -162,10 +163,10 @@ These exist as future work, explicitly **not** in v1:
 ## 9. Build Order (MVP slice)
 
 1. Scaffold + toolchain proof (`vp dev`, `vp test` working)
-2. Drizzle schema + Supabase migrations
+2. Drizzle schema + Neon migrations
 3. Hardcover ingestion script (one-shot, populates `books` from a list of IDs)
 4. Seed 3 editorial packs manually
-5. Auth (Supabase Google OAuth)
+5. Auth (Better Auth + Google OAuth)
 6. Pack-rip flow with reveal animation
 7. Collection view (filter by genre/rarity/mood)
 8. Deck builder (drag from collection → deck)

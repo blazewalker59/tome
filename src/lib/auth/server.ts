@@ -53,6 +53,16 @@ export async function getAuth() {
     }),
     secret,
     baseURL,
+    // `baseURL` is the canonical origin used to build OAuth callback URLs.
+    // `trustedOrigins` additionally whitelists origins that may send auth
+    // requests (CSRF check). In local dev `wrangler dev` serves on :8787
+    // while `vite dev` serves on :3000 — we allow both so either entry
+    // point works without editing env between runs. Production only ever
+    // hits `BETTER_AUTH_URL`, so the extra localhost entries are harmless.
+    trustedOrigins: [
+      "http://localhost:3000",
+      "http://localhost:8787",
+    ],
     socialProviders: {
       google: {
         clientId: googleClientId,

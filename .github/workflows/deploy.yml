@@ -38,14 +38,11 @@ jobs:
       - name: Run tests
         run: pnpm test
 
-      # `VITE_*` vars are baked into the client bundle by Vite at build
-      # time, so they MUST be present in the shell that runs the build.
-      # These come from repo-level GitHub secrets (Settings → Secrets
-      # and variables → Actions).
+      # No build-time public env vars — the client bundle contains no
+      # embedded auth/DB config. Better Auth's browser client discovers
+      # its origin from `window.location.origin` at runtime, and all
+      # server secrets are already set via `wrangler secret put`.
       - name: Build for Cloudflare Workers
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: pnpm build:cf
 
       # Runtime server vars (DATABASE_URL etc.) are NOT baked in — they
