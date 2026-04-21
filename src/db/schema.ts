@@ -194,6 +194,14 @@ export const books = pgTable(
 
     /** Hardcover ratings count — input to rarity bucket. */
     ratingsCount: integer("ratings_count").notNull().default(0),
+    /**
+     * Hardcover average rating (0–5), stored as text to preserve precision
+     * without pulling in a numeric/decimal helper. Nullable: brand-new books
+     * can have no ratings yet. Input to the rarity hybrid score alongside
+     * `ratingsCount`; books below the min-ratings floor (see
+     * `src/lib/cards/rarity.ts`) are capped at `rare` regardless of average.
+     */
+    averageRating: text("average_rating"),
 
     rawMetadata: jsonb("raw_metadata"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

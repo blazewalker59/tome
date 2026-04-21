@@ -298,8 +298,14 @@ pre code {
 }
 
 .page-wrap {
-  width: min(1080px, calc(100% - 2rem));
+  /* Horizontal gutters respect the iOS landscape notch / rounded corners
+     via env(safe-area-inset-left/right). The base 1rem padding still
+     applies; the inset is max()'d in so we never go tighter than 1rem
+     even on devices that report 0px insets. */
+  width: min(1080px, 100%);
   margin-inline: auto;
+  padding-inline: max(1rem, env(safe-area-inset-left))
+    max(1rem, env(safe-area-inset-right));
 }
 
 .display-title {

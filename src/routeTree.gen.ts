@@ -13,6 +13,11 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as RipRouteImport } from './routes/rip'
 import { Route as CollectionRouteImport } from './routes/collection'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminIngestRouteImport } from './routes/admin.ingest'
+import { Route as AdminBooksRouteImport } from './routes/admin.books'
+import { Route as AdminPacksIndexRouteImport } from './routes/admin.packs.index'
+import { Route as AdminPacksSlugRouteImport } from './routes/admin.packs.$slug'
 
 const SignInRoute = SignInRouteImport.update({
   id: '/sign-in',
@@ -34,18 +39,53 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/admin/',
+  path: '/admin/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIngestRoute = AdminIngestRouteImport.update({
+  id: '/admin/ingest',
+  path: '/admin/ingest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminBooksRoute = AdminBooksRouteImport.update({
+  id: '/admin/books',
+  path: '/admin/books',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminPacksIndexRoute = AdminPacksIndexRouteImport.update({
+  id: '/admin/packs/',
+  path: '/admin/packs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminPacksSlugRoute = AdminPacksSlugRouteImport.update({
+  id: '/admin/packs/$slug',
+  path: '/admin/packs/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
   '/rip': typeof RipRoute
   '/sign-in': typeof SignInRoute
+  '/admin/books': typeof AdminBooksRoute
+  '/admin/ingest': typeof AdminIngestRoute
+  '/admin/': typeof AdminIndexRoute
+  '/admin/packs/$slug': typeof AdminPacksSlugRoute
+  '/admin/packs/': typeof AdminPacksIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
   '/rip': typeof RipRoute
   '/sign-in': typeof SignInRoute
+  '/admin/books': typeof AdminBooksRoute
+  '/admin/ingest': typeof AdminIngestRoute
+  '/admin': typeof AdminIndexRoute
+  '/admin/packs/$slug': typeof AdminPacksSlugRoute
+  '/admin/packs': typeof AdminPacksIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +93,46 @@ export interface FileRoutesById {
   '/collection': typeof CollectionRoute
   '/rip': typeof RipRoute
   '/sign-in': typeof SignInRoute
+  '/admin/books': typeof AdminBooksRoute
+  '/admin/ingest': typeof AdminIngestRoute
+  '/admin/': typeof AdminIndexRoute
+  '/admin/packs/$slug': typeof AdminPacksSlugRoute
+  '/admin/packs/': typeof AdminPacksIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/collection' | '/rip' | '/sign-in'
+  fullPaths:
+    | '/'
+    | '/collection'
+    | '/rip'
+    | '/sign-in'
+    | '/admin/books'
+    | '/admin/ingest'
+    | '/admin/'
+    | '/admin/packs/$slug'
+    | '/admin/packs/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/collection' | '/rip' | '/sign-in'
-  id: '__root__' | '/' | '/collection' | '/rip' | '/sign-in'
+  to:
+    | '/'
+    | '/collection'
+    | '/rip'
+    | '/sign-in'
+    | '/admin/books'
+    | '/admin/ingest'
+    | '/admin'
+    | '/admin/packs/$slug'
+    | '/admin/packs'
+  id:
+    | '__root__'
+    | '/'
+    | '/collection'
+    | '/rip'
+    | '/sign-in'
+    | '/admin/books'
+    | '/admin/ingest'
+    | '/admin/'
+    | '/admin/packs/$slug'
+    | '/admin/packs/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,6 +140,11 @@ export interface RootRouteChildren {
   CollectionRoute: typeof CollectionRoute
   RipRoute: typeof RipRoute
   SignInRoute: typeof SignInRoute
+  AdminBooksRoute: typeof AdminBooksRoute
+  AdminIngestRoute: typeof AdminIngestRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+  AdminPacksSlugRoute: typeof AdminPacksSlugRoute
+  AdminPacksIndexRoute: typeof AdminPacksIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -99,6 +177,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/': {
+      id: '/admin/'
+      path: '/admin'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/ingest': {
+      id: '/admin/ingest'
+      path: '/admin/ingest'
+      fullPath: '/admin/ingest'
+      preLoaderRoute: typeof AdminIngestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/books': {
+      id: '/admin/books'
+      path: '/admin/books'
+      fullPath: '/admin/books'
+      preLoaderRoute: typeof AdminBooksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/packs/': {
+      id: '/admin/packs/'
+      path: '/admin/packs'
+      fullPath: '/admin/packs/'
+      preLoaderRoute: typeof AdminPacksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/packs/$slug': {
+      id: '/admin/packs/$slug'
+      path: '/admin/packs/$slug'
+      fullPath: '/admin/packs/$slug'
+      preLoaderRoute: typeof AdminPacksSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -107,6 +220,11 @@ const rootRouteChildren: RootRouteChildren = {
   CollectionRoute: CollectionRoute,
   RipRoute: RipRoute,
   SignInRoute: SignInRoute,
+  AdminBooksRoute: AdminBooksRoute,
+  AdminIngestRoute: AdminIngestRoute,
+  AdminIndexRoute: AdminIndexRoute,
+  AdminPacksSlugRoute: AdminPacksSlugRoute,
+  AdminPacksIndexRoute: AdminPacksIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

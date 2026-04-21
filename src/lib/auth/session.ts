@@ -19,6 +19,7 @@
  */
 
 import { getRequest } from "@tanstack/react-start/server";
+import { getEnv } from "@/lib/env";
 import { getAuth } from "./server";
 
 /**
@@ -48,6 +49,53 @@ export async function requireSessionUser() {
   const user = await getSessionUser();
   if (!user) {
     throw new Error("Not authenticated");
+  }
+  return user;
+}
+
+/**
+ * Parse the ADMIN_EMAILS env var into a normalized Set.
+ *
+ * Format: comma-separated list of email addresses, e.g.
+ * `alice@example.com, bob@example.com`. Whitespace around entries is
+ * trimmed; comparison is case-insensitive (emails are RFC 5321
+ * case-insensitive on the domain and most providers treat the local
+ * part as case-insensitive too). Empty entries are dropped so a trailing
+ * comma doesn't accidentally whitelist the empty string.
+ *
+ * Exported for tests. Production callers should use `requireAdmin()`.
+ */
+export async function getAdminEmails(): Promise<Set<string>> {
+  const raw = await getEnv("ADMIN_EMAILS");
+  if (!raw) return new Set();
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.length > 0),
+  );
+}
+
+/**
+ * Gate a server function to users whose email appears in the
+ * `ADMIN_EMAILS` env var (comma-separated). Used by the Hardcover
+ * ingestion endpoints and any other catalog-editing surface.
+ *
+ * Fails closed: if `ADMIN_EMAILS` is unset, NO user is admin. That's
+ * deliberate — leaving the var blank in production should make admin
+ * routes unreachable, not world-open.
+ *
+ * Throws the same "Not authenticated" error shape as `requireSessionUser`
+ * for the anonymous case, and a distinct "Not authorized" error for
+ * logged-in-but-not-admin. Callers that want to render a tailored 403
+ * UI can `.catch()` on the error message.
+ */
+export async function requireAdmin() {
+  const user = await requireSessionUser();
+  const allowed = await getAdminEmails();
+  const email = user.email?.toLowerCase();
+  if (!email || !allowed.has(email)) {
+    throw new Error("Not authorized");
   }
   return user;
 }

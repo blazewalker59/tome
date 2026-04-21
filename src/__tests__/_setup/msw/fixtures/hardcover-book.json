@@ -1,13 +1,15 @@
 {
-  "books_by_pk": {
-    "id": 12345,
-    "title": "The Long Way to a Small, Angry Planet",
-    "contributions": [{ "author": { "name": "Becky Chambers" } }],
-    "image": { "url": "https://assets.hardcover.app/covers/12345.jpg" },
-    "description": "A wandering crew of misfits aboard a ship that punches holes in space.",
-    "pages": 441,
-    "release_year": 2014,
-    "ratings_count": 42000,
-    "cached_tags": { "Genre": ["Science Fiction"] }
-  }
+  "id": 12345,
+  "title": "The Long Way to a Small, Angry Planet",
+  "subtitle": null,
+  "description": "A wandering crew of misfits aboard a ship that punches holes in space.",
+  "pages": 441,
+  "release_year": 2014,
+  "rating": 4.32,
+  "ratings_count": 42000,
+  "cached_image": { "url": "https://assets.hardcover.app/covers/12345.jpg" },
+  "image": { "url": "https://assets.hardcover.app/covers/12345.jpg" },
+  "contributions": [
+    { "contribution": "Author", "author": { "name": "Becky Chambers" } }
+  ]
 }

@@ -16,7 +16,9 @@
  *     we never touch a bearer token on the client.
  */
 
+import { useEffect, useState } from "react";
 import { authClient, useSession } from "./client";
+import { checkAdminFn } from "@/server/admin";
 
 export type AuthStatus = "loading" | "authenticated" | "anonymous";
 
@@ -69,4 +71,50 @@ export async function signInWithGoogle(): Promise<void> {
   if (error) {
     throw new Error(error.message ?? "Google sign-in failed");
   }
+}
+
+/**
+ * Is the currently-authenticated user on the ADMIN_EMAILS allowlist?
+ *
+ * Runs a one-shot server call (`checkAdminFn`) when auth flips to
+ * `authenticated`. Returns:
+ *   - `undefined` while the check is pending (including while auth is
+ *     still loading) — lets callers render nothing rather than flash a
+ *     link that might vanish.
+ *   - `false` for anonymous users or non-admin authenticated users.
+ *   - `true` only for users whose session email matches the allowlist.
+ *
+ * The admin status is cached in local component state; sign-out triggers
+ * the effect to re-resolve (and reset to `false`). We don't cache globally
+ * because the Header is the only consumer today, and admin status changes
+ * are rare + operator-driven (env var edit + redeploy).
+ */
+export function useIsAdmin(): boolean | undefined {
+  const { status } = useAuth();
+  const [isAdmin, setIsAdmin] = useState<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    if (status === "loading") return;
+    if (status === "anonymous") {
+      setIsAdmin(false);
+      return;
+    }
+    let cancelled = false;
+    setIsAdmin(undefined);
+    checkAdminFn()
+      .then((r) => {
+        if (!cancelled) setIsAdmin(r.isAdmin);
+      })
+      .catch(() => {
+        // Fail closed — if the probe errors, treat as non-admin. The
+        // ingest page itself re-checks server-side so this can't leak
+        // access; it only affects whether the nav link is shown.
+        if (!cancelled) setIsAdmin(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [status]);
+
+  return isAdmin;
 }

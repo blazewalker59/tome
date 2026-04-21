@@ -22,3 +22,9 @@ BETTER_AUTH_URL=http://localhost:8787
 # in Google Cloud Console).
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
+
+# Hardcover GraphQL API token (server-only). See .env.example.
+HARDCOVER_API_TOKEN=
+
+# Comma-separated list of admin emails. See .env.example.
+ADMIN_EMAILS=

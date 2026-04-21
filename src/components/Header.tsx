@@ -1,7 +1,8 @@
+import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { LogOut } from "lucide-react";
+import { BookOpen, LogOut, ShieldCheck } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
-import { signOut, useAuth } from "@/lib/auth/hooks";
+import { signOut, useAuth, useIsAdmin } from "@/lib/auth/hooks";
 
 /**
  * Top app bar — Tome wordmark + theme toggle + auth state.
@@ -11,7 +12,8 @@ import { signOut, useAuth } from "@/lib/auth/hooks";
  *
  * Auth: while the session is still loading we render nothing in the auth
  * slot so we don't flash a "Sign in" link to a logged-in user. Once known,
- * we either show a user pill (avatar + sign-out) or a "Sign in" link.
+ * we either show a profile button (opens a dropdown with admin shortcut +
+ * sign-out) or a "Sign in" link.
  */
 export default function Header() {
   return (
@@ -21,7 +23,7 @@ export default function Header() {
           to="/"
           className="inline-flex h-11 items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-4 text-sm font-semibold text-[var(--sea-ink)] no-underline"
         >
-          <span className="h-2 w-2 rounded-full bg-[linear-gradient(90deg,var(--lagoon),var(--palm))]" />
+          <BookOpen aria-hidden className="h-5 w-5 text-[var(--lagoon)]" />
           Tome
         </Link>
 
@@ -53,6 +55,7 @@ export default function Header() {
 
 function AuthSlot() {
   const { status, user } = useAuth();
+  const isAdmin = useIsAdmin();
 
   if (status === "loading") {
     // Reserve the same horizontal footprint as a "Sign in" link so the
@@ -84,30 +87,77 @@ function AuthSlot() {
   const avatarUrl = user?.avatarUrl ?? user?.image ?? undefined;
 
   return (
-    <div className="flex items-center gap-1.5">
-      <span
-        className="hidden h-9 items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 pr-3 text-xs font-semibold text-[var(--sea-ink)] sm:inline-flex"
-        title={label}
-      >
-        {avatarUrl ? (
-          <img
-            src={avatarUrl}
-            alt=""
-            className="h-6 w-6 rounded-full object-cover"
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          <span className="grid h-6 w-6 place-items-center rounded-full bg-[var(--lagoon)] text-[10px] font-bold text-[var(--on-accent)]">
-            {initial}
-          </span>
-        )}
-        <span className="max-w-[120px] truncate">{label}</span>
-      </span>
+    <ProfileMenu
+      label={label}
+      email={user?.email ?? null}
+      initial={initial}
+      avatarUrl={avatarUrl}
+      isAdmin={isAdmin === true}
+    />
+  );
+}
 
-      {/* Mobile-only avatar button */}
-      <span
-        className="grid h-9 w-9 place-items-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] sm:hidden"
-        aria-label={label}
+/**
+ * Profile button that toggles a dropdown with account info, an Admin
+ * shortcut (only when `isAdmin`), and Sign out.
+ *
+ * Keyboard / a11y:
+ *   - Button has `aria-haspopup="menu"` and `aria-expanded`.
+ *   - Escape closes and returns focus to the button.
+ *   - Outside clicks close.
+ *   - Menu items are plain anchors/buttons for simplicity; we don't
+ *     implement full roving-tabindex arrow-key nav because the list is
+ *     short (≤ 3 items) and tab order through anchors is already sensible.
+ */
+function ProfileMenu({
+  label,
+  email,
+  initial,
+  avatarUrl,
+  isAdmin,
+}: {
+  label: string;
+  email: string | null;
+  initial: string;
+  avatarUrl: string | undefined;
+  isAdmin: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    }
+    function onClick(e: MouseEvent) {
+      const t = e.target as Node;
+      if (buttonRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Account menu for ${label}`}
+        title={label}
+        className="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-1 pr-1 text-xs font-semibold text-[var(--sea-ink)] hover:bg-[var(--link-bg-hover)] sm:pr-3"
       >
         {avatarUrl ? (
           <img
@@ -117,21 +167,59 @@ function AuthSlot() {
             referrerPolicy="no-referrer"
           />
         ) : (
-          <span className="grid h-7 w-7 place-items-center rounded-full bg-[var(--lagoon)] text-xs font-bold text-[var(--on-accent)]">
+          <span className="grid h-7 w-7 place-items-center rounded-full bg-[var(--lagoon)] text-[10px] font-bold text-[var(--on-accent)]">
             {initial}
           </span>
         )}
-      </span>
-
-      <button
-        type="button"
-        onClick={() => void signOut()}
-        className="grid h-9 w-9 place-items-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
-        aria-label="Sign out"
-        title="Sign out"
-      >
-        <LogOut className="h-4 w-4" />
+        <span className="hidden max-w-[120px] truncate sm:inline">{label}</span>
       </button>
+
+      {open && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label="Account"
+          // Solid --bg-base rather than the translucent --header-bg
+          // because the dropdown extends past the sticky header's box
+          // and so can't inherit its backdrop blur. Mobile Safari in
+          // particular drops backdrop-filter on descendants that escape
+          // the filtered ancestor's bounds, so any alpha here would
+          // show the page scrolling through.
+          className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--bg-base)] shadow-lg"
+        >
+          <div className="border-b border-[var(--line)] px-4 py-3">
+            <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">{label}</p>
+            {email && email !== label && (
+              <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">{email}</p>
+            )}
+          </div>
+
+          {isAdmin && (
+            <Link
+              to="/admin"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 border-b border-[var(--line)] px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] no-underline hover:bg-[var(--link-bg-hover)]"
+            >
+              <ShieldCheck aria-hidden className="h-4 w-4 text-[var(--lagoon)]" />
+              <span>Admin</span>
+            </Link>
+          )}
+
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              void signOut();
+            }}
+            className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-[var(--sea-ink-soft)] hover:bg-[var(--link-bg-hover)] hover:text-[var(--sea-ink)]"
+          >
+            <LogOut aria-hidden className="h-4 w-4" />
+            <span>Sign out</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

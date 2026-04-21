@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 
 /**
  * Server-side session reader test.
@@ -26,7 +26,7 @@ vi.mock("@tanstack/react-start/server", () => ({
   getRequest: () => requestMock,
 }));
 
-import { getSessionUser, requireSessionUser } from "@/lib/auth/session";
+import { getAdminEmails, getSessionUser, requireAdmin, requireSessionUser } from "@/lib/auth/session";
 
 describe("getSessionUser", () => {
   it("returns null when Better Auth reports no session", async () => {
@@ -57,5 +57,69 @@ describe("requireSessionUser", () => {
     const user = { id: "u1", username: "you" };
     getSessionMock.mockResolvedValueOnce({ user, session: { id: "s1" } });
     await expect(requireSessionUser()).resolves.toEqual(user);
+  });
+});
+
+describe("getAdminEmails", () => {
+  afterEach(() => {
+    delete process.env.ADMIN_EMAILS;
+  });
+
+  it("returns an empty set when ADMIN_EMAILS is unset (fail-closed)", async () => {
+    expect(await getAdminEmails()).toEqual(new Set());
+  });
+
+  it("parses a comma-separated list with whitespace tolerance", async () => {
+    process.env.ADMIN_EMAILS = " alice@example.com , Bob@Example.com ";
+    expect(await getAdminEmails()).toEqual(
+      new Set(["alice@example.com", "bob@example.com"]),
+    );
+  });
+
+  it("drops empty entries (trailing/double commas)", async () => {
+    process.env.ADMIN_EMAILS = "alice@example.com,, ,";
+    expect(await getAdminEmails()).toEqual(new Set(["alice@example.com"]));
+  });
+});
+
+describe("requireAdmin", () => {
+  afterEach(() => {
+    delete process.env.ADMIN_EMAILS;
+  });
+
+  it("throws 'Not authenticated' for anonymous callers", async () => {
+    getSessionMock.mockResolvedValueOnce(null);
+    process.env.ADMIN_EMAILS = "alice@example.com";
+    await expect(requireAdmin()).rejects.toThrow(/not authenticated/i);
+  });
+
+  it("throws 'Not authorized' for logged-in non-admins", async () => {
+    getSessionMock.mockResolvedValueOnce({
+      user: { id: "u1", email: "bob@example.com" },
+    });
+    process.env.ADMIN_EMAILS = "alice@example.com";
+    await expect(requireAdmin()).rejects.toThrow(/not authorized/i);
+  });
+
+  it("throws 'Not authorized' when ADMIN_EMAILS is unset (fail-closed)", async () => {
+    getSessionMock.mockResolvedValueOnce({
+      user: { id: "u1", email: "alice@example.com" },
+    });
+    await expect(requireAdmin()).rejects.toThrow(/not authorized/i);
+  });
+
+  it("returns the user when their email matches (case-insensitive)", async () => {
+    const user = { id: "u1", email: "Alice@Example.com" };
+    getSessionMock.mockResolvedValueOnce({ user });
+    process.env.ADMIN_EMAILS = "alice@example.com";
+    await expect(requireAdmin()).resolves.toEqual(user);
+  });
+
+  it("throws 'Not authorized' for a session user with no email", async () => {
+    getSessionMock.mockResolvedValueOnce({
+      user: { id: "u1" /* no email */ },
+    });
+    process.env.ADMIN_EMAILS = "alice@example.com";
+    await expect(requireAdmin()).rejects.toThrow(/not authorized/i);
   });
 });
