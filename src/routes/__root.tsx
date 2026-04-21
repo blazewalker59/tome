@@ -51,7 +51,7 @@ export const Route = createRootRoute({
       // iOS status-bar icon contrast when not using black-translucent.
       {
         name: "theme-color",
-        content: "#1f8a94",
+        content: "#3d7a4f",
       },
     ],
     links: [

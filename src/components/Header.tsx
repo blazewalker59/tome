@@ -1,30 +1,38 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { BookOpen, LogOut, ShieldCheck } from "lucide-react";
-import ThemeToggle from "./ThemeToggle";
+import { LogIn, LogOut, ShieldCheck, User, BookOpen } from "lucide-react";
+import ThemeToggle, { ThemeSegmented } from "./ThemeToggle";
 import { signOut, useAuth, useIsAdmin } from "@/lib/auth/hooks";
 
 /**
- * Top app bar — Tome wordmark + theme toggle + auth state.
- * On mobile this is the only chrome at the top; primary navigation lives
- * in the bottom tab bar (see `BottomTabs`). On desktop (≥sm) the top bar
- * also carries the inline nav links.
+ * Top app bar.
  *
- * Auth: while the session is still loading we render nothing in the auth
- * slot so we don't flash a "Sign in" link to a logged-in user. Once known,
- * we either show a profile button (opens a dropdown with admin shortcut +
- * sign-out) or a "Sign in" link.
+ * Mobile (< sm): collapsed to essentials — the Tome wordmark on the
+ * left and an account/profile button on the right. Everything else
+ * (theme selector, sign-in link, sign-out, admin shortcut) lives
+ * inside the dropdown. Primary navigation lives in the bottom tab bar
+ * (see `BottomTabs`) so the top bar is intentionally spare.
+ *
+ * Desktop (≥ sm): the top bar also carries the inline nav links and
+ * the stand-alone theme-mode pill.
+ *
+ * Auth: while the session is still loading we render a neutral
+ * placeholder so we don't flash a "Sign in" UI to a logged-in user.
+ * Once resolved the button either shows the user's avatar (authed)
+ * or a generic silhouette (anonymous) — both open the same dropdown
+ * shell, just with different items inside.
  */
 export default function Header() {
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--header-bg)] px-4 pt-[env(safe-area-inset-top)] backdrop-blur-lg">
-      <nav className="page-wrap flex items-center gap-3 py-3 sm:py-4">
+      <nav className="page-wrap flex items-center gap-3 py-2 sm:py-4">
         <Link
           to="/"
-          className="inline-flex h-11 items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-4 text-sm font-semibold text-[var(--sea-ink)] no-underline"
+          aria-label="Tome — home"
+          className="inline-flex items-center gap-2 rounded-full text-sm font-semibold text-[var(--sea-ink)] no-underline sm:h-11 sm:border sm:border-[var(--chip-line)] sm:bg-[var(--chip-bg)] sm:px-4"
         >
-          <BookOpen aria-hidden className="h-5 w-5 text-[var(--lagoon)]" />
-          Tome
+          <BookOpen aria-hidden className="h-7 w-7 text-[var(--lagoon)] sm:h-5 sm:w-5" />
+          <span className="hidden sm:inline">Tome</span>
         </Link>
 
         {/* Desktop-only inline nav */}
@@ -45,39 +53,32 @@ export default function Header() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <AuthSlot />
-          <ThemeToggle />
+          <AccountSlot />
+          {/* Desktop-only standalone theme pill. On mobile the theme
+              control is inside the account dropdown instead. */}
+          <div className="hidden sm:block">
+            <ThemeToggle />
+          </div>
         </div>
       </nav>
     </header>
   );
 }
 
-function AuthSlot() {
+function AccountSlot() {
   const { status, user } = useAuth();
   const isAdmin = useIsAdmin();
 
   if (status === "loading") {
-    // Reserve the same horizontal footprint as a "Sign in" link so the
-    // layout doesn't jump when auth resolves.
-    return <span className="h-9 w-[72px]" aria-hidden />;
+    // Reserve the circular footprint of the final button so the layout
+    // doesn't jump when auth resolves.
+    return <span className="h-9 w-9" aria-hidden />;
   }
 
   if (status === "anonymous") {
-    return (
-      <Link
-        to="/sign-in"
-        className="inline-flex h-9 items-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink)] no-underline hover:bg-[var(--link-bg-hover)]"
-      >
-        Sign in
-      </Link>
-    );
+    return <AccountMenu isAdmin={false} />;
   }
 
-  // Authenticated — pull a friendly label off the user. Better Auth
-  // populates `name` from the Google profile; we also fill `displayName`
-  // in the `user.create.before` hook. Prefer the human-entered display
-  // name, fall back to Google's `name`, then email, then a generic label.
   const label =
     user?.displayName ??
     user?.name ??
@@ -87,7 +88,7 @@ function AuthSlot() {
   const avatarUrl = user?.avatarUrl ?? user?.image ?? undefined;
 
   return (
-    <ProfileMenu
+    <AccountMenu
       label={label}
       email={user?.email ?? null}
       initial={initial}
@@ -98,30 +99,33 @@ function AuthSlot() {
 }
 
 /**
- * Profile button that toggles a dropdown with account info, an Admin
- * shortcut (only when `isAdmin`), and Sign out.
+ * Single account dropdown used for both anonymous and authenticated
+ * states so the header has exactly one trailing control regardless of
+ * auth. Contents differ:
+ *
+ *   - Anonymous: theme selector + "Sign in" link.
+ *   - Authenticated: profile header block, (optional) Admin shortcut,
+ *     theme selector, Sign out.
  *
  * Keyboard / a11y:
  *   - Button has `aria-haspopup="menu"` and `aria-expanded`.
  *   - Escape closes and returns focus to the button.
  *   - Outside clicks close.
- *   - Menu items are plain anchors/buttons for simplicity; we don't
- *     implement full roving-tabindex arrow-key nav because the list is
- *     short (≤ 3 items) and tab order through anchors is already sensible.
  */
-function ProfileMenu({
+function AccountMenu({
   label,
   email,
   initial,
   avatarUrl,
   isAdmin,
 }: {
-  label: string;
-  email: string | null;
-  initial: string;
-  avatarUrl: string | undefined;
+  label?: string;
+  email?: string | null;
+  initial?: string;
+  avatarUrl?: string | undefined;
   isAdmin: boolean;
 }) {
+  const authed = Boolean(label);
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -147,6 +151,8 @@ function ProfileMenu({
     };
   }, [open]);
 
+  const buttonLabel = authed ? `Account menu for ${label}` : "Account menu";
+
   return (
     <div className="relative">
       <button
@@ -155,23 +161,24 @@ function ProfileMenu({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`Account menu for ${label}`}
-        title={label}
-        className="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-1 pr-1 text-xs font-semibold text-[var(--sea-ink)] hover:bg-[var(--link-bg-hover)] sm:pr-3"
+        aria-label={buttonLabel}
+        title={authed ? label : "Account"}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink)] hover:bg-[var(--link-bg-hover)]"
       >
-        {avatarUrl ? (
+        {authed && avatarUrl ? (
           <img
             src={avatarUrl}
             alt=""
             className="h-7 w-7 rounded-full object-cover"
             referrerPolicy="no-referrer"
           />
-        ) : (
+        ) : authed ? (
           <span className="grid h-7 w-7 place-items-center rounded-full bg-[var(--lagoon)] text-[10px] font-bold text-[var(--on-accent)]">
             {initial}
           </span>
+        ) : (
+          <User aria-hidden className="h-4 w-4" />
         )}
-        <span className="hidden max-w-[120px] truncate sm:inline">{label}</span>
       </button>
 
       {open && (
@@ -187,14 +194,16 @@ function ProfileMenu({
           // show the page scrolling through.
           className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--bg-base)] shadow-lg"
         >
-          <div className="border-b border-[var(--line)] px-4 py-3">
-            <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">{label}</p>
-            {email && email !== label && (
-              <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">{email}</p>
-            )}
-          </div>
+          {authed && (
+            <div className="border-b border-[var(--line)] px-4 py-3">
+              <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">{label}</p>
+              {email && email !== label && (
+                <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">{email}</p>
+              )}
+            </div>
+          )}
 
-          {isAdmin && (
+          {authed && isAdmin && (
             <Link
               to="/admin"
               role="menuitem"
@@ -206,18 +215,37 @@ function ProfileMenu({
             </Link>
           )}
 
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              void signOut();
-            }}
-            className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-[var(--sea-ink-soft)] hover:bg-[var(--link-bg-hover)] hover:text-[var(--sea-ink)]"
-          >
-            <LogOut aria-hidden className="h-4 w-4" />
-            <span>Sign out</span>
-          </button>
+          <div className="border-b border-[var(--line)] px-4 py-3">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+              Theme
+            </p>
+            <ThemeSegmented />
+          </div>
+
+          {authed ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                void signOut();
+              }}
+              className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-[var(--sea-ink-soft)] hover:bg-[var(--link-bg-hover)] hover:text-[var(--sea-ink)]"
+            >
+              <LogOut aria-hidden className="h-4 w-4" />
+              <span>Sign out</span>
+            </button>
+          ) : (
+            <Link
+              to="/sign-in"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] no-underline hover:bg-[var(--link-bg-hover)]"
+            >
+              <LogIn aria-hidden className="h-4 w-4 text-[var(--lagoon)]" />
+              <span>Sign in</span>
+            </Link>
+          )}
         </div>
       )}
     </div>

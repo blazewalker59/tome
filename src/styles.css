@@ -203,7 +203,24 @@
 html,
 body,
 #app {
+  /* `100dvh` tracks the visual viewport including the iOS safe-area
+     inset zones, so a short-content page (home, rip) still extends its
+     background paint all the way to the physical bottom edge. `100%`
+     alone collapses to the content height on standalone PWAs, which
+     left an unpainted strip below the nav bar that read as a floating
+     gap. Fallback to 100% for older engines. */
   min-height: 100%;
+  min-height: 100dvh;
+}
+
+/* Paint the solid ground on <html> so the safe-area inset zone at the
+   bottom of an iOS standalone PWA (below the home indicator / below the
+   viewport's scrollable min-height) still shows our base color instead
+   of the browser's default black. `body`'s `background:` shorthand on
+   its own resets background-color to transparent, which left that strip
+   unpainted. */
+html {
+  background-color: var(--bg-base);
 }
 
 body {
@@ -211,7 +228,7 @@ body {
   color: var(--sea-ink);
   font-family: var(--font-sans);
   background-color: var(--bg-base);
-  background:
+  background-image:
     radial-gradient(1100px 620px at -8% -10%, var(--hero-a), transparent 58%),
     radial-gradient(1050px 620px at 112% -12%, var(--hero-b), transparent 62%),
     radial-gradient(720px 380px at 50% 115%, var(--hero-c), transparent 68%),

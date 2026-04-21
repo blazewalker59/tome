@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-type ThemeMode = "light" | "dark" | "auto";
+export type ThemeMode = "light" | "dark" | "auto";
 
 function getInitialMode(): ThemeMode {
   if (typeof window === "undefined") {
@@ -31,12 +31,22 @@ function applyThemeMode(mode: ThemeMode) {
   document.documentElement.style.colorScheme = resolved;
 }
 
-export default function ThemeToggle() {
-  const [mode, setMode] = useState<ThemeMode>("auto");
+/**
+ * Reads the persisted theme mode, applies it to <html>, and keeps it in
+ * sync with `prefers-color-scheme` when the user has chosen "auto".
+ *
+ * Returns `[mode, setMode]` — setting a mode persists to localStorage and
+ * reflects the new resolved theme immediately on <html>.
+ *
+ * Shared by the desktop cycle-button variant (`ThemeToggle`) and any
+ * future in-menu segmented controls so both stay in lockstep.
+ */
+export function useThemeMode(): [ThemeMode, (next: ThemeMode) => void] {
+  const [mode, setModeState] = useState<ThemeMode>("auto");
 
   useEffect(() => {
     const initialMode = getInitialMode();
-    setMode(initialMode);
+    setModeState(initialMode);
     applyThemeMode(initialMode);
   }, []);
 
@@ -54,11 +64,26 @@ export default function ThemeToggle() {
     };
   }, [mode]);
 
+  function setMode(next: ThemeMode) {
+    setModeState(next);
+    applyThemeMode(next);
+    window.localStorage.setItem("theme", next);
+  }
+
+  return [mode, setMode];
+}
+
+/**
+ * Desktop-bar variant: single pill that cycles light → dark → auto.
+ * Compact and keyboard-activatable. On mobile we hide this and render a
+ * segmented control inside the profile menu instead (see `ThemeSegmented`).
+ */
+export default function ThemeToggle() {
+  const [mode, setMode] = useThemeMode();
+
   function toggleMode() {
     const nextMode: ThemeMode = mode === "light" ? "dark" : mode === "dark" ? "auto" : "light";
     setMode(nextMode);
-    applyThemeMode(nextMode);
-    window.localStorage.setItem("theme", nextMode);
   }
 
   const label =
@@ -76,5 +101,50 @@ export default function ThemeToggle() {
     >
       {mode === "auto" ? "Auto" : mode === "dark" ? "Dark" : "Light"}
     </button>
+  );
+}
+
+/**
+ * Three-option segmented control — Auto / Light / Dark. Designed to sit
+ * inside the profile dropdown on mobile where the inline pill toggle
+ * is hidden. Larger hit targets, all three modes visible at once (no
+ * guessing what the next cycle is).
+ */
+export function ThemeSegmented() {
+  const [mode, setMode] = useThemeMode();
+
+  const options: Array<{ value: ThemeMode; label: string }> = [
+    { value: "auto", label: "Auto" },
+    { value: "light", label: "Light" },
+    { value: "dark", label: "Dark" },
+  ];
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Theme"
+      className="grid grid-cols-3 gap-1 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] p-1"
+    >
+      {options.map((opt) => {
+        const isActive = mode === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={isActive}
+            onClick={() => setMode(opt.value)}
+            className={
+              "rounded-full px-3 py-1.5 text-xs font-semibold transition " +
+              (isActive
+                ? "bg-[var(--lagoon)] text-[var(--on-accent)]"
+                : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]")
+            }
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
