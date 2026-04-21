@@ -8,6 +8,13 @@
       "when": 1776731795678,
       "tag": "0000_spicy_synch",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776734302398,
+      "tag": "0001_regular_valeria_richards",
+      "breakpoints": true
     }
   ]
 }

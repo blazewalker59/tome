@@ -6,7 +6,10 @@ function id() {
 }
 
 export function createBookRanking(overrides: Partial<BookRanking> = {}): BookRanking {
-  return { id: id(), ratingsCount: 1000, ...overrides };
+  // Default: 1000 ratings at 4.0 — comfortably above the top-tier floor
+  // (see MIN_RATINGS_FOR_TOP_TIER) so tests that care about ordering
+  // aren't accidentally capped at `rare` by the floor rule.
+  return { id: id(), ratingsCount: 1000, averageRating: 4.0, ...overrides };
 }
 
 export function resetFactoryIds() {
