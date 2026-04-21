@@ -10,9 +10,10 @@ export default defineConfig({
   out: './src/db/migrations',
   dialect: 'postgresql',
   dbCredentials: {
-    // Prefer the session-pooler URL for DDL (drizzle-kit generate/push/migrate).
-    // Falls back to DATABASE_URL so local/dev setups with a single URL still work.
-    url: process.env.DATABASE_MIGRATION_URL ?? process.env.DATABASE_URL ?? '',
+    // Neon's pooled connection string handles both DDL and runtime queries,
+    // so there is no session-vs-transaction-pooler split to worry about.
+    // One URL rules them all.
+    url: process.env.DATABASE_URL ?? '',
   },
   casing: 'snake_case',
   strict: true,

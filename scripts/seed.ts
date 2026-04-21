@@ -20,12 +20,10 @@ import postgres from 'postgres'
 import { MOCK_POOL } from '../src/lib/cards/mock'
 import { books, packBooks, packs } from '../src/db/schema'
 
-const url = process.env.DATABASE_MIGRATION_URL ?? process.env.DATABASE_URL
+const url = process.env.DATABASE_URL
 
 if (!url) {
-  console.error(
-    '[seed] Missing DATABASE_MIGRATION_URL (or DATABASE_URL). Set it in .env.local.',
-  )
+  console.error('[seed] Missing DATABASE_URL. Set it in .env.local.')
   process.exit(1)
 }
 

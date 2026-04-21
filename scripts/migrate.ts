@@ -1,9 +1,11 @@
 /**
  * Apply pending Drizzle migrations to the configured Postgres database.
  *
- * Reads env from `.env.local` (via dotenv) — in particular DATABASE_MIGRATION_URL
- * (preferred) or DATABASE_URL as a fallback. Use the Supabase SESSION pooler
- * (port 5432) here; DDL does not work reliably through the transaction pooler.
+ * This script only ever runs locally (or in CI) on Node — never on
+ * Cloudflare Workers — so it uses `postgres-js` directly instead of the
+ * Neon HTTP driver. Migrations take advisory locks and expect a stable
+ * session; per-query HTTP fetches don't give us that. Node + `postgres-js`
+ * against Neon's pooled URL works fine for DDL.
  */
 import { config as loadEnv } from 'dotenv'
 
@@ -16,12 +18,12 @@ import { drizzle } from 'drizzle-orm/postgres-js'
 import { migrate } from 'drizzle-orm/postgres-js/migrator'
 import postgres from 'postgres'
 
-const url = process.env.DATABASE_MIGRATION_URL ?? process.env.DATABASE_URL
+const url = process.env.DATABASE_URL
 
 if (!url) {
   console.error(
-    '[migrate] Missing DATABASE_MIGRATION_URL (or DATABASE_URL). ' +
-      'Set it in .env.local — see .env.example for the Supabase connection-string format.',
+    '[migrate] Missing DATABASE_URL. Set it in .env.local — see .env.example ' +
+      'for the Neon connection-string format.',
   )
   process.exit(1)
 }

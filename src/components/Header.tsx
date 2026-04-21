@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { LogOut } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
-import { signOut, useAuth } from "@/lib/supabase/auth";
+import { signOut, useAuth } from "@/lib/auth/hooks";
 
 /**
  * Top app bar — Tome wordmark + theme toggle + auth state.
@@ -71,14 +71,17 @@ function AuthSlot() {
     );
   }
 
-  // Authenticated — pull a friendly label off the user.
+  // Authenticated — pull a friendly label off the user. Better Auth
+  // populates `name` from the Google profile; we also fill `displayName`
+  // in the `user.create.before` hook. Prefer the human-entered display
+  // name, fall back to Google's `name`, then email, then a generic label.
   const label =
-    (user?.user_metadata?.full_name as string | undefined) ??
-    (user?.user_metadata?.name as string | undefined) ??
+    user?.displayName ??
+    user?.name ??
     user?.email ??
     "Signed in";
   const initial = label.trim().charAt(0).toUpperCase() || "?";
-  const avatarUrl = user?.user_metadata?.avatar_url as string | undefined;
+  const avatarUrl = user?.avatarUrl ?? user?.image ?? undefined;
 
   return (
     <div className="flex items-center gap-1.5">

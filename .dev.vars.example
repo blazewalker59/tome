@@ -1,24 +1,24 @@
-# Secrets consumed by `wrangler dev` (local Workers runtime preview).
-# Copy to `.dev.vars` (gitignored) and fill in real values. Production
-# uses `wrangler secret put <NAME>` instead of this file.
+# Secrets consumed by `wrangler dev` (local Workers runtime preview via
+# `pnpm cf:preview`). Copy to `.dev.vars` (gitignored) and fill in real
+# values. Production uses `wrangler secret put <NAME>` instead of this file.
 #
-# These are the RUNTIME server variables only. Build-time public vars
-# (the VITE_* ones) go in .env.local and are baked into the client bundle
-# by Vite during `pnpm build:cf`.
+# In practice `.env.local` is usually enough for local dev — `wrangler
+# dev` will fall back to Worker secrets for any value not set here, and
+# `pnpm dev` (vite) reads `.env.local` directly. Use this file if you
+# specifically want `wrangler dev` to exercise a different set of values
+# than your vite-dev workflow.
 
-# Supabase transaction-pooler URL (port 6543). postgres-js runs with
-# `prepare: false` so the pooler works fine — don't add `?pgbouncer=true`.
+# Neon pooled connection string (host contains `-pooler`).
 DATABASE_URL=
 
-# Session-pooler URL (port 5432). Only needed if this Worker ever runs
-# migrations / DDL directly. Normally migrations run via `pnpm db:migrate`
-# from your dev machine, not from a Worker.
-DATABASE_MIGRATION_URL=
+# Better Auth server secret. Generate with: openssl rand -base64 32
+BETTER_AUTH_SECRET=
 
-# Supabase project URL + publishable key, unprefixed (these are read
-# server-side by src/lib/supabase/server.ts). The same values are in
-# .env.local under VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY for
-# the browser bundle; duplicating them here lets `wrangler dev` exercise
-# the server-side path without VITE_ fallbacks.
-SUPABASE_URL=
-SUPABASE_PUBLISHABLE_KEY=
+# Canonical origin Better Auth uses for CSRF + OAuth callback URL construction.
+# For `wrangler dev` this is typically http://localhost:8787.
+BETTER_AUTH_URL=http://localhost:8787
+
+# Google OAuth client (redirect URI for the above origin must be registered
+# in Google Cloud Console).
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=

@@ -1,37 +1,44 @@
-import { drizzle } from "drizzle-orm/postgres-js";
-import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
+import { drizzle } from "drizzle-orm/neon-serverless";
+import type { NeonDatabase } from "drizzle-orm/neon-serverless";
+import { Pool, neonConfig } from "@neondatabase/serverless";
 import * as schema from "./schema";
 import { getEnv } from "@/lib/env";
 
 /**
  * Drizzle client factory for Cloudflare Workers + Node.
  *
- * Why NOT cache across requests on Workers
- * -----------------------------------------
- * postgres-js keeps a long-lived TCP socket. On Cloudflare Workers:
- *   1. A Worker isolate can be suspended/resumed between requests; sockets
- *      don't always survive the nap.
- *   2. Supabase's transaction pooler (pgbouncer) closes idle server
- *      connections aggressively.
- *   3. When the cached client fires a query through a now-dead socket,
- *      postgres-js throws CONNECTION_CLOSED — drizzle wraps that as
- *      "Failed query" with no context, producing the intermittent errors
- *      we saw on /rip and /collection.
+ * Why the Neon **WebSocket** driver (not HTTP)?
+ * ---------------------------------------------
+ * The HTTP variant is stateless per-query (nice!), but it does NOT support
+ * interactive transactions — only `sql.transaction([...])` pipelined arrays,
+ * which are useless when later statements depend on earlier read results.
+ * `src/server/collection.ts#recordRipFn` runs a multi-step read-then-write
+ * flow (check existing rows → compute new vs. duplicate → insert/update
+ * atomically) that requires a real `BEGIN ... COMMIT`.
  *
- * So: we create a fresh client per `getDb()` call. For Supabase's pooler
- * this is the intended pattern — the pooler pools server-side, each
- * client-side connection is cheap. `{ max: 1 }` keeps the per-request
- * socket count at 1; `{ idle_timeout: 20 }` lets it die quickly after the
- * request finishes so we don't leak sockets across the isolate's lifetime.
+ * `@neondatabase/serverless`'s `Pool` speaks Postgres over a WebSocket,
+ * which Cloudflare Workers supports. Drizzle's `neon-serverless` adapter
+ * recognises it and gives us `db.transaction((tx) => ...)` semantics
+ * identical to `postgres-js` / `node-postgres`.
  *
- * On Node (local dev), the overhead of a new connection per server
- * function is negligible for a dev workflow. If this becomes a hot path
- * in production Node deployments we can reintroduce caching gated on
- * runtime detection — but we don't deploy to Node.
+ * A fresh `Pool` per request is the right default on Workers. Each incoming
+ * request runs in a short-lived isolate; trying to share a pool across
+ * requests means juggling `ctx.waitUntil` to keep sockets open and dealing
+ * with half-closed connections after isolate suspend. Neon is also
+ * optimised for spin-up-fast-and-drop connections. `pool.end()` is called
+ * implicitly when the handler returns — we don't keep references.
  */
 
-type Database = PostgresJsDatabase<typeof schema>;
+type Database = NeonDatabase<typeof schema>;
+
+// The `ws` shim: on Node, Neon's driver auto-loads the `ws` package; on
+// Cloudflare Workers the runtime provides a native WebSocket that Neon
+// picks up without any wiring. The driver's defaults are right for both,
+// so this module deliberately does NOT touch `neonConfig.webSocketConstructor`.
+//
+// Keeping the import so future per-env tweaks (e.g. `poolQueryViaFetch`)
+// have a home.
+void neonConfig;
 
 export async function getDb(): Promise<Database> {
   const url = await getEnv("DATABASE_URL");
@@ -43,21 +50,10 @@ export async function getDb(): Promise<Database> {
     );
   }
 
-  const client = postgres(url, {
-    // Required for Supabase's transaction pooler (port 6543): pgbouncer in
-    // transaction mode does not support the extended query protocol's
-    // prepared statements.
-    prepare: false,
-    // One socket per invocation is enough — the pooler handles fan-out.
-    max: 1,
-    // Drop idle sockets quickly so a suspended-then-resumed isolate
-    // doesn't try to reuse a socket the server has already closed.
-    idle_timeout: 20,
-    // Cap socket lifetime as a further safety net.
-    max_lifetime: 60 * 5,
-  });
-
-  return drizzle(client, { schema });
+  // `max: 1` keeps the pool tiny — each request builds its own anyway, so
+  // letting Neon open more than one socket per isolate is pure waste.
+  const pool = new Pool({ connectionString: url, max: 1 });
+  return drizzle(pool, { schema });
 }
 
 export { schema };

@@ -6,7 +6,7 @@
  * `collection_cards` table, so business rules (dupe → shards, first-pack
  * attribution) live here rather than scattered across the UI.
  *
- * Authentication: `getSessionUser()` reads the Supabase session from
+ * Authentication: `getSessionUser()` reads the Better Auth session from
  * request cookies. Every function that writes requires a user; reads
  * return `null` for anonymous callers so the UI can render a sign-in CTA.
  */
@@ -22,9 +22,8 @@ import {
   packRips,
   packs,
   shardBalances,
-  users,
 } from '@/db/schema'
-import { getSessionUser } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/auth/session'
 import { SHARD_YIELDS } from '@/lib/cards/pull'
 import type { BookRow } from '@/lib/cards/book-to-card'
 
@@ -250,34 +249,16 @@ export const recordRipFn = createServerFn({ method: 'POST' })
     const { packId, pulledBookIds } = data
 
     return await database.transaction(async (tx) => {
-      // 0. Defensive: ensure a `public.users` row exists for this auth user.
-      //    The Postgres trigger normally takes care of this on signup, but
-      //    seeding it here means we never 23503 (FK violation) if the trigger
-      //    was ever disabled or the user predates it.
-      const metadata = (user.user_metadata ?? {}) as Record<string, unknown>
-      const emailLocal = user.email?.split('@')[0] ?? null
-      const fallbackUsername =
-        (typeof metadata.username === 'string' && metadata.username) ||
-        (typeof metadata.preferred_username === 'string' && metadata.preferred_username) ||
-        emailLocal ||
-        user.id.slice(0, 8)
-      await tx
-        .insert(users)
-        .values({
-          id: user.id,
-          username: fallbackUsername,
-          displayName:
-            (typeof metadata.full_name === 'string' && metadata.full_name) ||
-            (typeof metadata.name === 'string' && metadata.name) ||
-            fallbackUsername,
-          avatarUrl:
-            typeof metadata.avatar_url === 'string' ? metadata.avatar_url : null,
-        })
-        .onConflictDoNothing({ target: users.id })
-
       // 1. Load the rarity for each pulled book so we can compute shards.
       //    Also serves as a validity check — referring to a book that doesn't
       //    exist errors here instead of failing the collection insert later.
+      //
+      //    Note: we used to defensively upsert a `users` row here to cover
+      //    the case where the Supabase-era `handle_new_user` trigger hadn't
+      //    fired. That's no longer needed: Better Auth's
+      //    `databaseHooks.user.create.before` (see `src/lib/auth/server.ts`)
+      //    runs synchronously inside the OAuth callback and guarantees the
+      //    `users` row exists before any server fn can be called.
       const bookRows = await tx
         .select({ id: books.id, rarity: books.rarity })
         .from(books)
