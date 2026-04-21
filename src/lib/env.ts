@@ -54,16 +54,3 @@ export async function getEnv(name: string): Promise<string | undefined> {
   }
   return undefined;
 }
-
-/**
- * Sync variant for hot paths. Only checks `process.env`. Safe to use in
- * modules that run exclusively on Node (migrations, seed scripts, local
- * dev). Will miss Workers bindings — prefer the async `getEnv` in any
- * code that runs on the Worker.
- */
-export function getEnvSync(name: string): string | undefined {
-  if (typeof process !== "undefined" && process.env) {
-    return process.env[name];
-  }
-  return undefined;
-}

@@ -50,9 +50,11 @@ Schema lives at [`src/db/schema.ts`](./src/db/schema.ts). Migrations are in `src
 First time:
 
 ```bash
-pnpm wrangler login                               # OAuth once
-pnpm cf:secret DATABASE_URL                        # paste pooler URL
-pnpm cf:deploy                                     # build + deploy
+pnpm wrangler login                              # OAuth once
+pnpm cf:secret DATABASE_URL                      # transaction-pooler URL (port 6543)
+pnpm cf:secret SUPABASE_URL                      # https://<ref>.supabase.co
+pnpm cf:secret SUPABASE_PUBLISHABLE_KEY          # sb_publishable_…
+pnpm cf:deploy                                   # build + deploy
 ```
 
 Env vars split into two categories — important to keep straight:
@@ -61,7 +63,9 @@ Env vars split into two categories — important to keep straight:
 | -------------------------------- | --------------- | ------------ |
 | `VITE_SUPABASE_URL`              | Client bundle   | `.env.local` (dev) / GitHub secret (CI). Baked in at `vite build` time. |
 | `VITE_SUPABASE_PUBLISHABLE_KEY`  | Client bundle   | same as above |
-| `DATABASE_URL`                   | Server (Worker) | `wrangler secret put DATABASE_URL` (prod) / `.dev.vars` (local `wrangler dev`) |
+| `SUPABASE_URL`                   | Server (Worker) | `wrangler secret put SUPABASE_URL` (prod) / `.dev.vars` (local `wrangler dev`). Falls back to `VITE_SUPABASE_URL` so `pnpm dev` keeps working off `.env.local` alone. |
+| `SUPABASE_PUBLISHABLE_KEY`       | Server (Worker) | same pattern |
+| `DATABASE_URL`                   | Server (Worker) | `wrangler secret put DATABASE_URL` (prod) / `.env.local` (dev via `pnpm dev`) / `.dev.vars` (local `wrangler dev`) |
 | `DATABASE_MIGRATION_URL`         | Dev machine only (migrations) | `.env.local` |
 
 The OAuth redirect URL is derived at runtime from `window.location.origin`, so the same bundle works across dev, preview, and production without a rebuild. Supabase's **Redirect URLs** allow-list must include every origin you deploy to (localhost + every preview/prod URL).
