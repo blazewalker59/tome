@@ -214,6 +214,39 @@ function BooksWorkspace() {
         </div>
       </header>
 
+      {/* Mobile-only sort control. Desktop uses clickable column headers
+          (which don't fit comfortably once the table is horizontally
+          scrolling on narrow screens — the operator shouldn't need to
+          swipe right just to change sort). */}
+      <div className="mb-4 flex items-center gap-2 sm:hidden">
+        <label
+          htmlFor="sort-select"
+          className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]"
+        >
+          Sort
+        </label>
+        <select
+          id="sort-select"
+          value={`${sort}:${dir}`}
+          onChange={(e) => {
+            const [nextSort, nextDir] = e.target.value.split(":") as [
+              AdminBooksSortKey,
+              SortDir,
+            ];
+            setSort(nextSort);
+            setDir(nextDir);
+          }}
+          className="input-field min-h-[36px] flex-1 rounded-full px-3 text-xs"
+        >
+          <option value="ingested:desc">Ingested · newest first</option>
+          <option value="ingested:asc">Ingested · oldest first</option>
+          <option value="author:asc">Author · A→Z</option>
+          <option value="author:desc">Author · Z→A</option>
+          <option value="title:asc">Title · A→Z</option>
+          <option value="title:desc">Title · Z→A</option>
+        </select>
+      </div>
+
       {loadState.kind === "error" && (
         <p
           role="alert"
@@ -223,12 +256,27 @@ function BooksWorkspace() {
         </p>
       )}
 
+      {/* The outer island-shell is itself the horizontal scroll container.
+          `min-w-[980px]` on the table guarantees every column keeps enough
+          room for its content (cover thumb, longest author name, wide mood
+          input, pack chips) no matter how narrow the viewport — the table
+          just scrolls horizontally on phones. Column widths are explicit
+          so content doesn't redistribute into cramped, uneven columns. */}
       <div className="island-shell overflow-hidden rounded-3xl">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[980px] text-sm">
+            <colgroup>
+              <col className="w-[260px]" />
+              <col className="w-[180px]" />
+              <col className="w-[110px]" />
+              <col className="w-[140px]" />
+              <col className="w-[220px]" />
+              <col className="w-[110px]" />
+              <col className="w-[240px]" />
+            </colgroup>
             <thead className="border-b border-[var(--line)] text-left text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
               <tr>
-                <th className="w-[28%] px-4 py-3">
+                <th className="px-4 py-3">
                   <SortHeader
                     label="Title"
                     column="title"
@@ -237,7 +285,7 @@ function BooksWorkspace() {
                     onClick={onSortHeaderClick}
                   />
                 </th>
-                <th className="w-[18%] px-3 py-3">
+                <th className="px-3 py-3">
                   <SortHeader
                     label="Author"
                     column="author"
@@ -408,7 +456,7 @@ function BookRow({
           onChange={(e) => setGenreDraft(e.target.value)}
           onBlur={commitGenre}
           pattern="[a-z0-9][a-z0-9-]*"
-          className="input-field min-h-[32px] w-32 rounded-md px-2 text-xs"
+          className="input-field min-h-[32px] w-full rounded-md px-2 text-xs"
           placeholder="literary-fiction"
           aria-label={`Genre for ${book.title}`}
         />
@@ -419,12 +467,12 @@ function BookRow({
           value={moodDraft}
           onChange={(e) => setMoodDraft(e.target.value)}
           onBlur={commitMood}
-          className="input-field min-h-[32px] w-48 rounded-md px-2 text-xs"
+          className="input-field min-h-[32px] w-full rounded-md px-2 text-xs"
           placeholder="atmospheric, slow-burn"
           aria-label={`Mood tags for ${book.title}`}
         />
       </td>
-      <td className="px-3 py-3">
+      <td className="px-3 py-3 whitespace-nowrap">
         <RarityBadge rarity={book.rarity} />
       </td>
       <td className="px-3 py-3">
