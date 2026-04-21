@@ -20,7 +20,8 @@
     "db:push": "dotenv -e .env.local -- drizzle-kit push",
     "db:studio": "dotenv -e .env.local -- drizzle-kit studio",
     "db:seed": "tsx scripts/seed.ts",
-    "db:rebucket": "tsx scripts/rebucket.ts"
+    "db:rebucket": "tsx scripts/rebucket.ts",
+    "favicons": "tsx scripts/favicons.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
@@ -54,7 +55,9 @@
     "drizzle-kit": "^0.31.10",
     "jsdom": "^28.1.0",
     "msw": "^2.13.4",
+    "png-to-ico": "^3.0.1",
     "postgres": "^3.4.9",
+    "sharp": "^0.34.5",
     "tsx": "^4.21.0",
     "typescript": "^5.7.2",
     "vite": "^8.0.0",
