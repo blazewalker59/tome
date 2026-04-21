@@ -179,7 +179,13 @@ function ProfileMenu({
           ref={menuRef}
           role="menu"
           aria-label="Account"
-          className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-lg"
+          // Solid --bg-base rather than the translucent --header-bg
+          // because the dropdown extends past the sticky header's box
+          // and so can't inherit its backdrop blur. Mobile Safari in
+          // particular drops backdrop-filter on descendants that escape
+          // the filtered ancestor's bounds, so any alpha here would
+          // show the page scrolling through.
+          className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--bg-base)] shadow-lg"
         >
           <div className="border-b border-[var(--line)] px-4 py-3">
             <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">{label}</p>
