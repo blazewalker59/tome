@@ -1,19 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { Card } from "@/components/cards/Card";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import {
-  filterCards,
-  groupByGenre,
+  groupCards,
   rarityCounts,
   sortCards,
-  uniqueGenres,
-  uniqueMoods,
+  type GroupBy,
   type SortMode,
 } from "@/lib/cards/filter";
-import { RARITY_STYLES, formatGenre } from "@/lib/cards/style";
-import type { CardData, Genre, Rarity } from "@/lib/cards/types";
+import { RARITY_STYLES } from "@/lib/cards/style";
+import type { CardData, Rarity } from "@/lib/cards/types";
 import { getCollectionFn, getEditorialPackFn } from "@/server/collection";
 
 /**
@@ -22,6 +20,14 @@ import { getCollectionFn, getEditorialPackFn } from "@/server/collection";
  * Loader fetches the user's collection + the default pack (needed so the
  * rarity-progress bars can show "owned X / total Y"). Unauth'd users are
  * redirected to sign-in because a collection requires an account.
+ *
+ * The page is organised around a single top-level pivot — "view" — that
+ * switches between a flat grid and four grouped modes (pack / author /
+ * rarity / genre). Filters used to live alongside search but proved
+ * redundant once grouping moved to top-level: users either want "all"
+ * or "just one bucket", and search covers the long-tail case. Keeping
+ * the toolbar to three controls (search, sort, view) also matches the
+ * available horizontal real estate on a phone without a second row.
  */
 export const Route = createFileRoute("/collection")({
   loader: async () => {
@@ -35,12 +41,27 @@ export const Route = createFileRoute("/collection")({
 });
 
 const ALL_RARITIES: Rarity[] = ["common", "uncommon", "rare", "foil", "legendary"];
+
 const SORT_OPTIONS: Array<{ value: SortMode; label: string }> = [
   { value: "newest", label: "Newest" },
   { value: "rarity", label: "Rarity" },
   { value: "title", label: "Title" },
   { value: "author", label: "Author" },
 ];
+
+const VIEW_OPTIONS: Array<{ value: GroupBy; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "pack", label: "Pack" },
+  { value: "author", label: "Author" },
+  { value: "rarity", label: "Rarity" },
+  { value: "genre", label: "Genre" },
+];
+
+// When switching into a grouped view with more than this many groups, we
+// default every group to collapsed so the user sees a navigable index
+// rather than an endless scroll. Below the threshold the UX is better
+// with groups pre-expanded since there isn't much to collapse anyway.
+const AUTO_COLLAPSE_THRESHOLD = 4;
 
 function CollectionPage() {
   const { collection, pack } = Route.useLoaderData();
@@ -61,31 +82,35 @@ function CollectionPage() {
   }, [pack.books, collection.ownedBookIds]);
 
   const acquisitionMap = useMemo(() => {
-    const m = new Map<string, { packName: string; acquiredAt: number }>();
+    const m = new Map<
+      string,
+      { packId: string | null; packName: string; acquiredAt: number }
+    >();
     for (const a of collection.acquisitions) {
-      m.set(a.bookId, { packName: a.packName, acquiredAt: a.acquiredAt });
+      m.set(a.bookId, {
+        packId: a.packId,
+        packName: a.packName,
+        acquiredAt: a.acquiredAt,
+      });
     }
     return m;
   }, [collection.acquisitions]);
 
-  const [genreFilter, setGenreFilter] = useState<Set<Genre>>(new Set());
-  const [rarityFilter, setRarityFilter] = useState<Set<Rarity>>(new Set());
-  const [moodFilter, setMoodFilter] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("newest");
-  const [grouped, setGrouped] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [view, setView] = useState<GroupBy>("all");
 
-  const filtered = useMemo(
-    () =>
-      filterCards(ownedCards, {
-        genres: genreFilter,
-        rarities: rarityFilter,
-        moods: moodFilter,
-        search,
-      }),
-    [ownedCards, genreFilter, rarityFilter, moodFilter, search],
-  );
+  // Search filter — simple case-insensitive match on title + authors.
+  // We do it inline rather than go through `filterCards` since the chip
+  // filters are gone; keeping it inline avoids re-introducing the whole
+  // CollectionFilter surface for a one-field check.
+  const searched = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return ownedCards;
+    return ownedCards.filter((c) =>
+      `${c.title} ${c.authors.join(" ")}`.toLowerCase().includes(q),
+    );
+  }, [ownedCards, search]);
 
   const acquiredAt = useMemo(() => {
     const m = new Map<string, number>();
@@ -94,39 +119,34 @@ function CollectionPage() {
   }, [acquisitionMap]);
 
   const sorted = useMemo(
-    () => sortCards(filtered, sortMode, { acquiredAt }),
-    [filtered, sortMode, acquiredAt],
+    () => sortCards(searched, sortMode, { acquiredAt }),
+    [searched, sortMode, acquiredAt],
+  );
+
+  // Group ctx: pack grouping needs the (packId, packName) per-book map.
+  const groupCtx = useMemo(
+    () => ({
+      acquisitions: new Map(
+        [...acquisitionMap.entries()].map(([id, info]) => [
+          id,
+          { packId: info.packId, packName: info.packName },
+        ]),
+      ),
+    }),
+    [acquisitionMap],
+  );
+
+  const groups = useMemo(
+    () => groupCards(sorted, view, groupCtx),
+    [sorted, view, groupCtx],
   );
 
   const ownedRarityCounts = useMemo(() => rarityCounts(ownedCards), [ownedCards]);
   const totalRarityCounts = useMemo(() => rarityCounts(totalCards), [totalCards]);
-  const genreOptions = useMemo(() => uniqueGenres(ownedCards), [ownedCards]);
-  const moodOptions = useMemo(() => uniqueMoods(ownedCards), [ownedCards]);
-
-  const activeFilterCount = genreFilter.size + rarityFilter.size + moodFilter.size;
 
   if (ownedCards.length === 0) {
     return <EmptyState />;
   }
-
-  const filterBody = (
-    <FiltersBody
-      genreOptions={genreOptions}
-      moodOptions={moodOptions}
-      genreFilter={genreFilter}
-      rarityFilter={rarityFilter}
-      moodFilter={moodFilter}
-      onGenreToggle={(v) => setGenreFilter(toggle(genreFilter, v))}
-      onRarityToggle={(v) => setRarityFilter(toggle(rarityFilter, v))}
-      onMoodToggle={(v) => setMoodFilter(toggle(moodFilter, v))}
-      onClearAll={() => {
-        setGenreFilter(new Set());
-        setRarityFilter(new Set());
-        setMoodFilter(new Set());
-      }}
-      activeCount={activeFilterCount}
-    />
-  );
 
   return (
     <main className="page-wrap py-6 sm:py-12">
@@ -149,9 +169,15 @@ function CollectionPage() {
 
       <RarityProgress owned={ownedRarityCounts} total={totalRarityCounts} />
 
-      {/* Toolbar — search + sort + (mobile) filters button. Sticky on mobile so
-          the user always has it within thumb reach while scrolling. */}
-      <div className="sticky top-[64px] z-30 -mx-4 mt-6 mb-4 border-y border-[var(--line)] bg-[var(--header-bg)] px-4 py-3 backdrop-blur sm:relative sm:top-auto sm:mx-0 sm:rounded-2xl sm:border sm:border-[var(--line)] sm:bg-[var(--surface)] sm:px-4 sm:py-4">
+      {/* View switcher — the top-level pivot. Sits directly under the
+          progress strip and above the toolbar so it reads as a primary
+          navigation control, not a filter option. */}
+      <ViewTabs value={view} onChange={setView} />
+
+      {/* Toolbar — search + sort. Sticky on mobile so the user always has
+          it within thumb reach while scrolling. Filters are gone: search
+          + view covers the use cases that used to need chips. */}
+      <div className="sticky top-[64px] z-30 -mx-4 mt-4 mb-4 border-y border-[var(--line)] bg-[var(--header-bg)] px-4 py-3 backdrop-blur sm:relative sm:top-auto sm:mx-0 sm:rounded-2xl sm:border sm:border-[var(--line)] sm:bg-[var(--surface)] sm:px-4 sm:py-3">
         <div className="flex items-center gap-2">
           <input
             type="search"
@@ -160,29 +186,13 @@ function CollectionPage() {
             placeholder="Search title or author"
             className="input-field min-h-[44px] flex-1 rounded-full px-4 text-sm"
           />
-          <button
-            type="button"
-            onClick={() => setFiltersOpen(true)}
-            className="btn-secondary relative shrink-0 rounded-full px-4 text-sm sm:hidden"
-            aria-label="Open filters"
-          >
-            <SlidersHorizontal aria-hidden className="h-4 w-4" />
-            <span>Filters</span>
-            {activeFilterCount > 0 && (
-              <span className="ml-1 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-[var(--lagoon)] px-1.5 text-[10px] font-bold text-[var(--on-accent)]">
-                {activeFilterCount}
-              </span>
-            )}
-          </button>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3 sm:mt-4">
-          <label className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-            Sort
+          <label className="flex shrink-0 items-center gap-2 text-xs uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+            <span className="hidden sm:inline">Sort</span>
             <select
               value={sortMode}
               onChange={(e) => setSortMode(e.target.value as SortMode)}
-              className="input-field min-h-[36px] rounded-full px-3 text-xs font-semibold"
+              className="input-field min-h-[44px] rounded-full px-3 text-xs font-semibold"
+              aria-label="Sort"
             >
               {SORT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -191,126 +201,205 @@ function CollectionPage() {
               ))}
             </select>
           </label>
-
-          <label className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-            <input
-              type="checkbox"
-              checked={grouped}
-              onChange={(e) => setGrouped(e.target.checked)}
-              className="h-4 w-4 accent-[var(--lagoon)]"
-            />
-            Group by genre
-          </label>
         </div>
-
-        {/* Desktop: filters render inline below the toolbar row. */}
-        <div className="mt-4 hidden sm:block">{filterBody}</div>
       </div>
 
       {sorted.length === 0 ? (
         <p className="py-16 text-center text-sm text-[var(--sea-ink-soft)]">
-          No cards match your filters.
+          No books match your search.
         </p>
-      ) : grouped ? (
-        <div className="space-y-10">
-          {groupByGenre(sorted).map((g) => (
-            <section key={g.genre}>
-              <h2 className="island-kicker mb-4">
-                {formatGenre(g.genre)} · {g.cards.length}
-              </h2>
-              <CardGrid cards={g.cards} cardById={cardById} acquisitions={acquisitionMap} />
-            </section>
-          ))}
-        </div>
+      ) : view === "all" ? (
+        <CardGrid
+          cards={sorted}
+          cardById={cardById}
+          acquisitions={acquisitionMap}
+        />
       ) : (
-        <CardGrid cards={sorted} cardById={cardById} acquisitions={acquisitionMap} />
+        <GroupedView
+          groups={groups}
+          view={view}
+          cardById={cardById}
+          acquisitions={acquisitionMap}
+        />
       )}
-
-      <BottomSheet
-        open={filtersOpen}
-        onClose={() => setFiltersOpen(false)}
-        title="Filters"
-        footer={
-          <button
-            type="button"
-            onClick={() => setFiltersOpen(false)}
-            className="btn-primary w-full rounded-full px-6 text-sm uppercase tracking-[0.16em]"
-          >
-            Show {sorted.length} {sorted.length === 1 ? "book" : "books"}
-          </button>
-        }
-      >
-        {filterBody}
-      </BottomSheet>
     </main>
   );
 }
 
-function FiltersBody({
-  genreOptions,
-  moodOptions,
-  genreFilter,
-  rarityFilter,
-  moodFilter,
-  onGenreToggle,
-  onRarityToggle,
-  onMoodToggle,
-  onClearAll,
-  activeCount,
+// ─────────────────────────────────────────────────────────────────────────────
+// View switcher
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Segmented pill control for the top-level view pivot. Horizontally
+ * scrollable on mobile (so longer option lists don't wrap), stationary
+ * on larger screens.
+ */
+function ViewTabs({
+  value,
+  onChange,
 }: {
-  genreOptions: ReadonlyArray<Genre>;
-  moodOptions: ReadonlyArray<string>;
-  genreFilter: ReadonlySet<Genre>;
-  rarityFilter: ReadonlySet<Rarity>;
-  moodFilter: ReadonlySet<string>;
-  onGenreToggle: (v: Genre) => void;
-  onRarityToggle: (v: Rarity) => void;
-  onMoodToggle: (v: string) => void;
-  onClearAll: () => void;
-  activeCount: number;
+  value: GroupBy;
+  onChange: (v: GroupBy) => void;
 }) {
   return (
-    <div className="space-y-4">
-      {genreOptions.length > 0 && (
-        <ChipGroup
-          label="Genre"
-          values={genreOptions}
-          selected={genreFilter}
-          onToggle={onGenreToggle}
-          renderLabel={formatGenre}
-        />
-      )}
-
-      <ChipGroup
-        label="Rarity"
-        values={ALL_RARITIES}
-        selected={rarityFilter}
-        onToggle={onRarityToggle}
-        renderLabel={(r) => RARITY_STYLES[r].label}
-      />
-
-      {moodOptions.length > 0 && (
-        <ChipGroup
-          label="Mood"
-          values={moodOptions}
-          selected={moodFilter}
-          onToggle={onMoodToggle}
-          renderLabel={(m) => m}
-        />
-      )}
-
-      {activeCount > 0 && (
-        <button
-          type="button"
-          onClick={onClearAll}
-          className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] underline-offset-4 hover:text-[var(--sea-ink)] hover:underline"
-        >
-          Clear all filters
-        </button>
-      )}
+    <div
+      role="tablist"
+      aria-label="Collection view"
+      className="view-tabs mt-5 mb-2 flex gap-2 overflow-x-auto"
+    >
+      {VIEW_OPTIONS.map((o) => {
+        const active = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(o.value)}
+            className={`view-tab ${active ? "is-active" : ""}`}
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Grouped view + collapsible group
+// ─────────────────────────────────────────────────────────────────────────────
+
+function GroupedView({
+  groups,
+  view,
+  cardById,
+  acquisitions,
+}: {
+  groups: ReadonlyArray<{ key: string; label: string; cards: ReadonlyArray<CardData> }>;
+  view: GroupBy;
+  cardById: ReadonlyMap<string, CardData>;
+  acquisitions: ReadonlyMap<
+    string,
+    { packId: string | null; packName: string; acquiredAt: number }
+  >;
+}) {
+  // Auto-collapse when there are many groups. Tracked per view+group-key
+  // so switching views resets cleanly (each view has its own identity
+  // map of expanded groups).
+  const initiallyCollapsed = groups.length > AUTO_COLLAPSE_THRESHOLD;
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  // The map above is keyed by `${view}:${groupKey}` so it stays
+  // meaningful after the user toggles views. Resetting on view change
+  // would also be reasonable, but keeping prior expansions has been the
+  // less-surprising behaviour when the user bounces between views.
+  const isExpanded = (key: string) => {
+    const explicit = expanded[`${view}:${key}`];
+    return explicit ?? !initiallyCollapsed;
+  };
+  const toggle = (key: string) =>
+    setExpanded((prev) => ({
+      ...prev,
+      [`${view}:${key}`]: !isExpanded(key),
+    }));
+
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      {groups.map((g) => (
+        <CollapsibleGroup
+          key={g.key}
+          group={g}
+          expanded={isExpanded(g.key)}
+          onToggle={() => toggle(g.key)}
+          cardById={cardById}
+          acquisitions={acquisitions}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CollapsibleGroup({
+  group,
+  expanded,
+  onToggle,
+  cardById,
+  acquisitions,
+}: {
+  group: { key: string; label: string; cards: ReadonlyArray<CardData> };
+  expanded: boolean;
+  onToggle: () => void;
+  cardById: ReadonlyMap<string, CardData>;
+  acquisitions: ReadonlyMap<
+    string,
+    { packId: string | null; packName: string; acquiredAt: number }
+  >;
+}) {
+  // Preview strip — a handful of cover thumbnails shown in the collapsed
+  // header so the user has visual recognition without expanding. Capped
+  // at 5 so it fits on the narrowest viewport we support.
+  const preview = group.cards.slice(0, 5);
+
+  return (
+    <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="group flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left sm:px-4"
+      >
+        <ChevronDown
+          aria-hidden
+          className={`h-4 w-4 shrink-0 text-[var(--sea-ink-soft)] transition-transform ${
+            expanded ? "rotate-0" : "-rotate-90"
+          }`}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <h2 className="truncate text-sm font-semibold text-[var(--sea-ink)] sm:text-base">
+              {group.label}
+            </h2>
+            <span className="shrink-0 text-xs uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+              {group.cards.length}
+            </span>
+          </div>
+        </div>
+        {!expanded && preview.length > 0 && (
+          <div
+            aria-hidden
+            className="hidden shrink-0 items-center sm:flex"
+          >
+            {preview.map((c, i) => (
+              <img
+                key={c.id}
+                src={c.coverUrl}
+                alt=""
+                loading="lazy"
+                className="h-10 w-7 rounded-sm border border-[var(--line)] object-cover shadow-sm"
+                style={{
+                  marginLeft: i === 0 ? 0 : "-0.5rem",
+                  zIndex: preview.length - i,
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </button>
+
+      {expanded && (
+        <div className="border-t border-[var(--line)] px-3 pb-4 pt-4 sm:px-4">
+          <CardGrid cards={group.cards} cardById={cardById} acquisitions={acquisitions} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Grid + progress + empty state
+// ─────────────────────────────────────────────────────────────────────────────
 
 function CardGrid({
   cards,
@@ -319,7 +408,10 @@ function CardGrid({
 }: {
   cards: ReadonlyArray<{ id: string }>;
   cardById: ReadonlyMap<string, CardData>;
-  acquisitions: ReadonlyMap<string, { packName: string; acquiredAt: number }>;
+  acquisitions: ReadonlyMap<
+    string,
+    { packId: string | null; packName: string; acquiredAt: number }
+  >;
 }) {
   return (
     <div className="grid grid-cols-2 gap-4 justify-items-center sm:grid-cols-3 sm:gap-6 md:grid-cols-4 lg:grid-cols-5">
@@ -338,44 +430,6 @@ function CardGrid({
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function ChipGroup<T extends string>({
-  label,
-  values,
-  selected,
-  onToggle,
-  renderLabel,
-}: {
-  label: string;
-  values: ReadonlyArray<T>;
-  selected: ReadonlySet<T>;
-  onToggle: (v: T) => void;
-  renderLabel: (v: T) => string;
-}) {
-  return (
-    <div>
-      <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
-        {label}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {values.map((v) => {
-          const active = selected.has(v);
-          return (
-            <button
-              key={v}
-              type="button"
-              onClick={() => onToggle(v)}
-              aria-pressed={active}
-              className="chip rounded-full px-3.5 text-xs"
-            >
-              {renderLabel(v)}
-            </button>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -438,69 +492,4 @@ function EmptyState() {
       </div>
     </main>
   );
-}
-
-/**
- * Bottom sheet built on the native <dialog> element so we get backdrop +
- * focus trap + Esc-to-close for free. Slide-up animation via a CSS
- * transition on the inner panel triggered by an `is-open` class.
- */
-function BottomSheet({
-  open,
-  onClose,
-  title,
-  children,
-  footer,
-}: {
-  open: boolean;
-  onClose: () => void;
-  title: string;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-}) {
-  const ref = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    if (open && !dialog.open) {
-      dialog.showModal();
-    } else if (!open && dialog.open) {
-      dialog.close();
-    }
-  }, [open]);
-
-  return (
-    <dialog
-      ref={ref}
-      onClose={onClose}
-      onClick={(e) => {
-        if (e.target === ref.current) onClose();
-      }}
-      className="bottom-sheet"
-    >
-      <div className="bottom-sheet-panel">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="display-title text-lg font-bold text-[var(--sea-ink)]">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close filters"
-            className="-m-2 inline-flex h-11 w-11 items-center justify-center rounded-full text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
-          >
-            <X aria-hidden className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="max-h-[60vh] overflow-y-auto pb-2">{children}</div>
-        {footer && <div className="mt-4 pt-2">{footer}</div>}
-      </div>
-    </dialog>
-  );
-}
-
-function toggle<T>(set: ReadonlySet<T>, value: T): Set<T> {
-  const next = new Set(set);
-  if (next.has(value)) next.delete(value);
-  else next.add(value);
-  return next;
 }
