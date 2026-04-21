@@ -13,6 +13,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as RipRouteImport } from './routes/rip'
 import { Route as CollectionRouteImport } from './routes/collection'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdminIngestRouteImport } from './routes/admin.ingest'
 
 const SignInRoute = SignInRouteImport.update({
   id: '/sign-in',
@@ -34,18 +35,25 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminIngestRoute = AdminIngestRouteImport.update({
+  id: '/admin/ingest',
+  path: '/admin/ingest',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
   '/rip': typeof RipRoute
   '/sign-in': typeof SignInRoute
+  '/admin/ingest': typeof AdminIngestRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
   '/rip': typeof RipRoute
   '/sign-in': typeof SignInRoute
+  '/admin/ingest': typeof AdminIngestRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +61,14 @@ export interface FileRoutesById {
   '/collection': typeof CollectionRoute
   '/rip': typeof RipRoute
   '/sign-in': typeof SignInRoute
+  '/admin/ingest': typeof AdminIngestRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/collection' | '/rip' | '/sign-in'
+  fullPaths: '/' | '/collection' | '/rip' | '/sign-in' | '/admin/ingest'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/collection' | '/rip' | '/sign-in'
-  id: '__root__' | '/' | '/collection' | '/rip' | '/sign-in'
+  to: '/' | '/collection' | '/rip' | '/sign-in' | '/admin/ingest'
+  id: '__root__' | '/' | '/collection' | '/rip' | '/sign-in' | '/admin/ingest'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,6 +76,7 @@ export interface RootRouteChildren {
   CollectionRoute: typeof CollectionRoute
   RipRoute: typeof RipRoute
   SignInRoute: typeof SignInRoute
+  AdminIngestRoute: typeof AdminIngestRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -99,6 +109,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/ingest': {
+      id: '/admin/ingest'
+      path: '/admin/ingest'
+      fullPath: '/admin/ingest'
+      preLoaderRoute: typeof AdminIngestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -107,6 +124,7 @@ const rootRouteChildren: RootRouteChildren = {
   CollectionRoute: CollectionRoute,
   RipRoute: RipRoute,
   SignInRoute: SignInRoute,
+  AdminIngestRoute: AdminIngestRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

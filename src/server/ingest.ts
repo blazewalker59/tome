@@ -28,9 +28,24 @@ import { eq, sql } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
 import { books, packBooks, packs } from "@/db/schema";
-import { requireAdmin } from "@/lib/auth/session";
+import { getAdminEmails, getSessionUser, requireAdmin } from "@/lib/auth/session";
 import { bookResponseToRow } from "@/lib/cards/hardcover";
 import { fetchBookById } from "./hardcover";
+
+/**
+ * Cheap read-only probe used by the admin route loader to decide whether
+ * to render the form or redirect. Kept separate from `requireAdmin()` so
+ * the loader can branch (redirect vs 403 UI) without catching thrown
+ * errors as control flow.
+ */
+export const checkAdminFn = createServerFn({ method: "GET" }).handler(async () => {
+  const user = await getSessionUser();
+  if (!user) return { signedIn: false as const, isAdmin: false as const };
+  const allowed = await getAdminEmails();
+  const email = user.email?.toLowerCase();
+  const isAdmin = Boolean(email && allowed.has(email));
+  return { signedIn: true as const, isAdmin, email: user.email ?? null };
+});
 
 export interface IngestBookInput {
   hardcoverId: number;
