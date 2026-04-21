@@ -203,7 +203,14 @@
 html,
 body,
 #app {
+  /* `100dvh` tracks the visual viewport including the iOS safe-area
+     inset zones, so a short-content page (home, rip) still extends its
+     background paint all the way to the physical bottom edge. `100%`
+     alone collapses to the content height on standalone PWAs, which
+     left an unpainted strip below the nav bar that read as a floating
+     gap. Fallback to 100% for older engines. */
   min-height: 100%;
+  min-height: 100dvh;
 }
 
 /* Paint the solid ground on <html> so the safe-area inset zone at the

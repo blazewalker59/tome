@@ -8,12 +8,13 @@ import { BookOpen, Home, Sparkles } from "lucide-react";
  * via env(safe-area-inset-bottom).
  *
  * Background is intentionally opaque (--bg-base) rather than the
- * translucent --header-bg the top chrome uses. On `.viewport-stage`
- * pages (home, rip) the body doesn't scroll, so there's nothing
- * interesting behind the tab bar to blur — translucent + backdrop-blur
- * just revealed seams between where the body's gradient ends and where
- * <html>'s fill begins, which read as a weird banded strip under the
- * tab bar on iOS PWAs. Solid fill sidesteps it entirely.
+ * translucent --header-bg the top chrome uses. On pages without enough
+ * scrollable content to pass under the bar (home, rip), the translucent
+ * fill made the safe-area-inset-bottom padding zone below the icons
+ * read as empty space — the nav's full 56px+inset height was there, but
+ * only the icon row looked "filled", so the inset zone appeared as a
+ * floating gap beneath the bar. Solid fill makes the whole bar height
+ * (including the home-indicator-hugging inset zone) read as one piece.
  */
 export default function BottomTabs() {
   return (
