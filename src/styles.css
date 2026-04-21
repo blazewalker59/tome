@@ -75,10 +75,13 @@
   --track-bg: rgba(236, 228, 207, 0.08);
 
   /* App chrome heights — used by .viewport-stage to size full-screen views.
-     `--chrome-top` accounts for the sticky header; `--chrome-bottom` for
-     the mobile bottom tab bar (zeroed out at sm). */
+     `--chrome-top` accounts for the sticky header (its own pt already
+     adds safe-area-inset-top). `--chrome-bottom` matches the mobile tab
+     bar's 72px height; BottomTabs no longer pads by
+     safe-area-inset-bottom (see BottomTabs.tsx), so neither does this.
+     Zeroed out at sm where the bar is hidden. */
   --chrome-top: calc(68px + env(safe-area-inset-top));
-  --chrome-bottom: calc(72px + env(safe-area-inset-bottom));
+  --chrome-bottom: 72px;
 }
 
 /* Light (parchment alternate) ---------------------------------------------- */
@@ -558,10 +561,11 @@ a {
 }
 
 /* Reserve space at the bottom of every page so content isn't hidden under
-   the bottom tab bar on phones. Desktop has no bottom bar so the override
-   zeroes it out. */
+   the bottom tab bar on phones. Matches BottomTabs' 72px height; the bar
+   deliberately doesn't add safe-area-inset-bottom so neither do we.
+   Desktop has no bottom bar so the override zeroes it out. */
 body {
-  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  padding-bottom: 72px;
 }
 
 @media (min-width: 640px) {
