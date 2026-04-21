@@ -8,18 +8,20 @@
     https://lucide.dev/icons/book-open): two mirrored page panels that
     meet at a central spine.
 
-    Stroke color flips via prefers-color-scheme so the mark stays
-    legible against light or dark browser chrome.
+    Background: a cream rounded square (the light theme's foam token,
+    #f8f2e2) so the icon always reads on light or dark browser chrome.
+    We stop relying on prefers-color-scheme for legibility and instead
+    brand the favicon with the app's light-theme panel color.
+
+    Stroke stays the deep lagoon ink so it has strong contrast against
+    the cream background in both modes.
   -->
-  <style>
-    .stroke { stroke: #0f2d3d; }
-    @media (prefers-color-scheme: dark) {
-      .stroke { stroke: #e8f4f1; }
-    }
-  </style>
+
+  <!-- Cream panel background, rounded to feel like an app tile. -->
+  <rect x="0" y="0" width="24" height="24" rx="5" ry="5" fill="#f8f2e2" />
 
   <g
-    class="stroke"
+    stroke="#1f2e25"
     fill="none"
     stroke-width="2"
     stroke-linecap="round"
