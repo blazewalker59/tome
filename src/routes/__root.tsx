@@ -22,11 +22,50 @@ export const Route = createRootRoute({
       {
         title: "Tome — Read. Collect. Share.",
       },
+      // iOS PWA: `display: standalone` in the web manifest is respected
+      // by Android/Chrome, but iOS Safari still requires the legacy
+      // `apple-mobile-web-app-capable` meta to drop the browser chrome
+      // when launched from the Home Screen. Without it the app runs in
+      // a regular Safari shell regardless of the manifest.
+      {
+        name: "apple-mobile-web-app-capable",
+        content: "yes",
+      },
+      {
+        name: "mobile-web-app-capable",
+        content: "yes",
+      },
+      // `black-translucent` lets our own header draw under the iOS
+      // status bar, which works because Header pads `pt-[env(safe-
+      // area-inset-top)]`. Without this the status bar gets a white
+      // strip above the app.
+      {
+        name: "apple-mobile-web-app-status-bar-style",
+        content: "black-translucent",
+      },
+      {
+        name: "apple-mobile-web-app-title",
+        content: "Tome",
+      },
+      // Matches manifest theme_color for Android address-bar tint and
+      // iOS status-bar icon contrast when not using black-translucent.
+      {
+        name: "theme-color",
+        content: "#1f8a94",
+      },
     ],
     links: [
       {
         rel: "stylesheet",
         href: appCss,
+      },
+      // Web app manifest. Without this `<link>` the `manifest.json` file
+      // is dead weight — browsers won't discover it, the "Add to Home
+      // Screen" install prompt won't fire, and Android/Chrome will fall
+      // back to non-standalone mode even after install.
+      {
+        rel: "manifest",
+        href: "/manifest.json",
       },
       // SVG favicon (Tome mark). Modern browsers prefer this; the .ico
       // below is a legacy fallback for older clients and tools that
