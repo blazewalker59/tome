@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { LogOut, ShieldCheck } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
+import { TomeIcon } from "./icons";
 import { signOut, useAuth, useIsAdmin } from "@/lib/auth/hooks";
 
 /**
@@ -23,7 +24,7 @@ export default function Header() {
           to="/"
           className="inline-flex h-11 items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-4 text-sm font-semibold text-[var(--sea-ink)] no-underline"
         >
-          <span className="h-2 w-2 rounded-full bg-[linear-gradient(90deg,var(--lagoon),var(--palm))]" />
+          <TomeIcon aria-hidden className="h-5 w-5 text-[var(--lagoon)]" />
           Tome
         </Link>
 
@@ -190,13 +191,13 @@ function ProfileMenu({
 
           {isAdmin && (
             <Link
-              to="/admin/ingest"
+              to="/admin"
               role="menuitem"
               onClick={() => setOpen(false)}
               className="flex items-center gap-2 border-b border-[var(--line)] px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] no-underline hover:bg-[var(--link-bg-hover)]"
             >
               <ShieldCheck aria-hidden className="h-4 w-4 text-[var(--lagoon)]" />
-              <span>Admin · Ingest</span>
+              <span>Admin</span>
             </Link>
           )}
 
