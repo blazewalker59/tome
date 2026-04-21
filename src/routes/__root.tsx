@@ -28,6 +28,23 @@ export const Route = createRootRoute({
         rel: "stylesheet",
         href: appCss,
       },
+      // SVG favicon (Tome mark). Modern browsers prefer this; the .ico
+      // below is a legacy fallback for older clients and tools that
+      // hard-code `/favicon.ico`.
+      {
+        rel: "icon",
+        type: "image/svg+xml",
+        href: "/favicon.svg",
+      },
+      {
+        rel: "icon",
+        type: "image/x-icon",
+        href: "/favicon.ico",
+      },
+      {
+        rel: "apple-touch-icon",
+        href: "/logo192.png",
+      },
     ],
   }),
   shellComponent: RootDocument,

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { LogOut, ShieldCheck } from "lucide-react";
+import { BookOpen, LogOut, ShieldCheck } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
-import { TomeIcon } from "./icons";
 import { signOut, useAuth, useIsAdmin } from "@/lib/auth/hooks";
 
 /**
@@ -24,7 +23,7 @@ export default function Header() {
           to="/"
           className="inline-flex h-11 items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-4 text-sm font-semibold text-[var(--sea-ink)] no-underline"
         >
-          <TomeIcon aria-hidden className="h-5 w-5 text-[var(--lagoon)]" />
+          <BookOpen aria-hidden className="h-5 w-5 text-[var(--lagoon)]" />
           Tome
         </Link>
 

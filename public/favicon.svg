@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!--
+    Tome favicon. Matches the lucide `BookOpen` icon used in the header
+    wordmark and the Library bottom-tab, so the brand mark is consistent
+    across app chrome and browser tab.
+
+    Paths are copied verbatim from lucide-react's `BookOpen` (MIT,
+    https://lucide.dev/icons/book-open): two mirrored page panels that
+    meet at a central spine.
+
+    Stroke color flips via prefers-color-scheme so the mark stays
+    legible against light or dark browser chrome.
+  -->
+  <style>
+    .stroke { stroke: #0f2d3d; }
+    @media (prefers-color-scheme: dark) {
+      .stroke { stroke: #e8f4f1; }
+    }
+  </style>
+
+  <g
+    class="stroke"
+    fill="none"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <path d="M12 7v14" />
+    <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+  </g>
+</svg>
