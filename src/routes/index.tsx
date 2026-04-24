@@ -1,15 +1,17 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { BookOpen, Layers, Library, Sparkles } from "lucide-react";
-import { getCollectionFn, getEditorialPackFn } from "@/server/collection";
+import {
+  getCollectionFn,
+  getRipPacksFn,
+  type PackSummary,
+} from "@/server/collection";
 import {
   listReadingEntriesFn,
   type ReadingEntry,
 } from "@/server/reading";
-import { bookRowToCardData } from "@/lib/cards/book-to-card";
-import { rarityCounts } from "@/lib/cards/filter";
 import { RARITY_STYLES } from "@/lib/cards/style";
 import type { Rarity } from "@/lib/cards/types";
-import { RarityGemRow } from "@/components/RarityGemRow";
+import { packGradient } from "@/lib/packs/gradient";
 
 /**
  * Home route.
@@ -31,8 +33,8 @@ import { RarityGemRow } from "@/components/RarityGemRow";
  */
 export const Route = createFileRoute("/")({
   loader: async () => {
-    const [pack, collection, readingEntries] = await Promise.all([
-      getEditorialPackFn(),
+    const [packs, collection, readingEntries] = await Promise.all([
+      getRipPacksFn(),
       getCollectionFn(),
       // Swallow the auth error for anonymous callers — the glance
       // card won't render without `collection`, so a null here is
@@ -41,16 +43,38 @@ export const Route = createFileRoute("/")({
       // fast path where the user is signed in.
       listReadingEntriesFn().catch(() => null),
     ]);
-    return { pack, collection, readingEntries };
+    return { packs, collection, readingEntries };
   },
   component: Home,
 });
 
-function Home() {
-  const { pack, collection, readingEntries } = Route.useLoaderData();
+/**
+ * Slugs we recognize as "Modern <Genre> Starter" packs. Filter is
+ * conservative (prefix AND suffix) so any future editorial pack that
+ * just happens to start with "modern-" doesn't accidentally land in
+ * the featured strip — it has to be a starter too. Keeps the home
+ * strip pinned to the curated five until we decide otherwise.
+ */
+const STARTER_PACK_SLUG_PREFIX = "modern-";
+const STARTER_PACK_SLUG_SUFFIX = "-starter";
 
-  const packCards = pack.books.map(bookRowToCardData);
-  const totalBooks = packCards.length;
+function isStarterPack(pack: PackSummary): boolean {
+  return (
+    pack.slug.startsWith(STARTER_PACK_SLUG_PREFIX) &&
+    pack.slug.endsWith(STARTER_PACK_SLUG_SUFFIX)
+  );
+}
+
+function Home() {
+  const { packs, collection, readingEntries } = Route.useLoaderData();
+
+  // Server sorts by createdAt DESC. We want a stable, human-readable
+  // left-to-right ordering for the starter strip so the genres don't
+  // shuffle whenever a pack is re-saved; alpha-by-slug gives that.
+  const starterPacks = packs
+    .filter(isStarterPack)
+    .slice()
+    .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
 
   return (
     <main className="page-wrap space-y-6 px-4 pb-8 pt-6 sm:space-y-8 sm:pt-14">
@@ -102,15 +126,13 @@ function Home() {
         />
       )}
 
-      {/* Featured pack — always rendered. Gives anonymous users a
-          preview of what they're signing up for and returning users a
-          quick summary of the current rotation. */}
-      <FeaturedPackCard
-        name={pack.name}
-        description={pack.description}
-        bookCount={totalBooks}
-        rarityBreakdown={rarityCounts(packCards)}
-      />
+      {/* Featured starters — always rendered. Gives anonymous users
+          a preview of the curated rotation and returning users a
+          fast lane into any of the five starter packs. Falls back
+          gracefully to nothing when the catalog hasn't been seeded
+          yet (local-dev first boot, smoke envs, etc.) — the page
+          still has the hero + how-it-works strip to fill space. */}
+      {starterPacks.length > 0 && <StarterPacksCard packs={starterPacks} />}
 
       {/* Evergreen 3-step explainer. Keeps the page tall even on a
           small phone and reinforces the core loop for newcomers. */}
@@ -358,57 +380,103 @@ function RecentPulls({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Featured pack
+// Starter packs strip
 // ─────────────────────────────────────────────────────────────────────────────
 
-function FeaturedPackCard({
-  name,
-  description,
-  bookCount,
-  rarityBreakdown,
-}: {
-  name: string;
-  description: string | null;
-  bookCount: number;
-  rarityBreakdown: Record<Rarity, number>;
-}) {
+/**
+ * Row of mini pack tiles — one per "Modern <Genre> Starter" pack.
+ * Each tile paints with its pack's bespoke gradient (see
+ * `src/lib/packs/gradient.ts`) so the row reads as a spectrum, and
+ * tapping anywhere on a tile deep-links into `/rip/$slug` for the
+ * tear-open flow.
+ *
+ * Layout:
+ *   - Horizontal scroll on phones so all five tiles stay legible
+ *     without cramping each to < 60px wide. `snap-x` makes the swipe
+ *     feel committed.
+ *   - Five-across grid from the `sm:` breakpoint up, where there's
+ *     room to show every tile at a readable size without scrolling.
+ */
+function StarterPacksCard({ packs }: { packs: ReadonlyArray<PackSummary> }) {
   return (
     <section className="island-shell rise-in rounded-[1.5rem] px-5 py-6 sm:px-8 sm:py-8">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <p className="island-kicker">Featured pack</p>
+          <p className="island-kicker">Starter packs</p>
           <h2 className="display-title mt-1 text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
-            {name}
+            Start your shelf
           </h2>
-          {description && (
-            <p className="mt-2 max-w-xl text-sm text-[var(--sea-ink-soft)]">{description}</p>
-          )}
-          <p className="mt-3 text-xs uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-            {bookCount} books in the set
+          <p className="mt-2 max-w-xl text-sm text-[var(--sea-ink-soft)]">
+            Five hand-picked packs across the biggest modern genres —
+            {" "}20 well-loved books each.
           </p>
         </div>
         <Link
           to="/rip"
-          className="btn-primary shrink-0 self-start rounded-full px-5 text-sm"
+          className="btn-secondary shrink-0 self-start rounded-full px-4 text-sm sm:self-end"
         >
           <Sparkles aria-hidden className="h-4 w-4" />
-          <span>Rip a pack</span>
+          <span>See all packs</span>
         </Link>
       </div>
 
-      {/* Rarity spread — shared RarityGemRow component in `count`
-          mode. Matches the visual language on /collection (same
-          tinted gems, same tap-to-open popovers) but swaps the
-          progress ring for a soft tint since the pack has no
-          owned-of-total dimension. */}
-      <div className="mt-5">
-        <RarityGemRow
-          mode="count"
-          counts={rarityBreakdown}
-          scopeLabel="in this pack"
-        />
+      {/* Horizontal scroll on narrow screens; 5-up grid on sm+ so the
+          whole strip is visible without swiping on a laptop. The
+          negative-margin + padding trick lets the scroll area bleed
+          to the card edges without widening the island-shell. */}
+      <div className="mt-5 -mx-5 sm:mx-0">
+        <ul className="flex gap-3 overflow-x-auto px-5 pb-1 snap-x snap-mandatory sm:grid sm:grid-cols-5 sm:gap-4 sm:overflow-visible sm:px-0">
+          {packs.map((pack) => (
+            <li key={pack.id} className="snap-start shrink-0 w-[44%] sm:w-auto">
+              <StarterPackTile pack={pack} />
+            </li>
+          ))}
+        </ul>
       </div>
     </section>
+  );
+}
+
+/**
+ * One mini pack tile. 2:3 aspect matches the full-size pack seal on
+ * /rip so tapping the tile is visually continuous with landing on
+ * the rip surface (same gradient, same typography). Pack name prints
+ * in the foil color over the gradient; book count sits under it as
+ * a kicker.
+ */
+function StarterPackTile({ pack }: { pack: PackSummary }) {
+  const gradient = packGradient(pack.slug);
+  return (
+    <Link
+      to="/rip/$slug"
+      params={{ slug: pack.slug }}
+      className="group block aspect-[2/3] w-full overflow-hidden rounded-2xl text-[var(--on-accent)] shadow-lg outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--lagoon)]"
+      style={{
+        background: gradient.background,
+        // Subtle glow that echoes the larger pack seals. Softer than
+        // the rip carousel's so the home page doesn't look busy.
+        boxShadow: `0 0 40px -16px ${gradient.glowColor}, 0 18px 32px -22px rgba(0, 0, 0, 0.45)`,
+      }}
+      aria-label={`Rip ${pack.name}`}
+    >
+      <div className="relative flex h-full flex-col justify-between p-3">
+        {/* Sparkle overlay — same dotted gradient as the full seal
+            but lower opacity so the mini doesn't fight with its
+            neighbours in a row of five. */}
+        <div className="pointer-events-none absolute inset-0 opacity-15 [background-image:radial-gradient(circle_at_30%_20%,white,transparent_45%),radial-gradient(circle_at_70%_80%,white,transparent_45%)]" />
+        <div className="relative text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--on-accent)]/70">
+          Starter
+        </div>
+        <div className="relative">
+          <h3 className="display-title text-sm font-bold leading-tight sm:text-base">
+            {pack.name}
+          </h3>
+          <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-[var(--on-accent)]/70">
+            {pack.bookCount} books
+          </p>
+        </div>
+      </div>
+    </Link>
   );
 }
 
