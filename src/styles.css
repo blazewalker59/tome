@@ -695,18 +695,37 @@ body {
 /* Bottom sheet — built on native <dialog>. Backdrop dims the page; the
    panel slides up from the bottom edge. Mobile-only: on desktop we keep
    filter UIs inline so this rarely opens, but the styles still work if it
-   does. */
+   does.
+
+   Structure: the <dialog> itself is used only for its modal semantics
+   (backdrop pseudo-element, focus trap, Esc-to-close, top-layer
+   promotion). It's sized to `0x0` and pinned at `bottom: 0` so it
+   never intercepts space. The visible panel is a `position: fixed`
+   child that anchors itself to the viewport bottom directly — this
+   sidesteps the mess of UA defaults around open-dialog sizing
+   (Chrome applies `margin: auto` + `width: fit-content` which
+   conflicts with trying to stretch the dialog via `inset: 0`, and
+   the observable bug was a blurred backdrop with a zero-height
+   panel). */
 .bottom-sheet {
   border: 0;
   background: transparent;
   padding: 0;
   margin: 0;
-  width: 100%;
   max-width: none;
   max-height: none;
+  width: auto;
+  height: auto;
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: auto;
   color: var(--sea-ink);
+  /* The panel is the only visible thing; the dialog element just
+     anchors the backdrop. Making the dialog itself overflow-visible
+     so the child panel can extend above its box. */
+  overflow: visible;
 }
 
 .bottom-sheet::backdrop {
@@ -715,15 +734,18 @@ body {
 }
 
 .bottom-sheet-panel {
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
+  /* The dialog itself is now pinned at the bottom edge with auto
+     width/height, so the panel just needs to stretch to the viewport
+     width. No absolute positioning tricks required. */
+  width: 100vw;
+  max-height: 85vh;
+  overflow-y: auto;
   background: var(--surface-strong);
   border-top: 1px solid var(--line);
   border-radius: 1.25rem 1.25rem 0 0;
   padding: 1.25rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom));
   box-shadow: 0 -20px 50px -10px rgba(0, 0, 0, 0.4);
-  animation: sheet-slide-up 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: sheet-slide-up 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes sheet-slide-up {
