@@ -2,11 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, useMotionValue, animate } from "motion/react";
 import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
-import { ChevronLeft, Gem, Info, X } from "lucide-react";
+import { BookOpen, ChevronLeft, Gem, Info, X } from "lucide-react";
 import { PackRip } from "@/components/cards/PackRip";
+import { useToast } from "@/components/Toast";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import { applyRip, pullPack, type PoolEntry, type RipOutcome } from "@/lib/cards/pull";
-import { getCollectionFn, getPackBySlugFn, recordRipFn } from "@/server/collection";
+import {
+  getCollectionFn,
+  getPackBySlugFn,
+  INSUFFICIENT_SHARDS_PREFIX,
+  recordRipFn,
+} from "@/server/collection";
+import { getPublicEconomyFn } from "@/server/economy";
 import { RARITY_STYLES } from "@/lib/cards/style";
 import type { BookRow } from "@/lib/cards/book-to-card";
 import type { CardData, Rarity } from "@/lib/cards/types";
@@ -23,9 +30,10 @@ import type { CardData, Rarity } from "@/lib/cards/types";
  */
 export const Route = createFileRoute("/rip/$slug")({
   loader: async ({ params }) => {
-    const [pack, collection] = await Promise.all([
+    const [pack, collection, economy] = await Promise.all([
       getPackBySlugFn({ data: { slug: params.slug } }),
       getCollectionFn(),
+      getPublicEconomyFn(),
     ]);
     if (!collection) {
       // Stash the pack slug on the sign-in URL so we can bounce back
@@ -33,7 +41,7 @@ export const Route = createFileRoute("/rip/$slug")({
       // later; for now a plain redirect preserves the product flow.)
       throw redirect({ to: "/sign-in" });
     }
-    return { pack, collection };
+    return { pack, collection, economy };
   },
   component: RipPackPage,
 });
@@ -48,9 +56,10 @@ function rollRip(
   pool: ReadonlyArray<PoolEntry>,
   cardById: ReadonlyMap<string, CardData>,
   ownedBookIds: ReadonlySet<string>,
+  shardsPerDupe: number,
 ): RipState {
   const pulls = pullPack({ pool });
-  const outcome = applyRip({ pulls, ownedBookIds });
+  const outcome = applyRip({ pulls, ownedBookIds, shardsPerDupe });
   const pulledCards = pulls.map((p) => {
     const card = cardById.get(p.bookId);
     if (!card) throw new Error(`rollRip: missing card data for ${p.bookId}`);
@@ -60,8 +69,9 @@ function rollRip(
 }
 
 function RipPackPage() {
-  const { pack, collection } = Route.useLoaderData();
+  const { pack, collection, economy } = Route.useLoaderData();
   const router = useRouter();
+  const toast = useToast();
 
   // Memoise pool + lookup map derived from server data so re-rolls don't
   // re-compute them on every "Rip another" click.
@@ -75,7 +85,20 @@ function RipPackPage() {
 
   const ownedBookIds = useMemo(() => new Set(collection.ownedBookIds), [collection.ownedBookIds]);
 
-  const [ripState, setRipState] = useState<RipState>(() => rollRip(pool, cardById, ownedBookIds));
+  // Gate the rip flow entirely when the user can't afford a pack.
+  // Rolling cards only to have the server reject the commit would
+  // waste the emotional beat of the reveal; blocking at page load
+  // means the "need more shards" state reads as the primary thing
+  // on the screen, with a clear way to earn more.
+  const canAfford = collection.shardBalance >= economy.packCost;
+
+  const [ripState, setRipState] = useState<RipState>(() =>
+    // We still roll an initial rip even when the user can't afford it
+    // because the RipPackPage component unconditionally references
+    // `ripState` below; the `canAfford` branch below short-circuits
+    // before anything about this rolled state is rendered.
+    rollRip(pool, cardById, ownedBookIds, economy.shardsPerDupe),
+  );
   const [ripKey, setRipKey] = useState(0);
   const [committedKey, setCommittedKey] = useState<number | null>(null);
   const [savingError, setSavingError] = useState<string | null>(null);
@@ -87,26 +110,54 @@ function RipPackPage() {
     setCommittedKey(ripKey);
     setSavingError(null);
     try {
-      await recordRipFn({
+      const result = await recordRipFn({
         data: {
           packId: pack.packId,
           pulledBookIds: ripState.outcome.pulls.map((p) => p.bookId),
         },
       });
+
+      // Surface the net shard change as a toast. We show the net
+      // (refund - cost) rather than just the refund because it's
+      // the number the user actually cares about — "did this rip
+      // make me richer or poorer?". Skip the toast entirely on a
+      // zero-dupe rip where refund == 0 and net == -packCost; the
+      // summary strip on the rip screen already shows "0 dupes".
+      if (result.shardsAwarded > 0) {
+        const net = result.shardsAwarded - result.packCost;
+        toast.push({
+          title:
+            result.duplicateBookIds.length === 1
+              ? "1 duplicate refunded"
+              : `${result.duplicateBookIds.length} duplicates refunded`,
+          description:
+            net >= 0
+              ? `Net +${net} shards on this rip.`
+              : `Net ${net} shards (pack cost ${result.packCost}).`,
+          tone: "shard",
+          amount: result.shardsAwarded,
+        });
+      }
+
       // Refresh the loader so the next render sees the new collection.
       await router.invalidate();
     } catch (err) {
       // Surface failures but don't block the animation — the user has
       // already seen the cards. Retry is implicit on "Rip another".
       console.error("[rip] recordRip failed:", err);
-      setSavingError(
-        err instanceof Error ? err.message : "We couldn't save that rip. Try again.",
-      );
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.startsWith(INSUFFICIENT_SHARDS_PREFIX)) {
+        setSavingError(
+          "Not enough shards to commit this rip. Finish a book or start one to earn more.",
+        );
+      } else {
+        setSavingError("We couldn't save that rip. Try again.");
+      }
     }
   }
 
   function handleRipAnother() {
-    setRipState(rollRip(pool, cardById, ownedBookIds));
+    setRipState(rollRip(pool, cardById, ownedBookIds, economy.shardsPerDupe));
     setRipKey((k) => k + 1);
   }
 
@@ -146,32 +197,56 @@ function RipPackPage() {
         </button>
 
         <p className="island-kicker">{pack.name}</p>
+        {/* Header stats strip. Cost is shown so the user always knows
+            the price of a rip; the shard count goes red-tinted when
+            they can't afford the current pack so the reason for the
+            gate below is obvious at a glance. */}
         <div className="mt-1 flex items-center justify-center gap-3 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
           <span>
             Owned <span className="text-[var(--sea-ink)]">{collection.ownedBookIds.length}</span>
           </span>
           <span aria-hidden>·</span>
           <span>
-            Shards <span className="text-[var(--sea-ink)]">{collection.shardBalance}</span>
+            Shards{" "}
+            <span
+              className={
+                canAfford
+                  ? "text-[var(--sea-ink)]"
+                  : "text-[color:var(--rarity-legendary)]"
+              }
+            >
+              {collection.shardBalance}
+            </span>
+          </span>
+          <span aria-hidden>·</span>
+          <span>
+            Cost <span className="text-[var(--sea-ink)]">{economy.packCost}</span>
           </span>
         </div>
       </header>
 
-      <PackRip
-        key={ripKey}
-        cards={ripState.pulledCards}
-        packName={pack.name}
-        onComplete={handleRipComplete}
-        onRipAnother={handleRipAnother}
-        summary={
-          <RipSummary
-            shardsEarned={outcome.shardsEarned}
-            newCount={outcome.newCards.length}
-            duplicateCount={outcome.duplicates.length}
-            error={savingError}
-          />
-        }
-      />
+      {canAfford ? (
+        <PackRip
+          key={ripKey}
+          cards={ripState.pulledCards}
+          packName={pack.name}
+          onComplete={handleRipComplete}
+          onRipAnother={handleRipAnother}
+          summary={
+            <RipSummary
+              shardsEarned={outcome.shardsEarned}
+              newCount={outcome.newCards.length}
+              duplicateCount={outcome.duplicates.length}
+              error={savingError}
+            />
+          }
+        />
+      ) : (
+        <InsufficientShardsState
+          shardBalance={collection.shardBalance}
+          packCost={economy.packCost}
+        />
+      )}
 
       <PackContentsSheet
         open={contentsOpen}
@@ -180,6 +255,73 @@ function RipPackPage() {
         books={pack.books}
       />
     </main>
+  );
+}
+
+/**
+ * Shown in place of the rip flow when the user doesn't have enough
+ * shards to commit. Frames the shortage as a next-action ("keep
+ * reading to earn more") rather than a dead-end. The two CTAs map
+ * to the two ways a user can actually earn shards right now: mark
+ * a book as reading/read, or browse the library to find something
+ * to start.
+ */
+function InsufficientShardsState({
+  shardBalance,
+  packCost,
+}: {
+  shardBalance: number;
+  packCost: number;
+}) {
+  const shortfall = Math.max(0, packCost - shardBalance);
+  return (
+    <section className="px-4 pt-8 pb-16 sm:pt-12">
+      <div className="mx-auto max-w-md">
+        <div className="island-shell rounded-3xl p-6 text-center sm:p-8">
+          <div className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-[color:var(--rarity-legendary-soft)] text-[color:var(--rarity-legendary)]">
+            <Gem aria-hidden className="h-6 w-6" />
+          </div>
+          <p className="island-kicker">Not enough shards</p>
+          <h2 className="display-title mt-2 text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
+            You need {shortfall} more to rip this pack
+          </h2>
+          <p className="mt-3 text-sm text-[var(--sea-ink-soft)]">
+            Shards are earned by reading. Mark a book as{" "}
+            <em>reading</em> for a small boost, and finishing a book
+            pays out a full pack's worth.
+          </p>
+
+          {/* Balance vs cost, shown numerically so the gap isn't
+              ambiguous. Tabular numerals so the two rows line up. */}
+          <dl className="mt-5 grid grid-cols-2 gap-3 text-xs tabular-nums">
+            <div className="rounded-xl border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-2">
+              <dt className="uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">You have</dt>
+              <dd className="mt-1 text-lg font-semibold text-[var(--sea-ink)]">{shardBalance}</dd>
+            </div>
+            <div className="rounded-xl border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-2">
+              <dt className="uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">Pack cost</dt>
+              <dd className="mt-1 text-lg font-semibold text-[var(--sea-ink)]">{packCost}</dd>
+            </div>
+          </dl>
+
+          <div className="mt-6 flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
+            <Link
+              to="/collection"
+              className="btn-primary w-full rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
+            >
+              <BookOpen aria-hidden className="mr-1.5 inline-block h-4 w-4" />
+              Go read
+            </Link>
+            <Link
+              to="/rip"
+              className="btn-secondary w-full rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
+            >
+              Back to packs
+            </Link>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
