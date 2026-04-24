@@ -106,6 +106,53 @@ export interface UpsertReadingEntryResult {
 export const FINISH_GUARD_MS = 60 * 60 * 1000;
 
 /**
+ * Pure decision function: given the prior status (possibly undefined
+ * for a brand-new entry) and the desired next status, report which
+ * transition grant — if any — the caller should attempt to mint.
+ *
+ * Separated from the handler so it can be tested in isolation; the
+ * handler composes this with `shouldGrantFinish` to gate finish grants
+ * behind the anti-farm window.
+ *
+ * Rules:
+ *   • null/undefined → reading, or tbr → reading, or finished → reading
+ *     (un-finish): emit start_reading.
+ *   • any-non-finished → finished: emit finish_reading (subject to the
+ *     hourly guard, which is enforced outside this function).
+ *   • tbr transitions and idempotent writes (reading→reading,
+ *     finished→finished): emit nothing.
+ */
+export function decideTransitionGrant(
+  prior: ReadingStatus | undefined,
+  next: ReadingStatus,
+): "start_reading" | "finish_reading" | null {
+  if (next === "reading" && prior !== "reading") return "start_reading";
+  if (next === "finished" && prior !== "finished") return "finish_reading";
+  return null;
+}
+
+/**
+ * Pure decision function for started_at / finished_at stamping.
+ * Only the FIRST entry into a state sets its timestamp; subsequent
+ * bounces (reading → tbr → reading) preserve the original. Matches
+ * how Goodreads / StoryGraph treat these fields — users expect
+ * "started on March 3rd" to stay March 3rd even after a re-shelve.
+ */
+export function computeReadingTimestamps(
+  next: ReadingStatus,
+  prior: { startedAt: Date | null; finishedAt: Date | null } | undefined,
+  now: Date,
+): { startedAt: Date | null; finishedAt: Date | null } {
+  const startedAt =
+    next === "reading" && !prior?.startedAt ? now : (prior?.startedAt ?? null);
+  const finishedAt =
+    next === "finished" && !prior?.finishedAt
+      ? now
+      : (prior?.finishedAt ?? null);
+  return { startedAt, finishedAt };
+}
+
+/**
  * Returns true iff a finish_reading grant should fire for this user/book.
  * The caller still has to insert the grant (we don't do it here) — this
  * just reports the policy decision so the caller can decide whether to
@@ -121,8 +168,11 @@ export const FINISH_GUARD_MS = 60 * 60 * 1000;
  * The once-per-book DB index still blocks repeat finish grants even if
  * this check is bypassed, so this layer is about pacing rather than
  * correctness.
+ *
+ * Exported for direct unit testing; production callers go through
+ * upsertReadingEntryFn which invokes it internally.
  */
-async function shouldGrantFinish(
+export async function shouldGrantFinish(
   database: Awaited<ReturnType<typeof getDb>>,
   userId: string,
   bookId: string,
@@ -404,19 +454,16 @@ export const upsertReadingEntryFn = createServerFn({ method: "POST" })
           const desiredStatus: ReadingStatus =
             data.status ?? (prior?.status as ReadingStatus | undefined) ?? "tbr";
 
-          // Stamp transitions. Only the first-ever entry into a state
-          // sets the timestamp; subsequent bounces (reading → tbr →
-          // reading) keep the original started_at. Same rule for
-          // finished_at. Matches how Goodreads / StoryGraph treat
-          // these fields.
-          const nextStartedAt =
-            desiredStatus === "reading" && !prior?.startedAt
-              ? now
-              : (prior?.startedAt ?? null);
-          const nextFinishedAt =
-            desiredStatus === "finished" && !prior?.finishedAt
-              ? now
-              : (prior?.finishedAt ?? null);
+          // Stamp transitions via the pure helper so the test suite
+          // can exercise the same rule in isolation.
+          const { startedAt: nextStartedAt, finishedAt: nextFinishedAt } =
+            computeReadingTimestamps(
+              desiredStatus,
+              prior
+                ? { startedAt: prior.startedAt, finishedAt: prior.finishedAt }
+                : undefined,
+              now,
+            );
 
           // Upsert the row. On insert we rely on the schema defaults
           // for created_at; on update we explicitly bump updated_at.
@@ -450,13 +497,16 @@ export const upsertReadingEntryFn = createServerFn({ method: "POST" })
             });
           }
 
-          // Grant logic. Identical thresholds to the old path.
+          // Grant logic. Uses the pure transition helper to decide
+          // which grant — if any — applies, then gates finish grants
+          // behind the anti-farm window.
           const grants: Array<ReadingGrant> = [];
           let finishGuardSuppressed = false;
           const oldStatus = prior?.status as ReadingStatus | undefined;
+          const transition = decideTransitionGrant(oldStatus, desiredStatus);
           const cfg = await getEconomy();
 
-          if (desiredStatus === "reading" && oldStatus !== "reading") {
+          if (transition === "start_reading") {
             const r = await grantShards(
               tx,
               user.id,
@@ -465,16 +515,13 @@ export const upsertReadingEntryFn = createServerFn({ method: "POST" })
               { bookId: data.bookId },
             );
             pushGrantIfApplied(grants, "start_reading", r);
-          }
-
-          if (desiredStatus === "finished" && oldStatus !== "finished") {
-            // We call the guard BEFORE grantShards. If the guard
-            // fails we skip the ledger call entirely — suppressing a
-            // grant is different from "granted 0" because the partial
-            // unique index on shard_events would then block future
-            // legitimate grants for this (user, book). Letting the
-            // row stay un-inserted preserves the once-per-book
-            // invariant: a legitimate finish later still qualifies.
+          } else if (transition === "finish_reading") {
+            // Guard BEFORE grantShards. Suppressing a grant is
+            // different from "granted 0" because the partial unique
+            // index on shard_events would then block future legitimate
+            // grants for this (user, book). Letting the row stay
+            // un-inserted preserves the once-per-book invariant: a
+            // legitimate finish later still qualifies.
             const allowed = await shouldGrantFinish(
               // Read uses the outer connection to avoid locking within
               // the transaction on rows we only query.
