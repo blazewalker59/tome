@@ -31,9 +31,9 @@ export interface PackGradient {
 }
 
 /**
- * Default palette — the original lagoon→palm wrapper. Used for the
- * Booker seed pack, every user-authored pack, and any editorial pack
- * this helper hasn't learned about yet.
+ * Default palette — the original lagoon→palm wrapper. Used for every
+ * user-authored pack and any editorial pack this helper hasn't learned
+ * about yet.
  */
 const DEFAULT_PACK_GRADIENT: PackGradient = {
   background:

@@ -2,11 +2,10 @@
  * Seed five "Modern <Genre> Starter" editorial packs via the real
  * Hardcover API.
  *
- * This is the first script that ingests real book data — unlike
- * `scripts/seed.ts` which is a synthetic MOCK_POOL fixture. Because
- * every insert here is a real Hardcover record (positive `hardcover_id`),
- * these rows coexist cleanly with the mock pool (which uses negative
- * synthetic ids) and with any on-demand ingest done by the app runtime.
+ * This is the canonical catalog seed — the legacy `scripts/seed.ts`
+ * is now a no-op. Every insert here is a real Hardcover record
+ * (positive `hardcover_id`), which coexists cleanly with any on-demand
+ * ingest done by the app runtime.
  *
  * Flow per title:
  *   1. `searchBooks(query)` on Hardcover (Typesense-backed).
