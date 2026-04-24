@@ -136,6 +136,17 @@ export async function grantShards(
         .values(insertValues)
         .onConflictDoNothing({
           target: [shardEvents.userId, shardEvents.reason, shardEvents.refBookId],
+          // Repeat the partial index predicate so Postgres can match
+          // the ON CONFLICT target against the right index. Without
+          // this the planner refuses with "no unique or exclusion
+          // constraint matching the ON CONFLICT specification" —
+          // `reason` comes in as a bound parameter, and with a generic
+          // plan Postgres can't prove the insert row falls inside the
+          // partial index's predicate, so it won't pick it. The
+          // explicit WHERE is how you tell it "I know which index
+          // I mean". Must stay in sync with the index definition in
+          // src/db/schema.ts (shard_events_once_per_book_uq).
+          where: sql`${shardEvents.reason} in ('start_reading', 'finish_reading')`,
         })
         .returning({ id: shardEvents.id })
     : await tx.insert(shardEvents).values(insertValues).returning({ id: shardEvents.id });
