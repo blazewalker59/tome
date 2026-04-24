@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { ChevronDown } from "lucide-react";
 import { Card } from "@/components/cards/Card";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
@@ -28,8 +28,66 @@ import { getCollectionFn, getEditorialPackFn } from "@/server/collection";
  * or "just one bucket", and search covers the long-tail case. Keeping
  * the toolbar to three controls (search, sort, view) also matches the
  * available horizontal real estate on a phone without a second row.
+ *
+ * State persistence: `view`, `q` (search), and `sort` are all mirrored
+ * to the URL via TanStack Router's `validateSearch`. None are required
+ * — defaults stay out of the URL so a plain `/collection` link looks
+ * clean. This makes "grouped by rarity" and similar views shareable
+ * (copy the URL) and browser-history friendly (back arrow restores the
+ * prior view).
  */
+
+// Accepted values, declared once so `validateSearch` and the UI stay
+// aligned. The `as const` lets us derive the union type directly.
+const VIEW_VALUES = ["all", "pack", "author", "rarity", "genre"] as const;
+const SORT_VALUES = ["newest", "rarity", "title", "author"] as const;
+
+interface CollectionSearch {
+  /** Grouping pivot. Defaults to `all` and is omitted from the URL
+   *  when at default so `/collection` stays clean. */
+  view?: GroupBy;
+  /** Sort mode. Defaults to `newest`; omitted when at default. */
+  sort?: SortMode;
+  /** Case-insensitive search query. Omitted when empty. We use `q`
+   *  (not `search`) to keep URLs compact and match convention. */
+  q?: string;
+}
+
+/**
+ * Parse + coerce the raw `?...` params into a typed search object.
+ *
+ * Accepts anything, returns only valid values. Unknown strings (e.g. a
+ * stale link pointing at a view we removed) silently degrade to
+ * undefined → the component falls back to its default. This is
+ * intentionally forgiving: strict parsing would turn a shared URL into
+ * a route error if we ever rename an enum value.
+ */
+function parseCollectionSearch(raw: Record<string, unknown>): CollectionSearch {
+  const out: CollectionSearch = {};
+
+  const view = raw.view;
+  if (typeof view === "string" && (VIEW_VALUES as readonly string[]).includes(view)) {
+    out.view = view as GroupBy;
+  }
+
+  const sort = raw.sort;
+  if (typeof sort === "string" && (SORT_VALUES as readonly string[]).includes(sort)) {
+    out.sort = sort as SortMode;
+  }
+
+  const q = raw.q;
+  if (typeof q === "string" && q.trim().length > 0) {
+    // Cap the length — search params round-trip through SSR and we
+    // don't want an attacker to stuff a 100kB string into a URL that
+    // then ends up in server logs.
+    out.q = q.slice(0, 200);
+  }
+
+  return out;
+}
+
 export const Route = createFileRoute("/collection")({
+  validateSearch: parseCollectionSearch,
   loader: async () => {
     const [collection, pack] = await Promise.all([getCollectionFn(), getEditorialPackFn()]);
     if (!collection) {
@@ -65,6 +123,47 @@ const AUTO_COLLAPSE_THRESHOLD = 4;
 
 function CollectionPage() {
   const { collection, pack } = Route.useLoaderData();
+  const searchParams = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+
+  // Resolve defaults locally so the render path never has to branch on
+  // "is the param present?". The URL stays minimal because we only
+  // write non-default values back via `updateSearch`.
+  const view: GroupBy = searchParams.view ?? "all";
+  const sortMode: SortMode = searchParams.sort ?? "newest";
+  const search = searchParams.q ?? "";
+
+  /**
+   * Patch the URL search params. Keys set to `undefined` are removed
+   * (TanStack Router's convention). `replace: true` avoids polluting
+   * browser history with every keystroke; the back button should step
+   * between meaningful states, not typed characters. Use `push` only
+   * for the view/sort changes below where a history entry makes sense.
+   */
+  const updateSearch = (
+    patch: Partial<CollectionSearch>,
+    options: { replace?: boolean } = {},
+  ) => {
+    void navigate({
+      search: (prev) => {
+        const next = { ...prev, ...patch };
+        // Strip keys that are at their default value so clean URLs
+        // stay clean. Without this, picking "Newest" and "All" still
+        // leaves ?view=all&sort=newest hanging in the bar.
+        if (next.view === "all") delete next.view;
+        if (next.sort === "newest") delete next.sort;
+        if (!next.q) delete next.q;
+        return next;
+      },
+      replace: options.replace ?? false,
+    });
+  };
+
+  // Local state for the search input so typing feels instant. We only
+  // push to the URL on blur / explicit submit — otherwise every
+  // keystroke would land in history and (on slow networks) trigger a
+  // re-render through the router update cycle.
+  const [searchDraft, setSearchDraft] = useState(search);
 
   // Map the pack's books into CardData once per pack payload, then split into
   // the subset the user owns. We derive from the pack (not the collection's
@@ -96,14 +195,9 @@ function CollectionPage() {
     return m;
   }, [collection.acquisitions]);
 
-  const [search, setSearch] = useState("");
-  const [sortMode, setSortMode] = useState<SortMode>("newest");
-  const [view, setView] = useState<GroupBy>("all");
-
-  // Search filter — simple case-insensitive match on title + authors.
-  // We do it inline rather than go through `filterCards` since the chip
-  // filters are gone; keeping it inline avoids re-introducing the whole
-  // CollectionFilter surface for a one-field check.
+  // Use the URL-synced value (not the draft) for the actual filter so
+  // the displayed grid reflects what the URL says. This keeps paste-a-
+  // URL behaviour correct: the incoming `?q=gaiman` filters immediately.
   const searched = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return ownedCards;
@@ -172,7 +266,7 @@ function CollectionPage() {
       {/* View switcher — the top-level pivot. Sits directly under the
           progress strip and above the toolbar so it reads as a primary
           navigation control, not a filter option. */}
-      <ViewTabs value={view} onChange={setView} />
+      <ViewTabs value={view} onChange={(v) => updateSearch({ view: v })} />
 
       {/* Toolbar — search + sort. Sticky on mobile so the user always has
           it within thumb reach while scrolling. Filters are gone: search
@@ -181,8 +275,20 @@ function CollectionPage() {
         <div className="flex items-center gap-2">
           <input
             type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchDraft}
+            onChange={(e) => setSearchDraft(e.target.value)}
+            // Commit to URL on blur (tab-away / tap elsewhere) and on
+            // Enter. Both are natural "I'm done typing" signals and
+            // avoid writing to the URL on every keystroke.
+            onBlur={() =>
+              searchDraft !== search &&
+              updateSearch({ q: searchDraft || undefined }, { replace: true })
+            }
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.currentTarget.blur();
+              }
+            }}
             placeholder="Search title or author"
             className="input-field min-h-[44px] flex-1 rounded-full px-4 text-sm"
           />
@@ -190,7 +296,7 @@ function CollectionPage() {
             <span className="hidden sm:inline">Sort</span>
             <select
               value={sortMode}
-              onChange={(e) => setSortMode(e.target.value as SortMode)}
+              onChange={(e) => updateSearch({ sort: e.target.value as SortMode })}
               className="input-field min-h-[44px] rounded-full px-3 text-xs font-semibold"
               aria-label="Sort"
             >
@@ -225,6 +331,11 @@ function CollectionPage() {
     </main>
   );
 }
+
+// Exported for tests — the parser is the whole URL→state contract and
+// deserves targeted coverage independent of the rest of the route.
+export { parseCollectionSearch };
+export type { CollectionSearch };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // View switcher
