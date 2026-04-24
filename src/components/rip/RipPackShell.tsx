@@ -231,6 +231,7 @@ export function RipPackShell({
           key={ripKey}
           cards={ripState.pulledCards}
           packName={pack.name}
+          packSlug={pack.slug}
           onComplete={handleRipComplete}
           onRipAnother={handleRipAnother}
           summary={

@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion, type PanInfo } from "motion/react";
 import { getRipPacksFn, getShardBalanceFn, type PackSummary } from "@/server/collection";
+import { packGradient, packBoxShadow } from "@/lib/packs/gradient";
 
 /**
  * /rip — pack picker.
@@ -289,14 +290,13 @@ function PackCarouselItem({ slot, offset, onClick }: PackCarouselItemProps) {
  * No tear interaction here; tapping just selects/navigates.
  */
 function PackPreview({ pack, active }: { pack: PackSummary; active: boolean }) {
+  const gradient = packGradient(pack.slug);
   return (
     <div
       className="relative h-full w-full overflow-hidden rounded-2xl shadow-2xl"
       style={{
-        background:
-          "linear-gradient(135deg, var(--lagoon-deep) 0%, var(--lagoon) 55%, var(--palm) 100%)",
-        boxShadow:
-          "0 0 60px -10px color-mix(in oklab, var(--lagoon) 55%, transparent), 0 30px 60px -20px rgba(0, 0, 0, 0.55)",
+        background: gradient.background,
+        boxShadow: packBoxShadow(gradient),
       }}
     >
       <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(circle_at_30%_20%,white,transparent_45%),radial-gradient(circle_at_70%_80%,white,transparent_45%)]" />
