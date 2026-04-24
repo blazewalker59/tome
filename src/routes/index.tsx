@@ -246,13 +246,16 @@ function ReadingStrip({
         // the strip reads as continuous while content stays aligned
         // to the padded gutter on both sides.
         <div className="-mx-5 overflow-x-auto px-5 py-1 sm:-mx-8 sm:px-8">
-          <ul className="flex gap-3 snap-x snap-mandatory">
+          {/* items-stretch + fixed title slot keeps all tiles the
+              same height regardless of title length. Same trick used
+              in RecentPulls. */}
+          <ul className="flex items-stretch gap-3 snap-x snap-mandatory">
             {entries.map((e) => (
               <li key={e.bookId} className="shrink-0 snap-start">
                 <Link
                   to="/book/$id"
                   params={{ id: e.bookId }}
-                  className="block w-20 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md"
+                  className="flex h-full w-20 flex-col rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md"
                 >
                   {e.book.coverUrl ? (
                     <img
@@ -267,7 +270,7 @@ function ReadingStrip({
                     </div>
                   )}
                   <p
-                    className="mt-1 line-clamp-2 text-[10px] font-medium leading-tight text-[var(--sea-ink)]"
+                    className="mt-1 line-clamp-2 min-h-[2.2em] text-[10px] font-medium leading-tight text-[var(--sea-ink)]"
                     title={e.book.title}
                   >
                     {e.book.title}
@@ -311,7 +314,12 @@ function RecentPulls({
           rarity rings (up to 4px outside the tile) room to render
           without being clipped by the scroll container. */}
       <div className="-mx-5 overflow-x-auto px-5 py-1 sm:-mx-8 sm:px-8">
-        <ul className="flex gap-3 snap-x snap-mandatory">
+        {/* `items-stretch` makes every tile share the row's tallest
+            height; the title slot reserves two lines' worth of
+            vertical space so a one-liner doesn't collapse the tile
+            below a two-liner's height. Result: a clean, ragged-free
+            row no matter the title lengths. */}
+        <ul className="flex items-stretch gap-3 snap-x snap-mandatory">
           {pulls.map((p) => {
             const style = RARITY_STYLES[p.rarity as Rarity];
             return (
@@ -319,7 +327,7 @@ function RecentPulls({
                 <Link
                   to="/book/$id"
                   params={{ id: p.bookId }}
-                  className={`block w-20 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md ${style?.ring ?? ""}`}
+                  className={`flex h-full w-20 flex-col rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md ${style?.ring ?? ""}`}
                 >
                   {p.coverUrl ? (
                     <img
@@ -336,8 +344,12 @@ function RecentPulls({
                       {p.title.slice(0, 1)}
                     </div>
                   )}
+                  {/* Fixed 2-line title slot. `min-h` plus the
+                      explicit line-height gives us ~2 lines of room;
+                      line-clamp-2 trims anything longer. Keeps every
+                      tile the same height regardless of title length. */}
                   <p
-                    className="mt-1 line-clamp-2 text-[10px] font-medium leading-tight text-[var(--sea-ink)]"
+                    className="mt-1 line-clamp-2 min-h-[2.2em] text-[10px] font-medium leading-tight text-[var(--sea-ink)]"
                     title={p.title}
                   >
                     {p.title}
