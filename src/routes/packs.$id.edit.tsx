@@ -410,7 +410,7 @@ function BookSearchPanel({
           {results.map((b) => (
             <li
               key={b.id}
-              className="flex items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
+              className="flex min-w-0 items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
             >
               {b.coverUrl ? (
                 <img
@@ -433,7 +433,7 @@ function BookSearchPanel({
               <button
                 type="button"
                 onClick={() => void onAdd(b.id)}
-                className="btn-primary rounded-full px-3 py-1.5 text-[11px] uppercase tracking-[0.14em]"
+                className="btn-primary shrink-0 rounded-full px-3 py-1.5 text-[11px] uppercase tracking-[0.14em]"
               >
                 Add
               </button>
@@ -459,7 +459,7 @@ function BookSearchPanel({
               {hardcoverHits.map((h) => (
                 <li
                   key={h.hardcoverId}
-                  className="flex items-center gap-3 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-3"
+                  className="flex min-w-0 items-center gap-3 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-3"
                 >
                   {h.coverUrl ? (
                     <img
@@ -484,7 +484,7 @@ function BookSearchPanel({
                     type="button"
                     disabled={ingestingId === h.hardcoverId}
                     onClick={() => void onIngestAndAdd(h.hardcoverId)}
-                    className="btn-primary rounded-full px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] disabled:opacity-50"
+                    className="btn-primary shrink-0 rounded-full px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] disabled:opacity-50"
                   >
                     {ingestingId === h.hardcoverId ? "Adding…" : "Add"}
                   </button>
@@ -533,7 +533,7 @@ function CurrentBooksPanel({
           {pack.books.map((b) => (
             <li
               key={b.id}
-              className="flex items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
+              className="flex min-w-0 items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
             >
               {b.coverUrl ? (
                 <img
