@@ -130,7 +130,7 @@ function PacksWorkspace() {
                         {p.name}
                       </p>
                       <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
-                        {p.slug} · {p.bookCount} books · {p.kind}
+                        {p.slug} · {p.bookCount} books · {p.creatorId === null ? "editorial" : "user"}
                       </p>
                       {p.description && (
                         <p className="mt-1 line-clamp-1 text-xs text-[var(--sea-ink-soft)]">

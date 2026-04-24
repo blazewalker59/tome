@@ -146,7 +146,7 @@ function PackWorkspace({ slug }: { slug: string }) {
           </p>
         )}
         <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-          {pack.kind} · {pack.books.length} books
+          {pack.creatorId === null ? "editorial" : "user"} · {pack.books.length} books
         </p>
       </header>
 

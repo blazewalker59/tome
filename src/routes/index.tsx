@@ -1,6 +1,10 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { BookOpen, Sparkles, Layers } from "lucide-react";
+import { BookOpen, Layers, Library, Sparkles } from "lucide-react";
 import { getCollectionFn, getEditorialPackFn } from "@/server/collection";
+import {
+  listReadingEntriesFn,
+  type ReadingEntry,
+} from "@/server/reading";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import { rarityCounts } from "@/lib/cards/filter";
 import { RARITY_STYLES } from "@/lib/cards/style";
@@ -11,46 +15,59 @@ import { RarityGemRow } from "@/components/RarityGemRow";
  * Home route.
  *
  * The loader runs on the server during SSR and on the client thereafter.
- * Both `getEditorialPackFn` and `getCollectionFn` are tolerant of
- * anonymous callers — the pack is public, and the collection fn returns
- * `null` rather than redirecting so the home page still renders for
- * signed-out visitors. The extra content (stats card, featured pack)
- * exists primarily so the page has real vertical height: on a phone,
- * the standalone-PWA safe-area inset for the bottom nav doesn't
- * "settle" until the viewport has something to scroll. Giving home
- * genuine content sidesteps that browser quirk entirely and, bonus,
- * gives repeat visitors something to land on.
+ * `getEditorialPackFn` is public; `getCollectionFn` returns `null` for
+ * anonymous callers rather than redirecting so the home page still
+ * renders for signed-out visitors. `listReadingEntriesFn` requires a
+ * session and throws otherwise, so we swallow the error to `null` —
+ * the signed-in-only card only consults it when `collection` is also
+ * non-null, so anonymous callers never see the broken-fetch fallback.
+ *
+ * The extra content (library glance, featured pack, explainer) exists
+ * primarily so the page has real vertical height: on a phone, the
+ * standalone-PWA safe-area inset for the bottom nav doesn't "settle"
+ * until the viewport has something to scroll. Giving home genuine
+ * content sidesteps that browser quirk entirely and, bonus, gives
+ * repeat visitors something to land on.
  */
 export const Route = createFileRoute("/")({
   loader: async () => {
-    const [pack, collection] = await Promise.all([
+    const [pack, collection, readingEntries] = await Promise.all([
       getEditorialPackFn(),
       getCollectionFn(),
+      // Swallow the auth error for anonymous callers — the glance
+      // card won't render without `collection`, so a null here is
+      // harmless. Keeping the fetch in Promise.all (rather than a
+      // post-collection branch) avoids a serial round-trip on the
+      // fast path where the user is signed in.
+      listReadingEntriesFn().catch(() => null),
     ]);
-    return { pack, collection };
+    return { pack, collection, readingEntries };
   },
   component: Home,
 });
 
 function Home() {
-  const { pack, collection } = Route.useLoaderData();
+  const { pack, collection, readingEntries } = Route.useLoaderData();
 
   const packCards = pack.books.map(bookRowToCardData);
   const totalBooks = packCards.length;
 
   return (
     <main className="page-wrap space-y-6 px-4 pb-8 pt-6 sm:space-y-8 sm:pt-14">
-      {/* Hero — unchanged copy, the anchor of the page. */}
+      {/* Hero — three-beat headline mirrors the reading → ripping →
+          building loop that drives the economy; the subhead spells
+          the loop out for first-time visitors. */}
       <section className="island-shell rise-in relative overflow-hidden rounded-[2rem] px-5 py-8 sm:px-10 sm:py-14">
         <div className="pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--lagoon)_45%,transparent),transparent_66%)]" />
         <div className="pointer-events-none absolute -bottom-20 -right-20 h-56 w-56 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--clay)_35%,transparent),transparent_66%)]" />
         <p className="island-kicker mb-3">Tome</p>
         <h1 className="display-title mb-4 max-w-3xl text-3xl leading-[1.05] font-bold tracking-tight text-[var(--sea-ink)] sm:mb-5 sm:text-6xl sm:leading-[1.02]">
-          Rip packs. Collect books. Build decks.
+          Read books. Rip packs. Build your own.
         </h1>
         <p className="mb-6 max-w-2xl text-sm text-[var(--sea-ink-soft)] sm:mb-8 sm:text-lg">
-          Tome turns your reading life into a trading-card collection. Open curated packs, discover
-          books across every genre, and shape decks worth sharing.
+          Tome turns your reading life into a trading-card collection — log
+          books to earn shards, rip packs to collect them, and build packs
+          worth sharing.
         </p>
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <Link to="/rip" className="btn-primary rounded-full px-5 text-sm">
@@ -59,13 +76,35 @@ function Home() {
           <Link to="/collection" className="btn-secondary rounded-full px-5 text-sm">
             View collection
           </Link>
+          {/* Only surface the builder for signed-in users — anon
+              visitors can't create a draft without an account, and the
+              primary acquisition path is still "rip a pack first". */}
+          {collection && (
+            <Link to="/packs/new" className="btn-secondary rounded-full px-5 text-sm">
+              Build a pack
+            </Link>
+          )}
+          {/* Reading log also gated on sign-in: every entry lives on a
+              user account, so an anon CTA would just bounce through
+              sign-in. Placed next to Build a pack so the two creator
+              actions sit together at the end of the hero row. */}
+          {collection && (
+            <Link to="/reading" className="btn-secondary rounded-full px-5 text-sm">
+              Log a book
+            </Link>
+          )}
         </div>
       </section>
 
       {/* Signed-in: stats card. Hidden for anonymous users since the
           numbers would all be zero and the "View collection" CTA above
           already covers re-entry. */}
-      {collection && <LibraryGlanceCard collection={collection} packCards={packCards} />}
+      {collection && (
+        <LibraryGlanceCard
+          collection={collection}
+          readingEntries={readingEntries ?? []}
+        />
+      )}
 
       {/* Featured pack — always rendered. Gives anonymous users a
           preview of what they're signing up for and returning users a
@@ -88,33 +127,32 @@ function Home() {
 // Library glance (signed-in only)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Three stacked rows — the shape of the loop at a glance:
+ *
+ *   1. "Now reading" — every entry currently in `reading` status.
+ *   2. "Next up" — up to three TBR entries to seed the next session.
+ *   3. "Recent rips" — last five unique pack pulls (data from the
+ *      collection fn, unchanged).
+ *
+ * Each row is either a horizontal-scroll cover strip (when there's
+ * something to show) or an empty-state CTA pointing at the route
+ * that fixes it. No numeric stats (shards, completion, rarest) —
+ * those live elsewhere and were mostly filler here.
+ */
 function LibraryGlanceCard({
   collection,
-  packCards,
+  readingEntries,
 }: {
   collection: NonNullable<Awaited<ReturnType<typeof getCollectionFn>>>;
-  packCards: ReadonlyArray<{ id: string; title: string; rarity: Rarity }>;
+  readingEntries: ReadonlyArray<ReadingEntry>;
 }) {
-  const ownedSet = new Set(collection.ownedBookIds);
-  const ownedCards = packCards.filter((c) => ownedSet.has(c.id));
-  const owned = ownedCards.length;
-  const total = packCards.length;
-  const pct = total === 0 ? 0 : Math.round((owned / total) * 100);
-
-  // "Rarest pull" = the highest-tier card the user currently owns. Gives
-  // the card a dash of personalisation without needing a new query.
-  const RARITY_RANK: Record<Rarity, number> = {
-    legendary: 4,
-    foil: 3,
-    rare: 2,
-    uncommon: 1,
-    common: 0,
-  };
-  const rarest = ownedCards.reduce<{ title: string; rarity: Rarity } | null>(
-    (best, c) =>
-      !best || RARITY_RANK[c.rarity] > RARITY_RANK[best.rarity] ? { title: c.title, rarity: c.rarity } : best,
-    null,
-  );
+  // Server returns entries ordered by updated_at desc, so filtering
+  // preserves recency. Reading can overflow the visible strip (horiz
+  // scroll handles it); TBR caps at three to keep "next up" feeling
+  // curated rather than an inbox.
+  const reading = readingEntries.filter((e) => e.status === "reading");
+  const nextUp = readingEntries.filter((e) => e.status === "tbr").slice(0, 3);
 
   return (
     <section className="island-shell rise-in rounded-[1.5rem] px-5 py-6 sm:px-8 sm:py-8">
@@ -133,40 +171,127 @@ function LibraryGlanceCard({
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Stat label="Books" value={`${owned}`} hint={`of ${total}`} />
-        <Stat label="Shards" value={`${collection.shardBalance}`} />
-        <Stat
-          label="Rarest"
-          value={rarest ? RARITY_STYLES[rarest.rarity].label : "—"}
-          hint={rarest?.title}
-          className="col-span-2 sm:col-span-1"
-        />
-      </div>
+      <ReadingStrip
+        label="Now reading"
+        entries={reading}
+        emptyCta={{
+          href: "/reading",
+          copy: "Nothing in progress. Start a book to earn 5 shards.",
+          linkText: "Log a book →",
+        }}
+      />
 
-      {/* Completion bar — a single glance at pack progress. Uses the
-          same token as the collection page so the visual language is
-          consistent. */}
-      <div className="mt-5">
-        <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-          <span>Completion</span>
-          <span className="text-[var(--sea-ink)]">{pct}%</span>
-        </div>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--track-bg)]">
-          <div className="h-full bg-[var(--lagoon)]" style={{ width: `${pct}%` }} />
-        </div>
-      </div>
+      <ReadingStrip
+        label="Next up"
+        entries={nextUp}
+        emptyCta={{
+          href: "/reading",
+          copy: "Shelf up to three books you want to read next.",
+          linkText: "Add to TBR →",
+        }}
+      />
 
       {/* Recent rips — horizontal scroll row of the last 5 unique
-          books. Sits inside the glance card (rather than its own
-          section) so signed-in users get a single cohesive "your
-          library" block on the home page. Hidden entirely when the
-          user hasn't pulled anything yet — an empty row would look
-          broken next to the completion bar. */}
+          books. Hidden entirely when the user hasn't pulled anything
+          yet so new accounts don't see a broken-looking empty row;
+          the hero's "Rip a pack" CTA is the entry point for them. */}
       {collection.recentPulls.length > 0 && (
         <RecentPulls pulls={collection.recentPulls} />
       )}
     </section>
+  );
+}
+
+/**
+ * Horizontal-scroll strip of reading-entry covers. Shared between
+ * "Now reading" and "Next up" — the only differences are the label,
+ * the source list, and the empty-state copy, all passed in by the
+ * caller. Covers link to the book detail page, not the reading list,
+ * because tapping a specific cover signals "this one" rather than
+ * "all of them".
+ */
+function ReadingStrip({
+  label,
+  entries,
+  emptyCta,
+}: {
+  label: string;
+  entries: ReadonlyArray<ReadingEntry>;
+  emptyCta: { href: "/reading"; copy: string; linkText: string };
+}) {
+  return (
+    <div className="mt-6 first:mt-0">
+      <div className="mb-2 flex items-baseline justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+          {label}
+        </p>
+      </div>
+      {entries.length === 0 ? (
+        // Empty state sits inline rather than as a separate card so
+        // the section rhythm stays consistent whether the user has
+        // entries or not. Dashed border is the same "empty shelf"
+        // affordance used on /packs and /collection.
+        <div className="rounded-xl border border-dashed border-[var(--line)] p-4 text-xs text-[var(--sea-ink-soft)]">
+          {emptyCta.copy}{" "}
+          <Link
+            to={emptyCta.href}
+            className="font-semibold text-[var(--sea-ink)] underline-offset-4 hover:underline"
+          >
+            {emptyCta.linkText}
+          </Link>
+        </div>
+      ) : (
+        // Same scroll-bleed trick as RecentPulls — the row's overflow
+        // container punches through the card's horizontal padding so
+        // the strip reads as continuous while content stays aligned
+        // to the padded gutter on both sides.
+        <div className="-mx-5 overflow-x-auto px-5 py-1 sm:-mx-8 sm:px-8">
+          {/* items-stretch + fixed title slot keeps all tiles the
+              same height regardless of title length. Same trick used
+              in RecentPulls. */}
+          <ul className="flex items-stretch gap-3 snap-x snap-mandatory">
+            {entries.map((e) => (
+              <li key={e.bookId} className="shrink-0 snap-start">
+                <Link
+                  to="/book/$id"
+                  params={{ id: e.bookId }}
+                  className="flex h-full w-20 flex-col rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md"
+                >
+                  {e.book.coverUrl ? (
+                    <img
+                      src={e.book.coverUrl}
+                      alt=""
+                      loading="lazy"
+                      className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
+                      {e.book.title.slice(0, 1)}
+                    </div>
+                  )}
+                  <p
+                    className="mt-1 line-clamp-2 min-h-[2.2em] text-[10px] font-medium leading-tight text-[var(--sea-ink)]"
+                    title={e.book.title}
+                  >
+                    {e.book.title}
+                  </p>
+                </Link>
+              </li>
+            ))}
+            {/* Tail CTA mirrors RecentPulls so all three strips end
+                with the same "see the whole list" affordance. */}
+            <li className="shrink-0 snap-start">
+              <Link
+                to="/reading"
+                className="flex h-full w-20 flex-col items-center justify-center rounded-lg border border-dashed border-[var(--line)] p-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+              >
+                View all →
+              </Link>
+            </li>
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -189,7 +314,12 @@ function RecentPulls({
           rarity rings (up to 4px outside the tile) room to render
           without being clipped by the scroll container. */}
       <div className="-mx-5 overflow-x-auto px-5 py-1 sm:-mx-8 sm:px-8">
-        <ul className="flex gap-3 snap-x snap-mandatory">
+        {/* `items-stretch` makes every tile share the row's tallest
+            height; the title slot reserves two lines' worth of
+            vertical space so a one-liner doesn't collapse the tile
+            below a two-liner's height. Result: a clean, ragged-free
+            row no matter the title lengths. */}
+        <ul className="flex items-stretch gap-3 snap-x snap-mandatory">
           {pulls.map((p) => {
             const style = RARITY_STYLES[p.rarity as Rarity];
             return (
@@ -197,7 +327,7 @@ function RecentPulls({
                 <Link
                   to="/book/$id"
                   params={{ id: p.bookId }}
-                  className={`block w-20 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md ${style?.ring ?? ""}`}
+                  className={`flex h-full w-20 flex-col rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md ${style?.ring ?? ""}`}
                 >
                   {p.coverUrl ? (
                     <img
@@ -214,8 +344,12 @@ function RecentPulls({
                       {p.title.slice(0, 1)}
                     </div>
                   )}
+                  {/* Fixed 2-line title slot. `min-h` plus the
+                      explicit line-height gives us ~2 lines of room;
+                      line-clamp-2 trims anything longer. Keeps every
+                      tile the same height regardless of title length. */}
                   <p
-                    className="mt-1 line-clamp-2 text-[10px] font-medium leading-tight text-[var(--sea-ink)]"
+                    className="mt-1 line-clamp-2 min-h-[2.2em] text-[10px] font-medium leading-tight text-[var(--sea-ink)]"
                     title={p.title}
                   >
                     {p.title}
@@ -236,34 +370,6 @@ function RecentPulls({
           </li>
         </ul>
       </div>
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  hint,
-  className = "",
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3 ${className}`}
-    >
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
-        {label}
-      </p>
-      <p className="mt-1 text-lg font-bold text-[var(--sea-ink)]">{value}</p>
-      {hint && (
-        <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]" title={hint}>
-          {hint}
-        </p>
-      )}
     </div>
   );
 }
@@ -328,21 +434,31 @@ function FeaturedPackCard({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function HowItWorksCard() {
+  // Four beats to match the loop the hero names: reading mints the
+  // currency, ripping spends it, the collection is the output, and
+  // the builder feeds back in. Ordering matters — "Read" comes first
+  // because it's the only one a signed-out visitor can do today
+  // (shelf anything, no pack needed).
   const steps = [
+    {
+      icon: <BookOpen aria-hidden className="h-5 w-5" />,
+      title: "Read",
+      body: "Log what you're reading. Start a book for 5 shards, finish it for 100 — once per book, for any title in the catalog.",
+    },
     {
       icon: <Sparkles aria-hidden className="h-5 w-5" />,
       title: "Rip",
-      body: "Open a curated pack. Each pull rolls for rarity — from common to legendary.",
+      body: "Spend shards on curated packs. Each pull rolls for rarity — from common to legendary.",
     },
     {
-      icon: <BookOpen aria-hidden className="h-5 w-5" />,
+      icon: <Library aria-hidden className="h-5 w-5" />,
       title: "Collect",
-      body: "Books land in your library. Duplicates convert to shards you can spend later.",
+      body: "Books land in your library. Duplicates convert back to shards so no pull is wasted.",
     },
     {
       icon: <Layers aria-hidden className="h-5 w-5" />,
       title: "Build",
-      body: "Group your library by pack, author, or rarity. Deck-building arrives soon.",
+      body: "Curate your own packs from books you love and share them with other readers.",
     },
   ];
 
@@ -350,9 +466,12 @@ function HowItWorksCard() {
     <section className="island-shell rise-in rounded-[1.5rem] px-5 py-6 sm:px-8 sm:py-8">
       <p className="island-kicker">How Tome works</p>
       <h2 className="display-title mt-1 mb-5 text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
-        Three steps, endlessly replayable
+        Four steps, endlessly replayable
       </h2>
-      <ol className="grid gap-3 sm:grid-cols-3">
+      {/* 2x2 on phones so each card stays roomy, 4-across on desktop
+          so the flow reads left-to-right. sm: threshold matches the
+          rest of the page. */}
+      <ol className="grid gap-3 grid-cols-2 sm:grid-cols-4">
         {steps.map((s, i) => (
           <li
             key={s.title}

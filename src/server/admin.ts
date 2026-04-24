@@ -33,3 +33,24 @@ export const checkAdminFn = createServerFn({ method: "GET" }).handler(async () =
   const isAdmin = Boolean(email && allowed.has(email));
   return { signedIn: true as const, isAdmin, email: user.email ?? null };
 });
+
+/**
+ * Read-only probe for the current session's lightweight profile.
+ * Returns `null` for anonymous callers so route loaders can branch
+ * between "render public view" and "redirect to sign-in" without
+ * throwing. Lives alongside `checkAdminFn` so client-side imports stay
+ * behind the same lean import boundary (no db / workers pulls into the
+ * client graph).
+ */
+export const getMeFn = createServerFn({ method: "GET" }).handler(async () => {
+  const user = await getSessionUser();
+  if (!user) return null;
+  // Narrow shape: pass only what routes actually need (id, username for
+  // profile links, email for the header). Extra fields would force us
+  // to keep the `user` type in sync across the client.
+  return {
+    id: user.id,
+    email: user.email ?? null,
+    username: (user as { username?: string }).username ?? null,
+  };
+});

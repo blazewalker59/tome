@@ -5,17 +5,22 @@ import {
   notFound,
   useRouter,
 } from "@tanstack/react-router";
-import { BookOpen, Check, Star } from "lucide-react";
+import { BookOpen, Check, Star, Trash2 } from "lucide-react";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import { Card } from "@/components/cards/Card";
 import { useToast } from "@/components/Toast";
 import { RARITY_STYLES, formatGenre } from "@/lib/cards/style";
 import {
   getBookFn,
-  updateCollectionCardFn,
   type BookDetailPayload,
-  type ReadStatus,
 } from "@/server/collection";
+import {
+  deleteReadingEntryFn,
+  getReadingEntryFn,
+  upsertReadingEntryFn,
+  type ReadingEntry,
+  type ReadingStatus,
+} from "@/server/reading";
 
 /**
  * Book detail route: `/book/:id`.
@@ -23,26 +28,37 @@ import {
  * Public page. The book itself, its pack memberships, and metadata are
  * visible to anyone with the link (including signed-out visitors) —
  * books are not a secret, and shareable book pages are a natural
- * entry point from elsewhere on the web. The per-user overlay
- * (reading status / rating / note) only renders when the caller is
- * signed in and owns the book. Non-owners see a "rip to unlock" CTA.
+ * entry point from elsewhere on the web.
  *
- * The loader short-circuits with `notFound()` if the id doesn't match
- * any book — TanStack Router's 404 handler takes over. Auth failures
- * never happen here since the fn itself tolerates anonymous callers.
+ * Signed-in users see a Reading panel regardless of whether they own
+ * the card. Reading-log state is independent of ownership (see the
+ * `reading_entries` table in `src/db/schema.ts`). Owners additionally
+ * see a "Your copy" block with acquisition details. Non-owners still
+ * get a rip-to-unlock CTA further down.
  */
 export const Route = createFileRoute("/book/$id")({
   loader: async ({ params }) => {
-    const data = await getBookFn({ data: { bookId: params.id } });
+    const [data, readingEntry] = await Promise.all([
+      getBookFn({ data: { bookId: params.id } }),
+      // The reading-entry fetch throws for anonymous callers because
+      // the server fn requires a session. That's fine: anonymous users
+      // don't have entries to load, and we fall through to null.
+      getReadingEntryFn({ data: { bookId: params.id } }).catch(() => null),
+    ]);
     if (!data) throw notFound();
-    return { data };
+    return { data, readingEntry };
   },
   component: BookDetailPage,
 });
 
 function BookDetailPage() {
-  const { data } = Route.useLoaderData();
+  const { data, readingEntry } = Route.useLoaderData();
   const card = bookRowToCardData(data.book);
+  // The reading panel renders when the viewer is signed in — detected
+  // via `ownership !== null`, which is the same flag we use elsewhere
+  // to distinguish anonymous from authenticated callers. Ownership
+  // status itself isn't the gate anymore (see file header).
+  const signedIn = data.ownership !== null;
 
   return (
     <main className="page-wrap space-y-6 py-6 sm:space-y-8 sm:py-12">
@@ -57,19 +73,26 @@ function BookDetailPage() {
 
       <BookHero detail={data} />
 
-      {/* Editable overlay — only owners see it. Anonymous users and
-          non-owners get a CTA further down instead. */}
-      {data.ownership?.owned ? (
-        <OwnerPanel detail={data} />
+      {signedIn ? (
+        <ReadingPanel
+          bookId={data.book.id}
+          initialEntry={readingEntry}
+        />
       ) : (
-        <UnlockCta signedIn={data.ownership !== null} />
+        <UnlockCta signedIn={false} />
+      )}
+
+      {signedIn && data.ownership?.owned && (
+        <OwnerMetaPanel ownership={data.ownership} />
+      )}
+
+      {signedIn && !data.ownership?.owned && (
+        <UnlockCta signedIn={true} />
       )}
 
       {/* Visual anchor — show the Card component itself so the detail
           page feels like an expanded version of what the user sees on
-          the collection grid. Flip interaction stays because the back
-          of the card has mood tags that the prose area below doesn't
-          duplicate. */}
+          the collection grid. */}
       <section className="rounded-[1.5rem] border border-[var(--line)] bg-[var(--surface)] p-6">
         <p className="island-kicker mb-4">The card</p>
         <div className="flex justify-center">
@@ -130,9 +153,6 @@ function BookHero({ detail }: { detail: BookDetailPayload }) {
             </p>
           )}
 
-          {/* Stat strip — compact, uppercase tracked to match the rest
-              of the chrome. Hide fields that are zero/empty so we
-              don't render "0 pages" when the DB just doesn't know. */}
           <dl className="mt-6 grid grid-cols-2 gap-3 text-xs uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] sm:grid-cols-4">
             <Meta label="Genre" value={genreLabel} />
             {book.pageCount ? <Meta label="Pages" value={`${book.pageCount}`} /> : null}
@@ -184,60 +204,58 @@ function Meta({ label, value }: { label: string; value: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Owner panel — status / rating / notes
+// Reading panel — status / rating / notes for the signed-in viewer
+//
+// Shown regardless of card ownership. When the user has no entry yet,
+// a compact "Log this book" CTA row renders with the three status
+// buttons as the primary action; picking one creates the entry. Once
+// an entry exists, the full editor renders.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const STATUS_OPTIONS: Array<{ value: ReadStatus; label: string }> = [
-  { value: "unread", label: "Unread" },
+const STATUS_OPTIONS: Array<{ value: ReadingStatus; label: string }> = [
+  { value: "tbr", label: "Want to read" },
   { value: "reading", label: "Reading" },
-  { value: "read", label: "Finished" },
+  { value: "finished", label: "Finished" },
 ];
 
-/**
- * Editable panel for the signed-in owner. Optimistic-UI light: we show
- * the new value immediately and only fall back if the server rejects.
- * All three fields (status / rating / note) auto-save — no explicit
- * save button, which matches the inline feel of the rest of the app.
- * Status + rating commit on change; note commits on blur (so typing
- * doesn't fire a request per keystroke).
- */
-function OwnerPanel({ detail }: { detail: BookDetailPayload }) {
+function ReadingPanel({
+  bookId,
+  initialEntry,
+}: {
+  bookId: string;
+  initialEntry: ReadingEntry | null;
+}) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const toast = useToast();
-  const own = detail.ownership!;
 
-  const [status, setStatus] = useState<ReadStatus>(own.status);
-  const [rating, setRating] = useState<number | null>(own.rating);
-  const [note, setNote] = useState(own.note ?? "");
+  // Entry state mirrors the server response. A null entry means the
+  // user hasn't logged this book; the first status click creates it.
+  const [entry, setEntry] = useState<ReadingEntry | null>(initialEntry);
+  const [note, setNote] = useState(initialEntry?.note ?? "");
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // If the loader refreshes (e.g. after another tab edited) reset the
-  // local state to the server truth. A stale local value otherwise
-  // survives invalidation and leads to "why did my edit disappear?".
+  // Keep local state in sync when the loader invalidates (e.g. after
+  // editing in another tab). Derived fields like `note` also reset.
   useEffect(() => {
-    setStatus(own.status);
-    setRating(own.rating);
-    setNote(own.note ?? "");
-  }, [own.status, own.rating, own.note]);
+    setEntry(initialEntry);
+    setNote(initialEntry?.note ?? "");
+  }, [initialEntry]);
 
-  const save = async (
-    patch: Parameters<typeof updateCollectionCardFn>[0] extends undefined
-      ? never
-      : { status?: ReadStatus; rating?: number | null; note?: string | null },
-  ) => {
+  const save = async (patch: {
+    status?: ReadingStatus;
+    rating?: number | null;
+    note?: string | null;
+  }) => {
     setError(null);
     try {
-      const res = await updateCollectionCardFn({
-        data: { bookId: detail.book.id, ...patch },
+      const res = await upsertReadingEntryFn({
+        data: { bookId, ...patch },
       });
+      setEntry(res.entry);
       setSavedAt(Date.now());
 
-      // Surface any shard grants the server applied as a toast.
-      // Server returns `grants: []` when a change didn't qualify
-      // (cap hit, already granted historically, non-status change),
-      // so this naturally no-ops when there's nothing to celebrate.
       for (const g of res.grants) {
         if (g.reason === "start_reading") {
           toast.push({
@@ -256,9 +274,18 @@ function OwnerPanel({ detail }: { detail: BookDetailPayload }) {
         }
       }
 
-      // Re-run the loader so any SSR cache + other tabs stay in sync.
-      // Wrapped in startTransition so the save indicator doesn't
-      // flicker when React suspends on the refetch.
+      // When the finish grant was withheld by the 1-hour guard, tell
+      // the user rather than silently skipping — otherwise they'll
+      // wonder why no toast fired.
+      if (res.finishGuardSuppressed) {
+        toast.push({
+          title: "No shards this time",
+          description:
+            "Finish a book at least an hour after starting to earn shards.",
+          tone: "neutral",
+        });
+      }
+
       startTransition(() => {
         void router.invalidate();
       });
@@ -267,36 +294,81 @@ function OwnerPanel({ detail }: { detail: BookDetailPayload }) {
     }
   };
 
+  const onRemove = async () => {
+    try {
+      await deleteReadingEntryFn({ data: { bookId } });
+      setEntry(null);
+      setNote("");
+      startTransition(() => {
+        void router.invalidate();
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to remove");
+    }
+  };
+
+  // ── Unlogged state ─────────────────────────────────────────────
+  if (!entry) {
+    return (
+      <section className="island-shell rounded-[1.5rem] p-6 sm:p-8">
+        <p className="island-kicker">Reading log</p>
+        <h2 className="display-title mt-1 text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
+          Log this book
+        </h2>
+        <p className="mt-2 max-w-prose text-sm text-[var(--sea-ink-soft)]">
+          Track your reading and earn shards — 5 when you start,
+          100 when you finish.
+        </p>
+        <div role="radiogroup" aria-label="Reading status" className="mt-4 flex flex-wrap gap-2">
+          {STATUS_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="radio"
+              aria-checked={false}
+              onClick={() => void save({ status: o.value })}
+              className="view-tab"
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        {error && (
+          <p className="mt-3 text-xs text-[color:var(--rarity-legendary)]">{error}</p>
+        )}
+      </section>
+    );
+  }
+
+  // ── Logged state ───────────────────────────────────────────────
+  const rating = entry.rating;
   return (
     <section className="island-shell rounded-[1.5rem] p-6 sm:p-8">
       <div className="mb-5 flex items-baseline justify-between gap-3">
         <div>
-          <p className="island-kicker">Your copy</p>
+          <p className="island-kicker">Reading log</p>
           <h2 className="display-title mt-1 text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
-            Reading log
+            Your progress
           </h2>
         </div>
         <SaveIndicator savedAt={savedAt} error={error} />
       </div>
 
-      {/* Status — a three-state segmented control. Touch target 44px. */}
+      {/* Status — three-state segmented control. */}
       <div className="mb-6">
         <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
           Status
         </p>
         <div role="radiogroup" aria-label="Reading status" className="flex flex-wrap gap-2">
           {STATUS_OPTIONS.map((o) => {
-            const active = status === o.value;
+            const active = entry.status === o.value;
             return (
               <button
                 key={o.value}
                 type="button"
                 role="radio"
                 aria-checked={active}
-                onClick={() => {
-                  setStatus(o.value);
-                  void save({ status: o.value });
-                }}
+                onClick={() => void save({ status: o.value })}
                 className={`view-tab ${active ? "is-active" : ""}`}
               >
                 {active && <Check aria-hidden className="h-3.5 w-3.5" />}
@@ -307,9 +379,7 @@ function OwnerPanel({ detail }: { detail: BookDetailPayload }) {
         </div>
       </div>
 
-      {/* Rating — 5 star buttons. Click an already-selected star to
-          clear it (common pattern; avoids dedicating a separate "no
-          rating" button). */}
+      {/* Rating — 5 star buttons; click the active max to clear. */}
       <div className="mb-6">
         <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
           Rating
@@ -325,9 +395,7 @@ function OwnerPanel({ detail }: { detail: BookDetailPayload }) {
                 aria-checked={rating === n}
                 aria-label={`${n} star${n === 1 ? "" : "s"}`}
                 onClick={() => {
-                  // Toggle off when clicking the currently-active max.
                   const next = rating === n ? null : n;
-                  setRating(next);
                   void save({ rating: next });
                 }}
                 className="p-1 text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
@@ -342,10 +410,7 @@ function OwnerPanel({ detail }: { detail: BookDetailPayload }) {
           {rating !== null && (
             <button
               type="button"
-              onClick={() => {
-                setRating(null);
-                void save({ rating: null });
-              }}
+              onClick={() => void save({ rating: null })}
               className="ml-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] underline-offset-4 hover:text-[var(--sea-ink)] hover:underline"
             >
               Clear
@@ -369,7 +434,7 @@ function OwnerPanel({ detail }: { detail: BookDetailPayload }) {
           onChange={(e) => setNote(e.target.value)}
           onBlur={() => {
             const next = note.trim() === "" ? null : note;
-            const prev = own.note ?? null;
+            const prev = entry.note ?? null;
             if (next !== prev) void save({ note: next });
           }}
           placeholder="Thoughts, quotes, or where you left off…"
@@ -378,12 +443,25 @@ function OwnerPanel({ detail }: { detail: BookDetailPayload }) {
         />
       </div>
 
-      {own.firstAcquiredAt && (
-        <p className="mt-5 text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-          Added {new Date(own.firstAcquiredAt).toLocaleDateString()}
-          {own.quantity > 1 && ` · ${own.quantity} copies`}
-        </p>
-      )}
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+          {entry.startedAt && (
+            <>Started {new Date(entry.startedAt).toLocaleDateString()}</>
+          )}
+          {entry.startedAt && entry.finishedAt && " · "}
+          {entry.finishedAt && (
+            <>Finished {new Date(entry.finishedAt).toLocaleDateString()}</>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => void onRemove()}
+          className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+        >
+          <Trash2 aria-hidden className="h-3 w-3" />
+          Remove from log
+        </button>
+      </div>
     </section>
   );
 }
@@ -395,9 +473,6 @@ function SaveIndicator({
   savedAt: number | null;
   error: string | null;
 }) {
-  // Show "Saved" for a few seconds after a successful write; after
-  // that, the field itself is the truth and a trailing indicator just
-  // becomes visual noise.
   const [visible, setVisible] = useState(false);
   useEffect(() => {
     if (!savedAt) return;
@@ -422,20 +497,41 @@ function SaveIndicator({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Owner meta — ownership/acquisition details for users who own the card
+// ─────────────────────────────────────────────────────────────────────────────
+
+function OwnerMetaPanel({
+  ownership,
+}: {
+  ownership: NonNullable<BookDetailPayload["ownership"]>;
+}) {
+  if (!ownership.owned || !ownership.firstAcquiredAt) return null;
+  return (
+    <section className="island-shell rounded-[1.5rem] px-6 py-4 sm:px-8">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+        Your copy · Added{" "}
+        {new Date(ownership.firstAcquiredAt).toLocaleDateString()}
+        {ownership.quantity > 1 && ` · ${ownership.quantity} copies`}
+      </p>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Unlock CTA — shown to non-owners (incl. anonymous)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function UnlockCta({ signedIn }: { signedIn: boolean }) {
   return (
     <section className="island-shell rounded-[1.5rem] p-6 sm:p-8">
-      <p className="island-kicker">Not in your library yet</p>
+      <p className="island-kicker">Not a card in your collection</p>
       <h2 className="display-title mt-1 text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
         Rip a pack to add it
       </h2>
       <p className="mt-2 max-w-xl text-sm text-[var(--sea-ink-soft)]">
         {signedIn
-          ? "This book will appear in your collection the first time a pack rolls it."
-          : "Sign in to start building your library. Each rip rolls for rarity — legendaries are vanishingly rare."}
+          ? "Logging the book above doesn't require owning the card. Rip a pack to add this book as a card in your collection."
+          : "Sign in to start tracking your reading and building your card collection."}
       </p>
       <div className="mt-5 flex flex-col gap-3 sm:flex-row">
         <Link to="/rip" className="btn-primary rounded-full px-5 text-sm">

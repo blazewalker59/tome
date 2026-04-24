@@ -12,7 +12,7 @@
  */
 
 import { createServerFn } from '@tanstack/react-start'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 
 import { getDb } from '@/db/client'
 import {
@@ -22,39 +22,18 @@ import {
   packRips,
   packs,
   shardBalances,
+  users,
 } from '@/db/schema'
 import { getSessionUser } from '@/lib/auth/session'
 import { getEconomy } from '@/lib/economy/config'
 import { grantShards, spendShards } from '@/lib/economy/ledger'
 import type { BookRow } from '@/lib/cards/book-to-card'
+import { withErrorLogging } from './_shared'
 
 /**
- * Wrap a handler so that any thrown error is logged with its full cause
- * chain before being rethrown. Drizzle's "Failed query: …" errors keep
- * the real postgres error on `.cause`, which TanStack Start's serializer
- * drops on the way to the client — logging here is the only way to see
- * the actual SQLSTATE / message in Worker tail.
+ * Wrapper removed — moved to `./_shared` so both `collection.ts` and
+ * `user-packs.ts` (and any future server module) share one definition.
  */
-function withErrorLogging<Args extends unknown[], R>(
-  label: string,
-  fn: (...args: Args) => Promise<R>,
-): (...args: Args) => Promise<R> {
-  return async (...args: Args) => {
-    try {
-      return await fn(...args)
-    } catch (err) {
-      const cause = (err as { cause?: unknown }).cause
-      // eslint-disable-next-line no-console
-      console.error(
-        `[${label}]`,
-        err instanceof Error ? err.message : err,
-        cause instanceof Error ? `\n  cause: ${cause.message}` : cause ? `\n  cause: ${JSON.stringify(cause)}` : '',
-        err instanceof Error && err.stack ? `\n${err.stack}` : '',
-      )
-      throw err
-    }
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared types
@@ -169,8 +148,10 @@ export const DEFAULT_PACK_SLUG = 'booker-shortlist-2024'
 /**
  * Internal: load a pack + its books by slug. Used by both the
  * default-pack fetcher (home/landing animation) and the slug-param
- * fetcher (/rip/$slug). Throws if the slug doesn't resolve — callers
- * can translate that into a 404.
+ * fetcher (/rip/$slug) — both of which only ever serve editorial
+ * (Tome-authored) packs. User-built packs live under `/u/$username/$slug`
+ * and use `loadUserPack` below so their slug is resolved within the
+ * creator's namespace.
  */
 async function loadPackBySlug(slug: string): Promise<PackPayload> {
   const database = await getDb()
@@ -183,7 +164,8 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
       description: packs.description,
     })
     .from(packs)
-    .where(eq(packs.slug, slug))
+    // Editorial namespace only: creator_id IS NULL.
+    .where(and(eq(packs.slug, slug), isNull(packs.creatorId)))
     .limit(1)
 
   if (!pack) {
@@ -206,6 +188,67 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
     .from(packBooks)
     .innerJoin(books, eq(packBooks.bookId, books.id))
     .where(eq(packBooks.packId, pack.id))
+
+  return {
+    packId: pack.id,
+    slug: pack.slug,
+    name: pack.name,
+    description: pack.description,
+    books: rows,
+  }
+}
+
+/**
+ * Internal: load a published user pack by (username, slug). Mirrors
+ * `loadPackBySlug` but resolves through the user namespace so both
+ * rip flows (editorial vs creator-authored) return the same
+ * `PackPayload` shape and can share the `/rip/…` component tree.
+ * Drafts (`is_public = false`) are rejected — only published packs
+ * are rippable.
+ */
+async function loadUserPack(username: string, slug: string): Promise<PackPayload> {
+  const database = await getDb()
+
+  const [pack] = await database
+    .select({
+      id: packs.id,
+      slug: packs.slug,
+      name: packs.name,
+      description: packs.description,
+    })
+    .from(packs)
+    .innerJoin(users, eq(packs.creatorId, users.id))
+    .where(
+      and(
+        eq(users.username, username),
+        eq(packs.slug, slug),
+        eq(packs.isPublic, true),
+      ),
+    )
+    .limit(1)
+
+  if (!pack) {
+    throw new Error(`[server/collection] user pack @${username}/${slug} not found.`)
+  }
+
+  const rows = await database
+    .select({
+      id: books.id,
+      title: books.title,
+      authors: books.authors,
+      coverUrl: books.coverUrl,
+      description: books.description,
+      pageCount: books.pageCount,
+      publishedYear: books.publishedYear,
+      genre: books.genre,
+      rarity: books.rarity,
+      moodTags: books.moodTags,
+    })
+    .from(packBooks)
+    .innerJoin(books, eq(packBooks.bookId, books.id))
+    .where(eq(packBooks.packId, pack.id))
+    .orderBy(desc(packBooks.packId)) // stable order — actual position sort
+    // handled in the rip roller via its own pool weighting
 
   return {
     packId: pack.id,
@@ -249,6 +292,34 @@ export const getPackBySlugFn = createServerFn({ method: 'GET' })
   )
 
 /**
+ * Fetch a published user pack by (username, slug). Used by the
+ * `/rip/u/$username/$slug` route so creator-authored packs get the
+ * same tear-open experience as editorial ones. Returns a `PackPayload`
+ * identical in shape to `getPackBySlugFn`'s — callers downstream
+ * (`rollRip`, `applyRip`) don't care whether a pack is editorial or
+ * user-made.
+ */
+export const getUserPackFn = createServerFn({ method: 'GET' })
+  .inputValidator((raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('getUserPackFn: expected { username, slug }')
+    }
+    const { username, slug } = raw as { username?: unknown; slug?: unknown }
+    if (typeof username !== 'string' || username.length === 0) {
+      throw new Error('getUserPackFn: username must be a non-empty string')
+    }
+    if (typeof slug !== 'string' || slug.length === 0) {
+      throw new Error('getUserPackFn: slug must be a non-empty string')
+    }
+    return { username, slug }
+  })
+  .handler(
+    withErrorLogging('getUserPackFn', async ({ data }): Promise<PackPayload> => {
+      return loadUserPack(data.username, data.slug)
+    }),
+  )
+
+/**
  * List every editorial pack in the catalog, newest first, with a book
  * count. Drives the /rip picker carousel. Kept separate from
  * `getPackBySlugFn` so the carousel doesn't pay the cost of pulling
@@ -274,7 +345,10 @@ export const getRipPacksFn = createServerFn({ method: 'GET' }).handler(
         )`,
       })
       .from(packs)
-      .where(eq(packs.kind, 'editorial'))
+      // Editorial packs are defined by a NULL creator_id. They share the
+      // global "Tome-authored" namespace; user-built packs have creator_id
+      // set and surface on user profiles instead.
+      .where(and(isNull(packs.creatorId), eq(packs.isPublic, true)))
       .orderBy(desc(packs.createdAt))
 
     return rows
@@ -567,6 +641,16 @@ export const recordRipFn = createServerFn({ method: 'POST' })
           .where(eq(packRips.id, rip.id))
       }
 
+      // 9. Bump the pack's denormalized weekly-rip counter. Used as a
+      //    trending signal on the discovery surface. The reset job that
+      //    decays stale counters is not built yet (TODO) — for now this
+      //    grows monotonically, which still gives a working "most-ripped"
+      //    sort even if the 7-day semantics aren't enforced.
+      await tx
+        .update(packs)
+        .set({ ripCountWeek: sql`${packs.ripCountWeek} + 1` })
+        .where(eq(packs.id, packId))
+
       return {
         newBookIds: dedupedNewIds,
         duplicateBookIds,
@@ -581,23 +665,21 @@ export const recordRipFn = createServerFn({ method: 'POST' })
 // Read: single book detail
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ReadStatus = 'unread' | 'reading' | 'read'
-
 export interface BookDetailPayload {
   /** Full public book metadata — same shape as `BookRow` with the id. */
   book: BookRow
   /** Packs this book appears in, for "Found in" breadcrumbs. Unordered;
    *  the UI can sort by name if we ever ship many packs per book. */
   packs: ReadonlyArray<{ id: string; slug: string; name: string }>
-  /** The signed-in user's collection entry for this book, or null when
-   *  anonymous or not-yet-owned. Lets the page show a read CTA for
-   *  owners and a "rip to unlock" state for everyone else. */
+  /** The signed-in user's card-ownership state for this book, or null
+   *  when anonymous. This is ownership only — reading-log state (status
+   *  / rating / note) lives on `reading_entries` and is fetched via
+   *  `getReadingEntryFn` in `src/server/reading.ts`. Keeping the two
+   *  domains separate in the payload mirrors how they're separate in
+   *  the schema. */
   ownership: {
     owned: boolean
     quantity: number
-    status: ReadStatus
-    rating: number | null
-    note: string | null
     firstAcquiredAt: number | null
     firstAcquiredFromPackId: string | null
   } | null
@@ -652,15 +734,16 @@ export const getBookFn = createServerFn({ method: 'GET' })
         .where(eq(packBooks.bookId, data.bookId))
 
       // Owner overlay — only present when signed in AND the row exists.
+      // Reading-log overlay (status / rating / note) is NOT loaded here;
+      // the book detail page fetches that separately via
+      // `getReadingEntryFn` so non-owners can still log books they
+      // haven't ripped.
       const user = await getSessionUser()
       let ownership: BookDetailPayload['ownership'] = null
       if (user) {
         const [entry] = await database
           .select({
             quantity: collectionCards.quantity,
-            status: collectionCards.status,
-            rating: collectionCards.rating,
-            note: collectionCards.note,
             firstAcquiredAt: collectionCards.firstAcquiredAt,
             firstAcquiredFromPackId: collectionCards.firstAcquiredFromPackId,
           })
@@ -677,18 +760,12 @@ export const getBookFn = createServerFn({ method: 'GET' })
           ? {
               owned: true,
               quantity: entry.quantity,
-              status: entry.status as ReadStatus,
-              rating: entry.rating ?? null,
-              note: entry.note ?? null,
               firstAcquiredAt: entry.firstAcquiredAt.getTime(),
               firstAcquiredFromPackId: entry.firstAcquiredFromPackId ?? null,
             }
           : {
               owned: false,
               quantity: 0,
-              status: 'unread',
-              rating: null,
-              note: null,
               firstAcquiredAt: null,
               firstAcquiredFromPackId: null,
             }
@@ -700,239 +777,5 @@ export const getBookFn = createServerFn({ method: 'GET' })
         ownership,
       }
     }),
-  )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Write: update the user's collection entry (status / rating / note)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const READ_STATUSES: ReadonlyArray<ReadStatus> = ['unread', 'reading', 'read']
-
-export interface UpdateCollectionCardInput {
-  bookId: string
-  /** Undefined fields are left untouched; explicit null clears the
-   *  rating / note. Missing vs explicit-null matters because a blank
-   *  note field in the UI should clear the stored value, not be
-   *  indistinguishable from "don't change it". */
-  status?: ReadStatus
-  rating?: number | null
-  note?: string | null
-}
-
-export interface UpdateCollectionCardResult {
-  bookId: string
-  status: ReadStatus
-  rating: number | null
-  note: string | null
-  /**
-   * Shard events triggered by this update (typically a
-   * `start_reading` or `finish_reading` grant on a status transition).
-   * Empty array when the update didn't qualify for a grant — either
-   * the field didn't change, the cap was hit, or the book already
-   * earned this transition historically. The UI uses this to show
-   * a "+N shards" toast.
-   */
-  grants: Array<{
-    reason: 'start_reading' | 'finish_reading'
-    amount: number
-    /** Caller's new balance after this grant; `null` if not applied. */
-    newBalance: number | null
-  }>
-}
-
-/**
- * Patch the user's collection entry for a single book. Owner-only by
- * construction: the UPDATE's WHERE clause includes `userId`, so a user
- * can only touch their own rows even if they guessed another user's
- * bookId. Returns a 0-row update (= error) if the user doesn't own the
- * book yet — you can't rate a book you haven't pulled.
- */
-export const updateCollectionCardFn = createServerFn({ method: 'POST' })
-  .inputValidator((raw: unknown): UpdateCollectionCardInput => {
-    if (typeof raw !== 'object' || raw === null) {
-      throw new Error('updateCollectionCardFn: input must be an object')
-    }
-    const r = raw as Record<string, unknown>
-    const bookId = r.bookId
-    if (typeof bookId !== 'string' || bookId.length === 0) {
-      throw new Error('updateCollectionCardFn: bookId is required')
-    }
-
-    const out: UpdateCollectionCardInput = { bookId }
-
-    if (r.status !== undefined) {
-      if (
-        typeof r.status !== 'string' ||
-        !(READ_STATUSES as readonly string[]).includes(r.status)
-      ) {
-        throw new Error('updateCollectionCardFn: invalid status')
-      }
-      out.status = r.status as ReadStatus
-    }
-
-    if (r.rating !== undefined) {
-      if (r.rating === null) {
-        out.rating = null
-      } else if (
-        typeof r.rating === 'number' &&
-        Number.isInteger(r.rating) &&
-        r.rating >= 1 &&
-        r.rating <= 5
-      ) {
-        out.rating = r.rating
-      } else {
-        throw new Error('updateCollectionCardFn: rating must be an integer 1..5 or null')
-      }
-    }
-
-    if (r.note !== undefined) {
-      if (r.note === null) {
-        out.note = null
-      } else if (typeof r.note === 'string') {
-        // Cap to a reasonable length so a user can't store novels in
-        // the DB. 2000 chars ≈ a long diary entry and fits a single
-        // text column comfortably.
-        out.note = r.note.slice(0, 2000)
-      } else {
-        throw new Error('updateCollectionCardFn: note must be a string or null')
-      }
-    }
-
-    return out
-  })
-  .handler(
-    withErrorLogging(
-      'updateCollectionCardFn',
-      async ({ data }): Promise<UpdateCollectionCardResult> => {
-        const user = await getSessionUser()
-        if (!user) {
-          throw new Error('updateCollectionCardFn: not authenticated')
-        }
-
-        const database = await getDb()
-
-        // Build the SET clause dynamically so unspecified fields truly
-        // aren't touched. Drizzle requires at least one field; we also
-        // always bump updatedAt so downstream observers can notice.
-        const set: Record<string, unknown> = { updatedAt: sql`now()` }
-        if (data.status !== undefined) set.status = data.status
-        if (data.rating !== undefined) set.rating = data.rating
-        if (data.note !== undefined) set.note = data.note
-
-        // Only status / rating / note and updatedAt matter; if none of
-        // the three were passed, there's nothing to do.
-        if (
-          data.status === undefined &&
-          data.rating === undefined &&
-          data.note === undefined
-        ) {
-          throw new Error('updateCollectionCardFn: no fields to update')
-        }
-
-        // Run the update + any shard grants together: a failure after
-        // the grant would otherwise leave a ledger entry pointing at
-        // an unchanged status. Transaction gives us all-or-nothing.
-        return await database.transaction(async (tx) => {
-          // Read the prior status before updating so we can detect
-          // transitions ("was unread, now reading" → start_reading
-          // grant). If the user didn't change status we skip grants
-          // entirely; ratings and notes are not shard-earning events.
-          const [prior] = await tx
-            .select({ status: collectionCards.status })
-            .from(collectionCards)
-            .where(
-              and(
-                eq(collectionCards.userId, user.id),
-                eq(collectionCards.bookId, data.bookId),
-              ),
-            )
-            .limit(1)
-
-          if (!prior) {
-            // The user doesn't own this book. The client-side form only
-            // renders for owners, so this is a defensive check, not a
-            // normal flow.
-            throw new Error('updateCollectionCardFn: book not in your collection')
-          }
-
-          const [updated] = await tx
-            .update(collectionCards)
-            .set(set)
-            .where(
-              and(
-                eq(collectionCards.userId, user.id),
-                eq(collectionCards.bookId, data.bookId),
-              ),
-            )
-            .returning({
-              bookId: collectionCards.bookId,
-              status: collectionCards.status,
-              rating: collectionCards.rating,
-              note: collectionCards.note,
-            })
-
-          if (!updated) {
-            throw new Error('updateCollectionCardFn: update returned no row')
-          }
-
-          // Fire grants based on the transition. Rules (see
-          // CORE_LOOP_PLAN §1):
-          //   - 'start_reading' when moving *into* 'reading' from
-          //     anywhere except 'reading'.
-          //   - 'finish_reading' when moving *into* 'read' from
-          //     anywhere except 'read'.
-          // Each is at-most-once-per-book-ever via the partial unique
-          // index on shard_events; caps are enforced inside
-          // grantShards. Non-applied grants are intentionally dropped
-          // from the response so the UI doesn't toast a no-op.
-          const grants: UpdateCollectionCardResult['grants'] = []
-          const oldStatus = prior.status
-          const newStatus = updated.status as ReadStatus
-          const cfg = await getEconomy()
-
-          if (newStatus === 'reading' && oldStatus !== 'reading') {
-            const r = await grantShards(
-              tx,
-              user.id,
-              'start_reading',
-              cfg.transitions.startReading.shards,
-              { bookId: data.bookId },
-            )
-            if (r.applied) {
-              grants.push({
-                reason: 'start_reading',
-                amount: r.delta,
-                newBalance: r.newBalance,
-              })
-            }
-          }
-
-          if (newStatus === 'read' && oldStatus !== 'read') {
-            const r = await grantShards(
-              tx,
-              user.id,
-              'finish_reading',
-              cfg.transitions.finishReading.shards,
-              { bookId: data.bookId },
-            )
-            if (r.applied) {
-              grants.push({
-                reason: 'finish_reading',
-                amount: r.delta,
-                newBalance: r.newBalance,
-              })
-            }
-          }
-
-          return {
-            bookId: updated.bookId,
-            status: newStatus,
-            rating: updated.rating ?? null,
-            note: updated.note ?? null,
-            grants,
-          }
-        })
-      },
-    ),
   )
 

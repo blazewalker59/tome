@@ -22,6 +22,27 @@
       "when": 1777000930455,
       "tag": "0002_silly_sabretooth",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1777003084779,
+      "tag": "0003_clear_magma",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777044389819,
+      "tag": "0004_nice_dagger",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1777046540649,
+      "tag": "0005_dark_skreet",
+      "breakpoints": true
     }
   ]
 }
