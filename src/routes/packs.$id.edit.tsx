@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { ChevronRight } from "lucide-react";
 
 import { getMeFn } from "@/server/admin";
 import {
@@ -496,12 +497,10 @@ function BookSearchPanel({
                 </span>
               )}
             </h3>
-            <span
+            <ChevronRight
               aria-hidden
-              className={`text-base leading-none text-[var(--sea-ink)] transition-transform ${hardcoverExpanded ? "rotate-90" : ""}`}
-            >
-              ▸
-            </span>
+              className={`h-4 w-4 text-[var(--sea-ink)] transition-transform ${hardcoverExpanded ? "rotate-90" : ""}`}
+            />
           </button>
           {hardcoverExpanded && (
             <div className="mt-2">
