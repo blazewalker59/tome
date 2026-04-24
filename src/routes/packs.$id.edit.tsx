@@ -453,7 +453,7 @@ function BookSearchPanel({
               <button
                 type="button"
                 onClick={() => void onAdd(b.id)}
-                className="btn-primary shrink-0 rounded-full px-3 py-1.5 text-[11px] uppercase tracking-[0.14em]"
+                className="btn-primary shrink-0 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.08em]"
               >
                 Add
               </button>
@@ -507,7 +507,7 @@ function BookSearchPanel({
                     type="button"
                     disabled={ingestingId === h.hardcoverId}
                     onClick={() => void onIngestAndAdd(h.hardcoverId)}
-                    className="btn-primary shrink-0 rounded-full px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] disabled:opacity-50"
+                    className="btn-primary shrink-0 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
                   >
                     {ingestingId === h.hardcoverId ? "Adding…" : "Add"}
                   </button>
@@ -583,7 +583,7 @@ function CurrentBooksPanel({
                 <button
                   type="button"
                   onClick={() => void onRemove(b.id)}
-                  className="shrink-0 rounded-full border border-[var(--line)] px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+                  className="shrink-0 rounded-full border border-[var(--line)] px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
                 >
                   Remove
                 </button>
