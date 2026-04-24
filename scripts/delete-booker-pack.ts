@@ -11,8 +11,18 @@
  *   1. Look up the pack row by `(slug, creator_id IS NULL)`. Editorial
  *      namespace only — we'd never delete a user pack that happened to
  *      share the slug.
- *   2. Delete its `pack_books` rows (FK dependency).
- *   3. Delete the `packs` row.
+ *   2. Delete its `pack_rips` rows. This table's FK to `packs` is
+ *      `ON DELETE RESTRICT` (the audit log isn't supposed to lose
+ *      rows casually), so we have to clear it explicitly before the
+ *      pack row itself is deletable. The shard ledger survives this:
+ *      `shard_events.ref_rip_id` is `ON DELETE SET NULL`, so any
+ *      refunds earned from Booker rips stay in the user's balance
+ *      history with a null rip pointer.
+ *   3. Delete its `pack_books` rows (FK dependency; the membership
+ *      table is `ON DELETE CASCADE` so this is belt-and-braces).
+ *   4. Delete the `packs` row. `collection_cards.first_acquired_from_pack_id`
+ *      is `ON DELETE SET NULL` so any card attribution degrades to
+ *      "Editorial pack" rather than disappearing.
  *
  * Books themselves stay. The starter packs don't overlap with the
  * Booker pool today, but if they ever do we don't want to nuke a
@@ -39,7 +49,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
-import { packBooks, packs } from '../src/db/schema'
+import { packBooks, packRips, packs } from '../src/db/schema'
 
 const BOOKER_SLUG = 'booker-shortlist-2024'
 
@@ -50,7 +60,7 @@ if (!url) {
 }
 
 const client = postgres(url, { max: 1 })
-const db = drizzle(client, { schema: { packs, packBooks } })
+const db = drizzle(client, { schema: { packs, packBooks, packRips } })
 
 try {
   // Editorial namespace: creator_id IS NULL. The partial unique index
@@ -64,8 +74,19 @@ try {
   if (!pack) {
     console.log(`[delete-booker-pack] ✓ pack "${BOOKER_SLUG}" not found — already gone.`)
   } else {
-    // `pack_books` first: the `packs` row is the FK target, so dropping
-    // it before the membership rows would violate the constraint.
+    // `pack_rips` first: the FK is `ON DELETE RESTRICT`, so any
+    // historical rip against this pack blocks the delete. Clearing
+    // these drops audit rows but preserves the ledger — shard events
+    // reference rips via `ON DELETE SET NULL`, so the earned-shard
+    // rows stay with a null rip pointer.
+    const deletedRips = await db
+      .delete(packRips)
+      .where(eq(packRips.packId, pack.id))
+      .returning({ id: packRips.id })
+
+    // `pack_books` next: FK is `ON DELETE CASCADE` so this is
+    // redundant in principle, but doing it explicitly means we can
+    // log how many membership rows were detached.
     const deletedMembership = await db
       .delete(packBooks)
       .where(eq(packBooks.packId, pack.id))
@@ -74,7 +95,7 @@ try {
     await db.delete(packs).where(eq(packs.id, pack.id))
 
     console.log(
-      `[delete-booker-pack] ✓ removed pack "${pack.name}" (${pack.id}) and ${deletedMembership.length} membership row(s).`,
+      `[delete-booker-pack] ✓ removed pack "${pack.name}" (${pack.id}); cleared ${deletedRips.length} rip audit row(s) and ${deletedMembership.length} membership row(s).`,
     )
   }
 } catch (err) {
