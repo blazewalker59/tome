@@ -1,95 +1,21 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { economyConfig } from "@/db/schema";
+import { DEFAULTS, type EconomyConfig } from "@/lib/economy/defaults";
 
 /**
- * Tunable numbers for the shard economy. Lives in a single db row
- * (`economy_config` singleton keyed `'current'`) so we can shift the
- * levers without a deploy — per CORE_LOOP_PLAN.md §1 "Everything
- * lives in config."
+ * Runtime loader for the shard economy config. The singleton row
+ * (`economy_config` keyed `'current'`) lets us shift levers without a
+ * deploy — per CORE_LOOP_PLAN.md §1 "Everything lives in config."
  *
- * Fields are intentionally explicit rather than a flat bag of
- * numbers: downstream code reads e.g. `cfg.transitions.startReading`
- * and is both typo-proof and self-documenting at call sites.
- *
- * When you add a new field: update `DEFAULTS` (what a fresh instance
- * boots with), update the seed INSERT in the migration that first
- * introduced the field, and note whether old deployments need a data
- * fixup. Missing keys in the db row fall back to `DEFAULTS` because
- * we spread over the defaults at read time.
+ * This module pulls in `@/db/client` and therefore must only be
+ * imported from server-side code. Client modules that need the
+ * shape or the defaults should import from `@/lib/economy/defaults`.
  */
-export interface EconomyConfig {
-  /** One-time grant dropped into a brand-new user's ledger on sign-up. */
-  welcomeGrant: number;
-  /** Baseline cost (shards) to rip one pack. */
-  packCost: number;
-  /**
-   * Dupe-refund shape. Today it's a flat number; typed this way so
-   * switching to per-rarity refunds later (`Record<Rarity, number>`)
-   * is a data-only change, no migration needed.
-   */
-  dupeRefund: {
-    shardsPerDupe: number;
-  };
-  /**
-   * Per-reading-transition grants. Each entry is { shards, <cap> }.
-   * Caps are window-based — "at most N events of this reason in the
-   * last day/week" — and derived at query time from the ledger.
-   * Once-ever-per-book uniqueness is enforced separately by the
-   * partial unique index on `shard_events`.
-   */
-  transitions: {
-    startReading: { shards: number; dailyCap: number };
-    finishReading: { shards: number; weeklyCap: number };
-  };
-  /**
-   * Gates on the publish action for user-built packs. Drafts are
-   * always unrestricted; only `publishPackFn` consults these. Starts
-   * at 3 finished books so the first-session user experience isn't
-   * blocked but drive-by accounts can't immediately spam packs.
-   */
-  publishUnlock: {
-    finishedBookThreshold: number;
-  };
-  /**
-   * Composition rules enforced at publish. Kept in config (not hard-
-   * coded) so we can tune them without a deploy as we watch what
-   * ratio of drafts fail validation. Mirrors the plan defaults.
-   */
-  packComposition: {
-    minBooks: number;
-    minUncommonOrAbove: number;
-    minRareOrAbove: number;
-  };
-}
 
-/**
- * Hard-coded defaults. These are the source of truth at module load
- * and the fallback when the db row is missing or malformed. The
- * migration that introduced `economy_config` also seeds a row matching
- * these values, so in production `getEconomy()` reads the row and the
- * defaults only matter in tests / fresh local databases that haven't
- * applied migrations yet.
- */
-export const DEFAULTS: EconomyConfig = {
-  welcomeGrant: 200,
-  packCost: 50,
-  dupeRefund: {
-    shardsPerDupe: 5,
-  },
-  transitions: {
-    startReading: { shards: 5, dailyCap: 5 },
-    finishReading: { shards: 100, weeklyCap: 3 },
-  },
-  publishUnlock: {
-    finishedBookThreshold: 3,
-  },
-  packComposition: {
-    minBooks: 10,
-    minUncommonOrAbove: 3,
-    minRareOrAbove: 1,
-  },
-};
+// Re-export so existing `import { DEFAULTS } from '@/lib/economy/config'`
+// call sites in server modules keep working.
+export { DEFAULTS, type EconomyConfig };
 
 /**
  * Per-isolate cache. Cloudflare Workers reuse an isolate across many

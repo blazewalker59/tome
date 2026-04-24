@@ -14,7 +14,7 @@ import {
   type MyPackDetail,
 } from "@/server/user-packs";
 import { checkPackComposition, type Rarity } from "@/lib/packs/composition";
-import { DEFAULTS } from "@/lib/economy/config";
+import { DEFAULTS } from "@/lib/economy/defaults";
 
 /**
  * User-pack builder.

@@ -20,7 +20,7 @@
  * check `errors.length === 0`.
  */
 
-import type { EconomyConfig } from "@/lib/economy/config";
+import type { EconomyConfig } from "@/lib/economy/defaults";
 
 /** Canonical rarity strings used across the schema and card-bucketing code. */
 export type Rarity = "common" | "uncommon" | "rare" | "foil" | "legendary";
