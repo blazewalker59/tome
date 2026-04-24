@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { BookOpen, Sparkles, Layers } from "lucide-react";
+import { BookOpen, Layers, Library, Sparkles } from "lucide-react";
 import { getCollectionFn, getEditorialPackFn } from "@/server/collection";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import { rarityCounts } from "@/lib/cards/filter";
@@ -40,17 +40,20 @@ function Home() {
 
   return (
     <main className="page-wrap space-y-6 px-4 pb-8 pt-6 sm:space-y-8 sm:pt-14">
-      {/* Hero — unchanged copy, the anchor of the page. */}
+      {/* Hero — three-beat headline mirrors the reading → ripping →
+          building loop that drives the economy; the subhead spells
+          the loop out for first-time visitors. */}
       <section className="island-shell rise-in relative overflow-hidden rounded-[2rem] px-5 py-8 sm:px-10 sm:py-14">
         <div className="pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--lagoon)_45%,transparent),transparent_66%)]" />
         <div className="pointer-events-none absolute -bottom-20 -right-20 h-56 w-56 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--clay)_35%,transparent),transparent_66%)]" />
         <p className="island-kicker mb-3">Tome</p>
         <h1 className="display-title mb-4 max-w-3xl text-3xl leading-[1.05] font-bold tracking-tight text-[var(--sea-ink)] sm:mb-5 sm:text-6xl sm:leading-[1.02]">
-          Rip packs. Collect books. Build your own.
+          Read books. Rip packs. Build your own.
         </h1>
         <p className="mb-6 max-w-2xl text-sm text-[var(--sea-ink-soft)] sm:mb-8 sm:text-lg">
-          Tome turns your reading life into a trading-card collection. Open curated packs, discover
-          books across every genre, and craft packs worth sharing.
+          Tome turns your reading life into a trading-card collection — log
+          books to earn shards, rip packs to collect them, and build packs
+          worth sharing.
         </p>
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <Link to="/rip" className="btn-primary rounded-full px-5 text-sm">
@@ -345,16 +348,26 @@ function FeaturedPackCard({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function HowItWorksCard() {
+  // Four beats to match the loop the hero names: reading mints the
+  // currency, ripping spends it, the collection is the output, and
+  // the builder feeds back in. Ordering matters — "Read" comes first
+  // because it's the only one a signed-out visitor can do today
+  // (shelf anything, no pack needed).
   const steps = [
+    {
+      icon: <BookOpen aria-hidden className="h-5 w-5" />,
+      title: "Read",
+      body: "Log what you're reading. Start a book for 5 shards, finish it for 100 — once per book, for any title in the catalog.",
+    },
     {
       icon: <Sparkles aria-hidden className="h-5 w-5" />,
       title: "Rip",
-      body: "Open a curated pack. Each pull rolls for rarity — from common to legendary.",
+      body: "Spend shards on curated packs. Each pull rolls for rarity — from common to legendary.",
     },
     {
-      icon: <BookOpen aria-hidden className="h-5 w-5" />,
+      icon: <Library aria-hidden className="h-5 w-5" />,
       title: "Collect",
-      body: "Books land in your library. Duplicates convert to shards you can spend later.",
+      body: "Books land in your library. Duplicates convert back to shards so no pull is wasted.",
     },
     {
       icon: <Layers aria-hidden className="h-5 w-5" />,
@@ -367,9 +380,12 @@ function HowItWorksCard() {
     <section className="island-shell rise-in rounded-[1.5rem] px-5 py-6 sm:px-8 sm:py-8">
       <p className="island-kicker">How Tome works</p>
       <h2 className="display-title mt-1 mb-5 text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
-        Three steps, endlessly replayable
+        Four steps, endlessly replayable
       </h2>
-      <ol className="grid gap-3 sm:grid-cols-3">
+      {/* 2x2 on phones so each card stays roomy, 4-across on desktop
+          so the flow reads left-to-right. sm: threshold matches the
+          rest of the page. */}
+      <ol className="grid gap-3 grid-cols-2 sm:grid-cols-4">
         {steps.map((s, i) => (
           <li
             key={s.title}
