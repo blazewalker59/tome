@@ -82,10 +82,26 @@ export interface AcquisitionEntry {
   acquiredAt: number // epoch ms
 }
 
+export interface RecentPullEntry {
+  bookId: string
+  title: string
+  /** Nullable because `books.cover_url` is nullable (not every imported
+   *  book has art yet). UI renders a rarity-tinted placeholder when
+   *  missing rather than a broken `<img>`. */
+  coverUrl: string | null
+  rarity: string
+  acquiredAt: number
+}
+
 export interface CollectionPayload {
   ownedBookIds: ReadonlyArray<string>
   acquisitions: ReadonlyArray<AcquisitionEntry>
   shardBalance: number
+  /** Newest-first snapshot of the last 5 unique books the user pulled.
+   *  Enough metadata (title + cover + rarity) so the Home "recent rips"
+   *  row can render without an extra query. Kept short — the Home card
+   *  just needs a glance, and more rows would crowd the viewport. */
+  recentPulls: ReadonlyArray<RecentPullEntry>
 }
 
 export interface RecordRipInput {
@@ -204,6 +220,25 @@ export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
       .where(eq(shardBalances.userId, user.id))
       .limit(1)
 
+    // Recent pulls: 5 newest unique books by first-acquisition time.
+    // Separate query (rather than shaping from `rows`) so we can INNER
+    // JOIN `books` for the card preview metadata and cap server-side
+    // via LIMIT — pulling every row to slice in JS wouldn't scale once
+    // collections grow past a few hundred books.
+    const recentRows = await database
+      .select({
+        bookId: collectionCards.bookId,
+        firstAcquiredAt: collectionCards.firstAcquiredAt,
+        title: books.title,
+        coverUrl: books.coverUrl,
+        rarity: books.rarity,
+      })
+      .from(collectionCards)
+      .innerJoin(books, eq(collectionCards.bookId, books.id))
+      .where(eq(collectionCards.userId, user.id))
+      .orderBy(sql`${collectionCards.firstAcquiredAt} desc`)
+      .limit(5)
+
     return {
       ownedBookIds: rows.map((r) => r.bookId),
       acquisitions: rows.map((r) => ({
@@ -214,6 +249,13 @@ export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
         acquiredAt: r.firstAcquiredAt.getTime(),
       })),
       shardBalance: balance?.shards ?? 0,
+      recentPulls: recentRows.map((r) => ({
+        bookId: r.bookId,
+        title: r.title,
+        coverUrl: r.coverUrl,
+        rarity: r.rarity,
+        acquiredAt: r.firstAcquiredAt.getTime(),
+      })),
     }
   }),
 )

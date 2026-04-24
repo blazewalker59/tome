@@ -155,7 +155,85 @@ function LibraryGlanceCard({
           <div className="h-full bg-[var(--lagoon)]" style={{ width: `${pct}%` }} />
         </div>
       </div>
+
+      {/* Recent rips — horizontal scroll row of the last 5 unique
+          books. Sits inside the glance card (rather than its own
+          section) so signed-in users get a single cohesive "your
+          library" block on the home page. Hidden entirely when the
+          user hasn't pulled anything yet — an empty row would look
+          broken next to the completion bar. */}
+      {collection.recentPulls.length > 0 && (
+        <RecentPulls pulls={collection.recentPulls} />
+      )}
     </section>
+  );
+}
+
+function RecentPulls({
+  pulls,
+}: {
+  pulls: NonNullable<Awaited<ReturnType<typeof getCollectionFn>>>["recentPulls"];
+}) {
+  return (
+    <div className="mt-6">
+      <div className="mb-2 flex items-baseline justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+          Recent rips
+        </p>
+      </div>
+      {/* Scroll-snap keeps each cover aligned on mobile swipes.
+          `-mx-5 px-5` / `-mx-8 px-8` bleed the scroll area to the
+          card edges so the row looks continuous while content
+          stays aligned to the padded gutter. */}
+      <div className="-mx-5 overflow-x-auto px-5 sm:-mx-8 sm:px-8">
+        <ul className="flex gap-3 snap-x snap-mandatory pb-1">
+          {pulls.map((p) => {
+            const style = RARITY_STYLES[p.rarity as Rarity];
+            return (
+              <li key={p.bookId} className="shrink-0 snap-start">
+                <Link
+                  to="/book/$id"
+                  params={{ id: p.bookId }}
+                  className={`block w-20 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md ${style?.ring ?? ""}`}
+                >
+                  {p.coverUrl ? (
+                    <img
+                      src={p.coverUrl}
+                      alt=""
+                      loading="lazy"
+                      className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
+                    />
+                  ) : (
+                    // No cover → keep the footprint so the row stays
+                    // aligned. A muted initial is quieter than an
+                    // empty box and hints at the title.
+                    <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
+                      {p.title.slice(0, 1)}
+                    </div>
+                  )}
+                  <p
+                    className="mt-1 line-clamp-2 text-[10px] font-medium leading-tight text-[var(--sea-ink)]"
+                    title={p.title}
+                  >
+                    {p.title}
+                  </p>
+                </Link>
+              </li>
+            );
+          })}
+          {/* Tail CTA — same dimensions as the cover tiles so the row
+              has a clean end cap rather than trailing off. */}
+          <li className="shrink-0 snap-start">
+            <Link
+              to="/collection"
+              className="flex h-full w-20 flex-col items-center justify-center rounded-lg border border-dashed border-[var(--line)] p-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+            >
+              View all →
+            </Link>
+          </li>
+        </ul>
+      </div>
+    </div>
   );
 }
 
