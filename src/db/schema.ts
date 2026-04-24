@@ -34,6 +34,23 @@ export const cardRarity = pgEnum("card_rarity", [
 
 export const readStatus = pgEnum("read_status", ["unread", "reading", "read"]);
 
+/**
+ * Independent reading-log state. Distinct from `collection_cards` (which
+ * tracks cards the user owns, acquired via pack rips). A user can mark
+ * any book in the catalog as TBR / currently reading / finished without
+ * owning the card, and owning a card doesn't automatically add it to
+ * their reading list. The two domains overlap but are not the same.
+ *
+ * TBR is the user's to-read queue; `reading` is in-progress; `finished`
+ * is completed. DNF / abandoned is intentionally omitted in v1 — if we
+ * add it later it's a separate enum value, not a new table.
+ */
+export const readingStatus = pgEnum("reading_status", [
+  "tbr",
+  "reading",
+  "finished",
+]);
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Auth tables (Better Auth core schema)
 //
@@ -318,8 +335,14 @@ export const packBooks = pgTable(
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
- * Personal layer: one row per (user, book). Counts duplicates so the rip
- * animation can show "you already own this — converted to shards".
+ * Personal layer: one row per (user, book) the user owns as a card.
+ * Counts duplicates so the rip animation can show "you already own
+ * this — converted to shards".
+ *
+ * Note: reading-state (have-read, currently-reading, TBR) does NOT live
+ * here. It lives on `reading_entries`, which is independent of card
+ * ownership — a user can log a book they've never ripped. Acquiring a
+ * card does not implicitly add it to the reading list, and vice versa.
  */
 export const collectionCards = pgTable(
   "collection_cards",
@@ -332,9 +355,6 @@ export const collectionCards = pgTable(
       .notNull()
       .references(() => books.id, { onDelete: "restrict" }),
     quantity: integer("quantity").notNull().default(1),
-    status: readStatus("status").notNull().default("unread"),
-    rating: smallint("rating"), // 1..5, validated in app
-    note: text("note"),
     firstAcquiredFromPackId: uuid("first_acquired_from_pack_id").references(() => packs.id, {
       onDelete: "set null",
     }),
@@ -342,6 +362,51 @@ export const collectionCards = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [unique("collection_user_book_uq").on(t.userId, t.bookId)],
+);
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Reading log (a user's TBR / reading / finished list)
+//
+// Independent from `collection_cards`. A user can log any book in the
+// catalog here — owned or not — to earn start/finish shard grants, track
+// their queue, and rate/note books. `started_at` / `finished_at` are
+// stamped on transitions for UI display; the shard ledger
+// (`shard_events.created_at`) is still the canonical timestamp for grant
+// windows. Partial unique index on `shard_events` enforces that each
+// book earns each transition at most once ever — removing and re-adding
+// a row here does not re-grant shards.
+// ──────────────────────────────────────────────────────────────────────────────
+
+export const readingEntries = pgTable(
+  "reading_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    bookId: uuid("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "restrict" }),
+    status: readingStatus("status").notNull().default("tbr"),
+    /** Stamped when status first transitions into `reading`. Null until then. */
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    /** Stamped when status first transitions into `finished`. Null until then. */
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    rating: smallint("rating"), // 1..5, validated in app
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("reading_entries_user_book_uq").on(t.userId, t.bookId),
+    // Common query: "show my reading list filtered by status, ordered
+    // by when I last touched it." Covers the /reading list views.
+    index("reading_entries_user_status_updated_idx").on(
+      t.userId,
+      t.status,
+      t.updatedAt,
+    ),
+  ],
 );
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -478,6 +543,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   sessions: many(sessions),
   accounts: many(accounts),
   collection: many(collectionCards),
+  readingEntries: many(readingEntries),
   authoredPacks: many(packs),
   rips: many(packRips),
   shardBalance: one(shardBalances, {
@@ -498,6 +564,7 @@ export const accountsRelations = relations(accounts, ({ one }) => ({
 export const booksRelations = relations(books, ({ many }) => ({
   inPacks: many(packBooks),
   collectionRows: many(collectionCards),
+  readingEntries: many(readingEntries),
 }));
 
 export const packsRelations = relations(packs, ({ many, one }) => ({
@@ -540,6 +607,17 @@ export const collectionCardsRelations = relations(collectionCards, ({ one }) => 
   firstAcquiredFromPack: one(packs, {
     fields: [collectionCards.firstAcquiredFromPackId],
     references: [packs.id],
+  }),
+}));
+
+export const readingEntriesRelations = relations(readingEntries, ({ one }) => ({
+  user: one(users, {
+    fields: [readingEntries.userId],
+    references: [users.id],
+  }),
+  book: one(books, {
+    fields: [readingEntries.bookId],
+    references: [books.id],
   }),
 }));
 

@@ -8,16 +8,22 @@
  * gate independently — the UI can show "you've read 1/3 books needed
  * to publish" before the draft even has enough content to trigger
  * composition errors.
+ *
+ * Since the collection/reading split (migration 0005), "finished books"
+ * is sourced from the reading log (`reading_entries.status = 'finished'`)
+ * rather than from ownership — finishing a book you've logged without
+ * ripping its card still counts. Matches the plan's intent: publishing
+ * is gated on *reading*, not on how many packs you've opened.
  */
 
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { collectionCards } from "@/db/schema";
+import { readingEntries } from "@/db/schema";
 import { getEconomy } from "@/lib/economy/config";
 
 export interface PublishUnlockStatus {
   eligible: boolean;
-  /** How many 'read'-status rows the user currently has. */
+  /** How many 'finished'-status rows the user has in their reading log. */
   finishedBooks: number;
   /** Threshold from config at the moment of the check. */
   threshold: number;
@@ -34,12 +40,17 @@ export async function getPublishUnlockStatus(
 ): Promise<PublishUnlockStatus> {
   const [cfg, database] = await Promise.all([getEconomy(), getDb()]);
   // Count, not row fetch — we only need the number and the index on
-  // (user_id) makes this cheap. Uses `count(*)::int` so drizzle hands
-  // us a plain number rather than a string.
+  // (user_id, status, updated_at) makes this cheap. Uses `count(*)::int`
+  // so drizzle hands us a plain number rather than a string.
   const [row] = await database
     .select({ n: sql<number>`count(*)::int` })
-    .from(collectionCards)
-    .where(and(eq(collectionCards.userId, userId), eq(collectionCards.status, "read")));
+    .from(readingEntries)
+    .where(
+      and(
+        eq(readingEntries.userId, userId),
+        eq(readingEntries.status, "finished"),
+      ),
+    );
   const finishedBooks = row?.n ?? 0;
   const threshold = cfg.publishUnlock.finishedBookThreshold;
   return {
