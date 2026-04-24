@@ -12,7 +12,7 @@
  */
 
 import { createServerFn } from '@tanstack/react-start'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 
 import { getDb } from '@/db/client'
 import {
@@ -22,39 +22,18 @@ import {
   packRips,
   packs,
   shardBalances,
+  users,
 } from '@/db/schema'
 import { getSessionUser } from '@/lib/auth/session'
 import { getEconomy } from '@/lib/economy/config'
 import { grantShards, spendShards } from '@/lib/economy/ledger'
 import type { BookRow } from '@/lib/cards/book-to-card'
+import { withErrorLogging } from './_shared'
 
 /**
- * Wrap a handler so that any thrown error is logged with its full cause
- * chain before being rethrown. Drizzle's "Failed query: …" errors keep
- * the real postgres error on `.cause`, which TanStack Start's serializer
- * drops on the way to the client — logging here is the only way to see
- * the actual SQLSTATE / message in Worker tail.
+ * Wrapper removed — moved to `./_shared` so both `collection.ts` and
+ * `user-packs.ts` (and any future server module) share one definition.
  */
-function withErrorLogging<Args extends unknown[], R>(
-  label: string,
-  fn: (...args: Args) => Promise<R>,
-): (...args: Args) => Promise<R> {
-  return async (...args: Args) => {
-    try {
-      return await fn(...args)
-    } catch (err) {
-      const cause = (err as { cause?: unknown }).cause
-      // eslint-disable-next-line no-console
-      console.error(
-        `[${label}]`,
-        err instanceof Error ? err.message : err,
-        cause instanceof Error ? `\n  cause: ${cause.message}` : cause ? `\n  cause: ${JSON.stringify(cause)}` : '',
-        err instanceof Error && err.stack ? `\n${err.stack}` : '',
-      )
-      throw err
-    }
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared types
@@ -169,8 +148,10 @@ export const DEFAULT_PACK_SLUG = 'booker-shortlist-2024'
 /**
  * Internal: load a pack + its books by slug. Used by both the
  * default-pack fetcher (home/landing animation) and the slug-param
- * fetcher (/rip/$slug). Throws if the slug doesn't resolve — callers
- * can translate that into a 404.
+ * fetcher (/rip/$slug) — both of which only ever serve editorial
+ * (Tome-authored) packs. User-built packs live under `/u/$username/$slug`
+ * and use `loadUserPack` below so their slug is resolved within the
+ * creator's namespace.
  */
 async function loadPackBySlug(slug: string): Promise<PackPayload> {
   const database = await getDb()
@@ -183,7 +164,8 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
       description: packs.description,
     })
     .from(packs)
-    .where(eq(packs.slug, slug))
+    // Editorial namespace only: creator_id IS NULL.
+    .where(and(eq(packs.slug, slug), isNull(packs.creatorId)))
     .limit(1)
 
   if (!pack) {
@@ -206,6 +188,67 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
     .from(packBooks)
     .innerJoin(books, eq(packBooks.bookId, books.id))
     .where(eq(packBooks.packId, pack.id))
+
+  return {
+    packId: pack.id,
+    slug: pack.slug,
+    name: pack.name,
+    description: pack.description,
+    books: rows,
+  }
+}
+
+/**
+ * Internal: load a published user pack by (username, slug). Mirrors
+ * `loadPackBySlug` but resolves through the user namespace so both
+ * rip flows (editorial vs creator-authored) return the same
+ * `PackPayload` shape and can share the `/rip/…` component tree.
+ * Drafts (`is_public = false`) are rejected — only published packs
+ * are rippable.
+ */
+async function loadUserPack(username: string, slug: string): Promise<PackPayload> {
+  const database = await getDb()
+
+  const [pack] = await database
+    .select({
+      id: packs.id,
+      slug: packs.slug,
+      name: packs.name,
+      description: packs.description,
+    })
+    .from(packs)
+    .innerJoin(users, eq(packs.creatorId, users.id))
+    .where(
+      and(
+        eq(users.username, username),
+        eq(packs.slug, slug),
+        eq(packs.isPublic, true),
+      ),
+    )
+    .limit(1)
+
+  if (!pack) {
+    throw new Error(`[server/collection] user pack @${username}/${slug} not found.`)
+  }
+
+  const rows = await database
+    .select({
+      id: books.id,
+      title: books.title,
+      authors: books.authors,
+      coverUrl: books.coverUrl,
+      description: books.description,
+      pageCount: books.pageCount,
+      publishedYear: books.publishedYear,
+      genre: books.genre,
+      rarity: books.rarity,
+      moodTags: books.moodTags,
+    })
+    .from(packBooks)
+    .innerJoin(books, eq(packBooks.bookId, books.id))
+    .where(eq(packBooks.packId, pack.id))
+    .orderBy(desc(packBooks.packId)) // stable order — actual position sort
+    // handled in the rip roller via its own pool weighting
 
   return {
     packId: pack.id,
@@ -249,6 +292,34 @@ export const getPackBySlugFn = createServerFn({ method: 'GET' })
   )
 
 /**
+ * Fetch a published user pack by (username, slug). Used by the
+ * `/rip/u/$username/$slug` route so creator-authored packs get the
+ * same tear-open experience as editorial ones. Returns a `PackPayload`
+ * identical in shape to `getPackBySlugFn`'s — callers downstream
+ * (`rollRip`, `applyRip`) don't care whether a pack is editorial or
+ * user-made.
+ */
+export const getUserPackFn = createServerFn({ method: 'GET' })
+  .inputValidator((raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('getUserPackFn: expected { username, slug }')
+    }
+    const { username, slug } = raw as { username?: unknown; slug?: unknown }
+    if (typeof username !== 'string' || username.length === 0) {
+      throw new Error('getUserPackFn: username must be a non-empty string')
+    }
+    if (typeof slug !== 'string' || slug.length === 0) {
+      throw new Error('getUserPackFn: slug must be a non-empty string')
+    }
+    return { username, slug }
+  })
+  .handler(
+    withErrorLogging('getUserPackFn', async ({ data }): Promise<PackPayload> => {
+      return loadUserPack(data.username, data.slug)
+    }),
+  )
+
+/**
  * List every editorial pack in the catalog, newest first, with a book
  * count. Drives the /rip picker carousel. Kept separate from
  * `getPackBySlugFn` so the carousel doesn't pay the cost of pulling
@@ -274,7 +345,10 @@ export const getRipPacksFn = createServerFn({ method: 'GET' }).handler(
         )`,
       })
       .from(packs)
-      .where(eq(packs.kind, 'editorial'))
+      // Editorial packs are defined by a NULL creator_id. They share the
+      // global "Tome-authored" namespace; user-built packs have creator_id
+      // set and surface on user profiles instead.
+      .where(and(isNull(packs.creatorId), eq(packs.isPublic, true)))
       .orderBy(desc(packs.createdAt))
 
     return rows
@@ -566,6 +640,16 @@ export const recordRipFn = createServerFn({ method: 'POST' })
           .set({ shardsAwarded })
           .where(eq(packRips.id, rip.id))
       }
+
+      // 9. Bump the pack's denormalized weekly-rip counter. Used as a
+      //    trending signal on the discovery surface. The reset job that
+      //    decays stale counters is not built yet (TODO) — for now this
+      //    grows monotonically, which still gives a working "most-ripped"
+      //    sort even if the 7-day semantics aren't enforced.
+      await tx
+        .update(packs)
+        .set({ ripCountWeek: sql`${packs.ripCountWeek} + 1` })
+        .where(eq(packs.id, packId))
 
       return {
         newBookIds: dedupedNewIds,
