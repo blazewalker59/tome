@@ -67,6 +67,15 @@ function Home() {
               Build a pack
             </Link>
           )}
+          {/* Reading log also gated on sign-in: every entry lives on a
+              user account, so an anon CTA would just bounce through
+              sign-in. Placed next to Build a pack so the two creator
+              actions sit together at the end of the hero row. */}
+          {collection && (
+            <Link to="/reading" className="btn-secondary rounded-full px-5 text-sm">
+              Log a book
+            </Link>
+          )}
         </div>
       </section>
 

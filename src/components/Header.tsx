@@ -288,6 +288,18 @@ function AccountMenu({
             </Link>
           )}
 
+          {authed && (
+            <Link
+              to="/reading"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 border-b border-[var(--line)] px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] no-underline hover:bg-[var(--link-bg-hover)]"
+            >
+              <BookOpen aria-hidden className="h-4 w-4 text-[var(--lagoon)]" />
+              <span>Reading list</span>
+            </Link>
+          )}
+
           <div className="border-b border-[var(--line)] px-4 py-3">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
               Theme

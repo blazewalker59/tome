@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as RipRouteImport } from './routes/rip'
+import { Route as ReadingRouteImport } from './routes/reading'
 import { Route as CollectionRouteImport } from './routes/collection'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RipIndexRouteImport } from './routes/rip.index'
@@ -36,6 +37,11 @@ const SignInRoute = SignInRouteImport.update({
 const RipRoute = RipRouteImport.update({
   id: '/rip',
   path: '/rip',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReadingRoute = ReadingRouteImport.update({
+  id: '/reading',
+  path: '/reading',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CollectionRoute = CollectionRouteImport.update({
@@ -122,6 +128,7 @@ const RipUUsernameSlugRoute = RipUUsernameSlugRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
+  '/reading': typeof ReadingRoute
   '/rip': typeof RipRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/books': typeof AdminBooksRoute
@@ -142,6 +149,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
+  '/reading': typeof ReadingRoute
   '/sign-in': typeof SignInRoute
   '/admin/books': typeof AdminBooksRoute
   '/admin/ingest': typeof AdminIngestRoute
@@ -162,6 +170,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
+  '/reading': typeof ReadingRoute
   '/rip': typeof RipRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/books': typeof AdminBooksRoute
@@ -184,6 +193,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/collection'
+    | '/reading'
     | '/rip'
     | '/sign-in'
     | '/admin/books'
@@ -204,6 +214,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/collection'
+    | '/reading'
     | '/sign-in'
     | '/admin/books'
     | '/admin/ingest'
@@ -223,6 +234,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/collection'
+    | '/reading'
     | '/rip'
     | '/sign-in'
     | '/admin/books'
@@ -244,6 +256,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CollectionRoute: typeof CollectionRoute
+  ReadingRoute: typeof ReadingRoute
   RipRoute: typeof RipRouteWithChildren
   SignInRoute: typeof SignInRoute
   AdminBooksRoute: typeof AdminBooksRoute
@@ -273,6 +286,13 @@ declare module '@tanstack/react-router' {
       path: '/rip'
       fullPath: '/rip'
       preLoaderRoute: typeof RipRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reading': {
+      id: '/reading'
+      path: '/reading'
+      fullPath: '/reading'
+      preLoaderRoute: typeof ReadingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/collection': {
@@ -407,6 +427,7 @@ const RipRouteWithChildren = RipRoute._addFileChildren(RipRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CollectionRoute: CollectionRoute,
+  ReadingRoute: ReadingRoute,
   RipRoute: RipRouteWithChildren,
   SignInRoute: SignInRoute,
   AdminBooksRoute: AdminBooksRoute,
