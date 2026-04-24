@@ -14,7 +14,6 @@ import {
 import type { CardData } from "@/lib/cards/types";
 import {
   getCollectionFn,
-  getEditorialPackFn,
   getPackBooksByIdsFn,
   type PackManifestEntry,
 } from "@/server/collection";
@@ -22,9 +21,9 @@ import {
 /**
  * Collection route.
  *
- * Loader fetches the user's collection + the default pack (needed so the
- * rarity-progress bars can show "owned X / total Y"). Unauth'd users are
- * redirected to sign-in because a collection requires an account.
+ * Loader fetches the user's collection (owned books inlined on the
+ * payload via a server-side join). Unauth'd users are redirected to
+ * sign-in because a collection requires an account.
  *
  * The page is organised around a single top-level pivot — "view" — that
  * switches between a flat grid and four grouped modes (pack / author /
@@ -113,7 +112,7 @@ export const Route = createFileRoute("/library/collection")({
   // call `router.invalidate()` explicitly when they need a new fetch.
   staleTime: Infinity,
   loader: async () => {
-    const [collection, pack] = await Promise.all([getCollectionFn(), getEditorialPackFn()]);
+    const collection = await getCollectionFn();
     if (!collection) {
       throw redirect({ to: "/sign-in" });
     }
@@ -135,7 +134,7 @@ export const Route = createFileRoute("/library/collection")({
     const packManifests = packIds.length
       ? await getPackBooksByIdsFn({ data: { packIds } }).catch(() => ({}))
       : {};
-    return { collection, pack, packManifests };
+    return { collection, packManifests };
   },
   component: CollectionPage,
 });
@@ -155,7 +154,7 @@ const VIEW_OPTIONS: Array<{ value: GroupBy; label: string }> = [
 const AUTO_COLLAPSE_THRESHOLD = 4;
 
 function CollectionPage() {
-  const { collection, pack, packManifests } = Route.useLoaderData();
+  const { collection, packManifests } = Route.useLoaderData();
   const searchParams = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
 
@@ -207,19 +206,19 @@ function CollectionPage() {
   // re-render through the router update cycle.
   const [searchDraft, setSearchDraft] = useState(search);
 
-  // Map the pack's books into CardData once per pack payload, then split into
-  // the subset the user owns. We derive from the pack (not the collection's
-  // raw ids) because we need full card data for rendering — until we have a
-  // dedicated "cards I own" server function that joins through to `books`.
+  // Map the owned books into CardData once per collection payload.
+  // The server now inlines the full `BookRow` list on the collection
+  // (ordered newest-first by first-acquired), so the page no longer
+  // needs a separate editorial-pack fetch to reach `books.*` columns
+  // for the grid — every book the user actually owns is already here.
   const { ownedCards, cardById } = useMemo(() => {
-    const allCards = pack.books.map(bookRowToCardData);
+    const allCards = collection.ownedBooks.map(bookRowToCardData);
     const byId = new Map(allCards.map((c) => [c.id, c]));
-    const ownedSet = new Set(collection.ownedBookIds);
     return {
-      ownedCards: allCards.filter((c) => ownedSet.has(c.id)),
+      ownedCards: allCards,
       cardById: byId,
     };
-  }, [pack.books, collection.ownedBookIds]);
+  }, [collection.ownedBooks]);
 
   const acquisitionMap = useMemo(() => {
     const m = new Map<

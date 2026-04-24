@@ -70,7 +70,7 @@ export interface AcquisitionEntry {
   packId: string | null
   /** URL-safe pack identifier; same nullability as `packId`. */
   packSlug: string | null
-  /** Human label — e.g. "Booker Shortlist 2024" — falls back to
+  /** Human label — e.g. "Modern Fantasy Starter" — falls back to
    *  "Editorial pack" when attribution is missing so the UI never has
    *  to render an empty string. */
   packName: string
@@ -90,6 +90,13 @@ export interface RecentPullEntry {
 
 export interface CollectionPayload {
   ownedBookIds: ReadonlyArray<string>
+  /** Full catalog rows for every owned book. The collection page needs
+   *  `BookRow` data (title, authors, cover, rarity, mood tags) to render
+   *  its grid; inlining the join here lets the page drop a second
+   *  round-trip to a pack-contents fetcher. Kept ordered by
+   *  first-acquired desc so the page's default "newest first" sort
+   *  falls out naturally. */
+  ownedBooks: ReadonlyArray<BookRow>
   acquisitions: ReadonlyArray<AcquisitionEntry>
   shardBalance: number
   /** Newest-first snapshot of the last 5 unique books the user pulled.
@@ -135,11 +142,6 @@ export const INSUFFICIENT_SHARDS_PREFIX = 'INSUFFICIENT_SHARDS:'
 // Shard payout is derived from the economy config (CORE_LOOP_PLAN §1).
 // Flat per-dupe in v1; the config shape allows per-rarity overrides
 // later without touching this file.
-
-// Hard-coded for now — the editorial pack is the only pack that exists. When
-// packs become data-driven (deck packs, themed drops) we'll thread the slug
-// through from the route.
-export const DEFAULT_PACK_SLUG = 'booker-shortlist-2024'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read: editorial pack
@@ -258,16 +260,6 @@ async function loadUserPack(username: string, slug: string): Promise<PackPayload
     books: rows,
   }
 }
-
-/**
- * Return the books belonging to the default editorial pack. Public — no auth
- * required so the anonymous landing animation can still roll a visual pack.
- */
-export const getEditorialPackFn = createServerFn({ method: 'GET' }).handler(
-  withErrorLogging('getEditorialPackFn', async (): Promise<PackPayload> => {
-    return loadPackBySlug(DEFAULT_PACK_SLUG)
-  }),
-)
 
 /**
  * Fetch a specific pack by slug — used by `/rip/$slug` when the user
@@ -530,6 +522,30 @@ export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
       .where(eq(shardBalances.userId, user.id))
       .limit(1)
 
+    // Full book metadata for every owned book. The collection page
+    // renders a grid of cards and needs `BookRow`-shaped data (title,
+    // authors, cover, rarity, mood tags) for every entry; joining here
+    // lets the page avoid a second round-trip through a pack manifest
+    // fetcher. Ordered newest-first so the page's default sort (most
+    // recent acquisitions first) falls out without further work.
+    const ownedBookRows = await database
+      .select({
+        id: books.id,
+        title: books.title,
+        authors: books.authors,
+        coverUrl: books.coverUrl,
+        description: books.description,
+        pageCount: books.pageCount,
+        publishedYear: books.publishedYear,
+        genre: books.genre,
+        rarity: books.rarity,
+        moodTags: books.moodTags,
+      })
+      .from(collectionCards)
+      .innerJoin(books, eq(collectionCards.bookId, books.id))
+      .where(eq(collectionCards.userId, user.id))
+      .orderBy(sql`${collectionCards.firstAcquiredAt} desc`)
+
     // Recent pulls: 5 newest unique books by first-acquisition time.
     // Separate query (rather than shaping from `rows`) so we can INNER
     // JOIN `books` for the card preview metadata and cap server-side
@@ -551,6 +567,7 @@ export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
 
     return {
       ownedBookIds: rows.map((r) => r.bookId),
+      ownedBooks: ownedBookRows,
       acquisitions: rows.map((r) => ({
         bookId: r.bookId,
         packId: r.packId ?? null,
@@ -803,9 +820,8 @@ export interface BookDetailPayload {
 
 /**
  * Fetch one book's full detail. Public — anonymous callers get the
- * book + pack list but `ownership` is always null. This mirrors how
- * `getEditorialPackFn` is public: the catalog itself is never secret,
- * only the per-user overlay is.
+ * book + pack list but `ownership` is always null. The catalog itself
+ * is never secret; only the per-user overlay is.
  */
 export const getBookFn = createServerFn({ method: 'GET' })
   .inputValidator((raw: unknown): { bookId: string } => {
@@ -841,8 +857,8 @@ export const getBookFn = createServerFn({ method: 'GET' })
 
       if (!row) return null
 
-      // Pack memberships — used for "Found in: Booker 2024". Safe to
-      // expose publicly since packs themselves are public.
+      // Pack memberships — used for "Found in: Modern Fantasy Starter".
+      // Safe to expose publicly since packs themselves are public.
       const packRows = await database
         .select({ id: packs.id, slug: packs.slug, name: packs.name })
         .from(packBooks)
