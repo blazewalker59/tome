@@ -184,9 +184,11 @@ function RecentPulls({
       {/* Scroll-snap keeps each cover aligned on mobile swipes.
           `-mx-5 px-5` / `-mx-8 px-8` bleed the scroll area to the
           card edges so the row looks continuous while content
-          stays aligned to the padded gutter. */}
-      <div className="-mx-5 overflow-x-auto px-5 sm:-mx-8 sm:px-8">
-        <ul className="flex gap-3 snap-x snap-mandatory pb-1">
+          stays aligned to the padded gutter. Vertical `py-1` gives
+          rarity rings (up to 4px outside the tile) room to render
+          without being clipped by the scroll container. */}
+      <div className="-mx-5 overflow-x-auto px-5 py-1 sm:-mx-8 sm:px-8">
+        <ul className="flex gap-3 snap-x snap-mandatory">
           {pulls.map((p) => {
             const style = RARITY_STYLES[p.rarity as Rarity];
             return (

@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Gem } from "lucide-react";
 import { Card } from "@/components/cards/Card";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import {
@@ -315,18 +315,9 @@ function CollectionPage() {
           No books match your search.
         </p>
       ) : view === "all" ? (
-        <CardGrid
-          cards={sorted}
-          cardById={cardById}
-          acquisitions={acquisitionMap}
-        />
+        <CardGrid cards={sorted} cardById={cardById} />
       ) : (
-        <GroupedView
-          groups={groups}
-          view={view}
-          cardById={cardById}
-          acquisitions={acquisitionMap}
-        />
+        <GroupedView groups={groups} view={view} cardById={cardById} />
       )}
     </main>
   );
@@ -386,15 +377,10 @@ function GroupedView({
   groups,
   view,
   cardById,
-  acquisitions,
 }: {
   groups: ReadonlyArray<{ key: string; label: string; cards: ReadonlyArray<CardData> }>;
   view: GroupBy;
   cardById: ReadonlyMap<string, CardData>;
-  acquisitions: ReadonlyMap<
-    string,
-    { packId: string | null; packName: string; acquiredAt: number }
-  >;
 }) {
   // Auto-collapse when there are many groups. Tracked per view+group-key
   // so switching views resets cleanly (each view has its own identity
@@ -425,7 +411,6 @@ function GroupedView({
           expanded={isExpanded(g.key)}
           onToggle={() => toggle(g.key)}
           cardById={cardById}
-          acquisitions={acquisitions}
         />
       ))}
     </div>
@@ -437,16 +422,11 @@ function CollapsibleGroup({
   expanded,
   onToggle,
   cardById,
-  acquisitions,
 }: {
   group: { key: string; label: string; cards: ReadonlyArray<CardData> };
   expanded: boolean;
   onToggle: () => void;
   cardById: ReadonlyMap<string, CardData>;
-  acquisitions: ReadonlyMap<
-    string,
-    { packId: string | null; packName: string; acquiredAt: number }
-  >;
 }) {
   // Preview strip — a handful of cover thumbnails shown in the collapsed
   // header so the user has visual recognition without expanding. Capped
@@ -501,7 +481,7 @@ function CollapsibleGroup({
 
       {expanded && (
         <div className="border-t border-[var(--line)] px-3 pb-4 pt-4 sm:px-4">
-          <CardGrid cards={group.cards} cardById={cardById} acquisitions={acquisitions} />
+          <CardGrid cards={group.cards} cardById={cardById} />
         </div>
       )}
     </section>
@@ -515,40 +495,18 @@ function CollapsibleGroup({
 function CardGrid({
   cards,
   cardById,
-  acquisitions,
 }: {
   cards: ReadonlyArray<{ id: string }>;
   cardById: ReadonlyMap<string, CardData>;
-  acquisitions: ReadonlyMap<
-    string,
-    { packId: string | null; packName: string; acquiredAt: number }
-  >;
 }) {
   return (
     <div className="grid grid-cols-2 gap-4 justify-items-center sm:grid-cols-3 sm:gap-6 md:grid-cols-4 lg:grid-cols-5">
       {cards.map((c) => {
         const card = cardById.get(c.id);
         if (!card) return null;
-        const meta = acquisitions.get(c.id);
         return (
           <div key={c.id} className="flex w-full flex-col items-center gap-2">
-            <Card card={card} />
-            {meta && (
-              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-                {meta.packName}
-              </p>
-            )}
-            {/* Separate affordance from the flip interaction — the card
-                itself flips on tap, so navigation needs its own hit
-                target. Small + uppercase so it reads as a secondary
-                link, not a primary action. */}
-            <Link
-              to="/book/$id"
-              params={{ id: c.id }}
-              className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] underline-offset-4 hover:text-[var(--sea-ink)] hover:underline"
-            >
-              Details →
-            </Link>
+            <Card card={card} detailHref={`/book/${c.id}`} />
           </div>
         );
       })}
@@ -556,6 +514,26 @@ function CardGrid({
   );
 }
 
+/**
+ * Short descriptors used in the per-rarity popover. Kept here (rather
+ * than alongside RARITY_STYLES) because the phrasing is route-specific
+ * flavour text — the style module should stay purely visual.
+ */
+const RARITY_BLURBS: Record<Rarity, string> = {
+  common: "Everyday pulls. The backbone of every library.",
+  uncommon: "A cut above — showing up in most packs but not every one.",
+  rare: "Scarce. Expect a handful across a full set.",
+  foil: "Iridescent finishes on standout titles. Always a moment.",
+  legendary: "Vanishingly rare. The marquee pulls of the set.",
+};
+
+/**
+ * Condensed rarity row. Each rarity is a tinted gem icon whose outer
+ * ring fills to show owned/total progress. Tapping a gem opens a
+ * small popover anchored below it with the exact stats plus a short
+ * blurb explaining the rarity tier. Only one popover is open at a
+ * time; clicking outside or hitting Escape closes it.
+ */
 function RarityProgress({
   owned,
   total,
@@ -563,32 +541,192 @@ function RarityProgress({
   owned: Record<Rarity, number>;
   total: Record<Rarity, number>;
 }) {
+  const [openRarity, setOpenRarity] = useState<Rarity | null>(null);
+  const containerRef = useRef<HTMLUListElement>(null);
+
+  // Close on outside click / Escape. The listener is only attached
+  // while a popover is open so we're not paying for it on every
+  // render, and it's removed on cleanup to avoid leaks.
+  useEffect(() => {
+    if (openRarity === null) return;
+
+    const onDocClick = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) {
+        setOpenRarity(null);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenRarity(null);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [openRarity]);
+
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+    <ul
+      ref={containerRef}
+      className="flex items-start justify-between gap-2 sm:justify-start sm:gap-4"
+    >
       {ALL_RARITIES.map((r) => {
         const o = owned[r];
         const t = total[r];
-        const pct = t === 0 ? 0 : Math.round((o / t) * 100);
         const style = RARITY_STYLES[r];
+        const hasAny = o > 0;
+        // Percentage completion drives the conic-gradient sweep. Guard
+        // against divide-by-zero (possible if a rarity has no books in
+        // the set — unlikely but cheaper to guard than to debug later).
+        const pct = t === 0 ? 0 : Math.round((o / t) * 100);
+        const open = openRarity === r;
         return (
-          <div
+          <li
             key={r}
-            className={`rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3 backdrop-blur ${style.ring}`}
+            className="relative flex flex-1 flex-col items-center gap-1 sm:flex-none"
           >
-            <p className="island-kicker">{style.label}</p>
-            <p className="mt-1 text-lg font-bold text-[var(--sea-ink)]">
-              {o}
-              <span className="text-sm font-normal text-[var(--sea-ink-soft)]">
-                {" / "}
+            <button
+              type="button"
+              onClick={() => setOpenRarity((cur) => (cur === r ? null : r))}
+              aria-expanded={open}
+              aria-haspopup="dialog"
+              aria-label={`${style.label}: ${o} of ${t} owned. Tap for details.`}
+              className="flex flex-col items-center gap-1 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lagoon)]"
+            >
+              {/* Conic-gradient ring doubles as the progress indicator:
+                  the filled arc sweeps from the top clockwise in the
+                  rarity's color, and the remainder falls back to the
+                  neutral track color. A nested element with the
+                  surface bg masks the center so only a 3px ring shows. */}
+              <span
+                className="relative flex h-10 w-10 items-center justify-center rounded-full"
+                style={{
+                  background: `conic-gradient(var(--rarity-${r}) ${pct}%, var(--track-bg) ${pct}% 100%)`,
+                  opacity: hasAny ? 1 : 0.4,
+                }}
+              >
+                <span className="flex h-[calc(100%-6px)] w-[calc(100%-6px)] items-center justify-center rounded-full bg-[var(--surface)]">
+                  <Gem
+                    aria-hidden
+                    className="h-5 w-5"
+                    style={{ color: `var(--rarity-${r})` }}
+                    strokeWidth={2}
+                    fill={hasAny ? `var(--rarity-${r})` : "none"}
+                    fillOpacity={hasAny ? 0.2 : 0}
+                  />
+                </span>
+              </span>
+              {/* Owned / total — full fraction. Numerator takes the ink
+                  color when non-zero so it pops against the muted
+                  denominator. */}
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--sea-ink-soft)] tabular-nums">
+                <span className={hasAny ? "text-[var(--sea-ink)]" : undefined}>{o}</span>
+                <span aria-hidden>/</span>
                 {t}
               </span>
-            </p>
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--track-bg)]">
-              <div className="h-full bg-[var(--lagoon)]" style={{ width: `${pct}%` }} />
-            </div>
-          </div>
+            </button>
+
+            {open && (
+              <RarityPopover
+                rarity={r}
+                label={style.label}
+                owned={o}
+                total={t}
+                pct={pct}
+                blurb={RARITY_BLURBS[r]}
+                // Pin the popover to the row edges for the outermost
+                // gems so it doesn't clip off-screen on narrow
+                // viewports. Middle three stay centered under their
+                // gem. ALL_RARITIES index === column index.
+                align={
+                  ALL_RARITIES.indexOf(r) === 0
+                    ? "start"
+                    : ALL_RARITIES.indexOf(r) === ALL_RARITIES.length - 1
+                      ? "end"
+                      : "center"
+                }
+              />
+            )}
+          </li>
         );
       })}
+    </ul>
+  );
+}
+
+/**
+ * Anchored popover for a single rarity. Positioned absolutely below
+ * the gem button. The `align` prop shifts the popover horizontally so
+ * end-of-row gems don't clip off the viewport on narrow screens —
+ * `start` pins the popover's left edge under the gem, `end` pins the
+ * right edge, `center` (default) centers it. The arrow notch moves
+ * with the popover so it always points at the gem.
+ */
+function RarityPopover({
+  rarity,
+  label,
+  owned,
+  total,
+  pct,
+  blurb,
+  align = "center",
+}: {
+  rarity: Rarity;
+  label: string;
+  owned: number;
+  total: number;
+  pct: number;
+  blurb: string;
+  align?: "start" | "center" | "end";
+}) {
+  // Popover position — translate the container so its chosen edge
+  // sits under the gem's horizontal center. The arrow stays visually
+  // anchored to the gem by using the inverse offset.
+  const containerPos =
+    align === "start"
+      ? "left-1/2 -translate-x-3"
+      : align === "end"
+        ? "right-1/2 translate-x-3"
+        : "left-1/2 -translate-x-1/2";
+  const arrowPos =
+    align === "start"
+      ? "left-3"
+      : align === "end"
+        ? "right-3"
+        : "left-1/2 -translate-x-1/2";
+
+  return (
+    <div
+      role="dialog"
+      aria-label={`${label} rarity details`}
+      className={`absolute top-full z-40 mt-2 w-[14rem] rounded-xl border border-[var(--line)] bg-[var(--foam)] p-3 text-left shadow-lg ${containerPos}`}
+    >
+      {/* Arrow / notch pointing at the gem. Pure CSS triangle built
+          from a rotated square so the border shows on two sides —
+          matches the popover's border + background. */}
+      <span
+        aria-hidden
+        className={`absolute -top-1.5 h-3 w-3 rotate-45 border-l border-t border-[var(--line)] bg-[var(--foam)] ${arrowPos}`}
+      />
+      <div className="flex items-center gap-2">
+        <Gem
+          aria-hidden
+          className="h-4 w-4 shrink-0"
+          style={{ color: `var(--rarity-${rarity})` }}
+          strokeWidth={2}
+          fill={`var(--rarity-${rarity})`}
+          fillOpacity={0.25}
+        />
+        <p className="text-sm font-bold text-[var(--sea-ink)]">{label}</p>
+        <p className="ml-auto text-[11px] font-semibold tabular-nums text-[var(--sea-ink-soft)]">
+          {owned}/{total} · {pct}%
+        </p>
+      </div>
+      <p className="mt-2 text-xs leading-relaxed text-[var(--sea-ink-soft)]">
+        {blurb}
+      </p>
     </div>
   );
 }
