@@ -292,6 +292,122 @@ export const getPackBySlugFn = createServerFn({ method: 'GET' })
   )
 
 /**
+ * Shape returned by `getPackBooksByIdsFn`. A flat map keyed by pack
+ * ID so the collection page can cheaply look up any pack group's
+ * manifest without scanning. Packs not found (deleted, private) are
+ * simply omitted — callers treat the lookup as advisory and fall
+ * back to owned-only listings. The `books` array is the same
+ * `BookRow` shape the /rip flow uses so the `PackContentsSheet`
+ * component works uniformly across both surfaces.
+ */
+export interface PackManifestEntry {
+  name: string
+  books: ReadonlyArray<BookRow>
+}
+
+export type PackManifestMap = ReadonlyMap<string, PackManifestEntry>
+
+/**
+ * Batch-fetch the book manifests for a set of packs. Used by
+ * `/collection` so the per-pack "in this pack" bottom sheet can
+ * render the full contents (not just what the user owns) identically
+ * to /rip. Taking a batch of IDs instead of one-at-a-time means the
+ * page adds a single round-trip regardless of how many packs the user
+ * has rolled from.
+ *
+ * Public — pack contents aren't secret; `is_public = false` draft
+ * packs are intentionally excluded so unlisted drafts don't leak.
+ * Editorial packs (creator_id IS NULL) are always visible.
+ *
+ * Returns a plain object (not a Map) because server-fn serialization
+ * doesn't round-trip Map values cleanly; the client rehydrates into
+ * a Map on arrival.
+ */
+export const getPackBooksByIdsFn = createServerFn({ method: 'GET' })
+  .inputValidator((raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('getPackBooksByIdsFn: expected { packIds: string[] }')
+    }
+    const { packIds } = raw as { packIds?: unknown }
+    if (!Array.isArray(packIds) || !packIds.every((id) => typeof id === 'string')) {
+      throw new Error('getPackBooksByIdsFn: packIds must be string[]')
+    }
+    // Dedup up-front so we don't send redundant IDs to the DB and
+    // also so the map we return has a predictable size regardless of
+    // caller hygiene.
+    return { packIds: Array.from(new Set(packIds as string[])) }
+  })
+  .handler(
+    withErrorLogging(
+      'getPackBooksByIdsFn',
+      async ({ data }): Promise<Record<string, PackManifestEntry>> => {
+        const { packIds } = data
+        // Short-circuit on empty input — otherwise `inArray(col, [])`
+        // generates `col IN ()` on some drivers which is a syntax
+        // error. Also saves a round-trip.
+        if (packIds.length === 0) return {}
+
+        const database = await getDb()
+
+        // One query that pulls every (pack, book) pair. Filtering by
+        // `isPublic = true OR creator_id IS NULL` permits editorial
+        // packs (no creator) alongside published user packs while
+        // excluding unpublished drafts.
+        const rows = await database
+          .select({
+            packId: packBooks.packId,
+            packName: packs.name,
+            id: books.id,
+            title: books.title,
+            authors: books.authors,
+            coverUrl: books.coverUrl,
+            description: books.description,
+            pageCount: books.pageCount,
+            publishedYear: books.publishedYear,
+            genre: books.genre,
+            rarity: books.rarity,
+            moodTags: books.moodTags,
+          })
+          .from(packBooks)
+          .innerJoin(books, eq(packBooks.bookId, books.id))
+          .innerJoin(packs, eq(packBooks.packId, packs.id))
+          .where(
+            and(
+              inArray(packBooks.packId, packIds),
+              // Editorial (null creator) or explicitly published.
+              sql`${packs.creatorId} is null or ${packs.isPublic} = true`,
+            ),
+          )
+
+        // Bucket by packId. We keep the pack's name alongside the
+        // books so the sheet can render its header without a separate
+        // lookup.
+        const out: Record<string, PackManifestEntry> = {}
+        for (const r of rows) {
+          let entry = out[r.packId]
+          if (!entry) {
+            entry = { name: r.packName, books: [] }
+            out[r.packId] = entry
+          }
+          ;(entry.books as BookRow[]).push({
+            id: r.id,
+            title: r.title,
+            authors: r.authors,
+            coverUrl: r.coverUrl,
+            description: r.description,
+            pageCount: r.pageCount,
+            publishedYear: r.publishedYear,
+            genre: r.genre,
+            rarity: r.rarity,
+            moodTags: r.moodTags,
+          })
+        }
+        return out
+      },
+    ),
+  )
+
+/**
  * Fetch a published user pack by (username, slug). Used by the
  * `/rip/u/$username/$slug` route so creator-authored packs get the
  * same tear-open experience as editorial ones. Returns a `PackPayload`

@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
-import { BookOpen, ChevronDown } from "lucide-react";
+import { ChevronDown, Info } from "lucide-react";
 import { Card } from "@/components/cards/Card";
+import { PackContentsSheet } from "@/components/PackContentsSheet";
 import { RarityGemRow } from "@/components/RarityGemRow";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import {
@@ -12,7 +13,12 @@ import {
   type SortMode,
 } from "@/lib/cards/filter";
 import type { CardData } from "@/lib/cards/types";
-import { getCollectionFn, getEditorialPackFn } from "@/server/collection";
+import {
+  getCollectionFn,
+  getEditorialPackFn,
+  getPackBooksByIdsFn,
+  type PackManifestEntry,
+} from "@/server/collection";
 
 /**
  * Collection route.
@@ -93,7 +99,25 @@ export const Route = createFileRoute("/collection")({
     if (!collection) {
       throw redirect({ to: "/sign-in" });
     }
-    return { collection, pack };
+    // Second phase — once we know which packs the user has rolled
+    // from, batch-fetch their manifests so the per-pack "contents"
+    // sheet can show the full book list (owned + unowned) just like
+    // /rip does. Kept as a separate request because the first phase
+    // already roundtripped and we don't know the IDs until it lands;
+    // one additional query at page load is an acceptable cost for
+    // the feature and scales linearly with packs-rolled-from rather
+    // than books-owned.
+    const packIds = Array.from(
+      new Set(
+        collection.acquisitions
+          .map((a) => a.packId)
+          .filter((id): id is string => typeof id === "string"),
+      ),
+    );
+    const packManifests = packIds.length
+      ? await getPackBooksByIdsFn({ data: { packIds } }).catch(() => ({}))
+      : {};
+    return { collection, pack, packManifests };
   },
   component: CollectionPage,
 });
@@ -120,7 +144,7 @@ const VIEW_OPTIONS: Array<{ value: GroupBy; label: string }> = [
 const AUTO_COLLAPSE_THRESHOLD = 4;
 
 function CollectionPage() {
-  const { collection, pack } = Route.useLoaderData();
+  const { collection, pack, packManifests } = Route.useLoaderData();
   const searchParams = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
 
@@ -167,13 +191,12 @@ function CollectionPage() {
   // the subset the user owns. We derive from the pack (not the collection's
   // raw ids) because we need full card data for rendering — until we have a
   // dedicated "cards I own" server function that joins through to `books`.
-  const { ownedCards, totalCards, cardById } = useMemo(() => {
+  const { ownedCards, cardById } = useMemo(() => {
     const allCards = pack.books.map(bookRowToCardData);
     const byId = new Map(allCards.map((c) => [c.id, c]));
     const ownedSet = new Set(collection.ownedBookIds);
     return {
       ownedCards: allCards.filter((c) => ownedSet.has(c.id)),
-      totalCards: allCards,
       cardById: byId,
     };
   }, [pack.books, collection.ownedBookIds]);
@@ -233,54 +256,33 @@ function CollectionPage() {
     [sorted, view, groupCtx],
   );
 
-  const ownedRarityCounts = useMemo(() => rarityCounts(ownedCards), [ownedCards]);
-  const totalRarityCounts = useMemo(() => rarityCounts(totalCards), [totalCards]);
-
   if (ownedCards.length === 0) {
     return <EmptyState />;
   }
 
   return (
     <main className="page-wrap pb-6 pt-4 sm:py-12">
-      <header className="mb-4 flex items-end justify-between gap-4 sm:mb-8">
-        <div className="min-w-0">
-          {/* Single-line header — no eyebrow kicker, since "Your
-              library" above "Collection" repeated the same idea. */}
-          <h1 className="display-title text-2xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-            Collection
-          </h1>
-        </div>
-        {/* Stats: only books-owned now. Shards moved to the profile
-            dropdown in the header — they're a per-user wallet, not a
-            collection-page metric, and the header is the natural
-            place for account chrome.
-            Visual weight: the icon's stroke is beefed up (2.5) and
-            sized slightly larger than the numerator so it reads at
-            the same weight as the bold count. The denominator sits
-            at a step smaller so the owned count is the primary
-            figure and `/12` reads as a quiet reference. */}
-        <dl className="flex shrink-0 items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] sm:gap-2.5 sm:text-xs sm:tracking-[0.16em]">
-          <dt className="sr-only">Books owned</dt>
-          <BookOpen
-            aria-hidden
-            className="h-5 w-5 text-[var(--sea-ink)] sm:h-6 sm:w-6"
-          />
-          <dd className="flex items-baseline tabular-nums leading-none">
-            <span className="text-xs font-semibold text-[var(--sea-ink-soft)] sm:text-sm">
-              {ownedCards.length}/
-            </span>
-            <span className="text-xl font-semibold text-[var(--sea-ink)] sm:text-2xl">
-              {totalCards.length}
-            </span>
-          </dd>
-        </dl>
+      <header className="mb-4 sm:mb-8">
+        {/* Single-line header — no eyebrow kicker, since "Your
+            library" above "Collection" repeated the same idea. The
+            owned/total stat chip that used to sit on the right was
+            removed: once the page groups by pack with its own
+            "contents" sheet, a single global `N/T` number stops
+            being a meaningful figure — it's really just the owned
+            count of the editorial pack, which misrepresents "your
+            library" as more packs come online. */}
+        <h1 className="display-title text-2xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+          Collection
+        </h1>
       </header>
 
-      <RarityGemRow mode="progress" owned={ownedRarityCounts} total={totalRarityCounts} />
-
       {/* View switcher — the top-level pivot. Sits directly under the
-          progress strip and above the toolbar so it reads as a primary
-          navigation control, not a filter option. */}
+          page header and above the toolbar so it reads as a primary
+          navigation control, not a filter option. The per-pack rarity
+          breakdown used to live here as a top-level strip, but now
+          nests into each pack group when sorted by pack — a single
+          global row stops carrying useful information once the user
+          owns books from more than one pack. */}
       <ViewTabs value={view} onChange={(v) => updateSearch({ view: v })} />
 
       {/* Toolbar — search + sort. Sticky on mobile so the user always has
@@ -332,7 +334,13 @@ function CollectionPage() {
       ) : view === "all" ? (
         <CardGrid cards={sorted} cardById={cardById} />
       ) : (
-        <GroupedView groups={groups} view={view} cardById={cardById} />
+        <GroupedView
+          groups={groups}
+          view={view}
+          cardById={cardById}
+          packManifests={packManifests}
+          ownedBookIds={collection.ownedBookIds}
+        />
       )}
     </main>
   );
@@ -392,16 +400,27 @@ function GroupedView({
   groups,
   view,
   cardById,
+  packManifests,
+  ownedBookIds,
 }: {
   groups: ReadonlyArray<{ key: string; label: string; cards: ReadonlyArray<CardData> }>;
   view: GroupBy;
   cardById: ReadonlyMap<string, CardData>;
+  packManifests: Record<string, PackManifestEntry>;
+  ownedBookIds: ReadonlyArray<string>;
 }) {
   // Auto-collapse when there are many groups. Tracked per view+group-key
   // so switching views resets cleanly (each view has its own identity
   // map of expanded groups).
   const initiallyCollapsed = groups.length > AUTO_COLLAPSE_THRESHOLD;
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  // Set of book IDs the user owns, built once and reused across the
+  // pack group cards so each sheet can mark its own rows in O(1).
+  // Declared here (not inside CollapsibleGroup) so it isn't rebuilt
+  // per-group on every render — the set is identical across all
+  // groups.
+  const ownedIdSet = useMemo(() => new Set(ownedBookIds), [ownedBookIds]);
 
   // The map above is keyed by `${view}:${groupKey}` so it stays
   // meaningful after the user toggles views. Resetting on view change
@@ -419,85 +438,159 @@ function GroupedView({
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {groups.map((g) => (
-        <CollapsibleGroup
-          key={g.key}
-          group={g}
-          expanded={isExpanded(g.key)}
-          onToggle={() => toggle(g.key)}
-          cardById={cardById}
-        />
-      ))}
+      {groups.map((g) => {
+        // For pack groups, pull the manifest so the Info chip can
+        // open the full-contents sheet. Group keys come out of
+        // `groupCards` prefixed (`pack:${packId}`) — strip the prefix
+        // to look up the raw ID. Non-pack views pass undefined and
+        // the group card hides its Info affordance.
+        const packId =
+          view === "pack" && g.key.startsWith("pack:") ? g.key.slice("pack:".length) : null;
+        const manifest = packId ? packManifests[packId] : undefined;
+        return (
+          <CollapsibleGroup
+            key={g.key}
+            group={g}
+            view={view}
+            expanded={isExpanded(g.key)}
+            onToggle={() => toggle(g.key)}
+            cardById={cardById}
+            packManifest={manifest}
+            ownedIdSet={ownedIdSet}
+          />
+        );
+      })}
     </div>
   );
 }
 
 function CollapsibleGroup({
   group,
+  view,
   expanded,
   onToggle,
   cardById,
+  packManifest,
+  ownedIdSet,
 }: {
   group: { key: string; label: string; cards: ReadonlyArray<CardData> };
+  view: GroupBy;
   expanded: boolean;
   onToggle: () => void;
   cardById: ReadonlyMap<string, CardData>;
+  packManifest: PackManifestEntry | undefined;
+  ownedIdSet: ReadonlySet<string>;
 }) {
   // Preview strip — a handful of cover thumbnails shown in the collapsed
   // header so the user has visual recognition without expanding. Capped
   // at 5 so it fits on the narrowest viewport we support.
   const preview = group.cards.slice(0, 5);
 
+  // Per-pack rarity breakdown — only shown inside the pack view. We use
+  // `count` mode (not `progress`) because the page only has full
+  // manifests for the editorial pack; showing raw owned counts works
+  // uniformly across every pack without needing to fetch N pack
+  // manifests. Computed from the group's resolved cards so it always
+  // matches whatever is currently in view (search / sort aware).
+  const showRarityRow = view === "pack";
+  const rarityCountsForGroup = useMemo(() => {
+    const resolved = group.cards
+      .map((c) => cardById.get(c.id))
+      .filter((c): c is CardData => !!c);
+    return rarityCounts(resolved);
+  }, [group.cards, cardById]);
+
+  // "Contents" bottom sheet. Only available in pack view and only
+  // when we successfully loaded the pack's manifest — otherwise the
+  // sheet has nothing useful to show beyond what's already on screen.
+  const [contentsOpen, setContentsOpen] = useState(false);
+  const showContentsChip = view === "pack" && !!packManifest;
+
   return (
     <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="group flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left sm:px-4"
-      >
-        <ChevronDown
-          aria-hidden
-          className={`h-4 w-4 shrink-0 text-[var(--sea-ink-soft)] transition-transform ${
-            expanded ? "rotate-0" : "-rotate-90"
-          }`}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <h2 className="truncate text-sm font-semibold text-[var(--sea-ink)] sm:text-base">
-              {group.label}
-            </h2>
-            <span className="shrink-0 text-xs uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-              {group.cards.length}
-            </span>
-          </div>
-        </div>
-        {!expanded && preview.length > 0 && (
-          <div
+      {/* Header row — split into the toggle button (flex-1, covers
+          most of the row) and the contents Info chip (sibling, not
+          nested, so we don't break HTML by putting a button inside
+          a button). The chip only shows in pack view and hides when
+          we couldn't load a manifest for this pack. */}
+      <div className="flex items-center gap-2 pr-2 sm:pr-3">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          className="group flex min-w-0 flex-1 items-center gap-3 rounded-2xl px-3 py-3 text-left sm:px-4"
+        >
+          <ChevronDown
             aria-hidden
-            className="hidden shrink-0 items-center sm:flex"
-          >
-            {preview.map((c, i) => (
-              <img
-                key={c.id}
-                src={c.coverUrl}
-                alt=""
-                loading="lazy"
-                className="h-10 w-7 rounded-sm border border-[var(--line)] object-cover shadow-sm"
-                style={{
-                  marginLeft: i === 0 ? 0 : "-0.5rem",
-                  zIndex: preview.length - i,
-                }}
-              />
-            ))}
+            className={`h-4 w-4 shrink-0 text-[var(--sea-ink-soft)] transition-transform ${
+              expanded ? "rotate-0" : "-rotate-90"
+            }`}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <h2 className="truncate text-sm font-semibold text-[var(--sea-ink)] sm:text-base">
+                {group.label}
+              </h2>
+              <span className="shrink-0 text-xs uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+                {group.cards.length}
+              </span>
+            </div>
           </div>
+          {!expanded && preview.length > 0 && (
+            <div aria-hidden className="hidden shrink-0 items-center sm:flex">
+              {preview.map((c, i) => (
+                <img
+                  key={c.id}
+                  src={c.coverUrl}
+                  alt=""
+                  loading="lazy"
+                  className="h-10 w-7 rounded-sm border border-[var(--line)] object-cover shadow-sm"
+                  style={{
+                    marginLeft: i === 0 ? 0 : "-0.5rem",
+                    zIndex: preview.length - i,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </button>
+
+        {showContentsChip && (
+          <button
+            type="button"
+            onClick={() => setContentsOpen(true)}
+            aria-label={`See what's in ${packManifest!.name}`}
+            className="shrink-0 inline-flex items-center gap-1 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] sm:px-3 sm:py-1.5"
+          >
+            <Info aria-hidden className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Contents</span>
+          </button>
         )}
-      </button>
+      </div>
 
       {expanded && (
         <div className="border-t border-[var(--line)] px-3 pb-4 pt-4 sm:px-4">
+          {showRarityRow && (
+            <div className="mb-4">
+              <RarityGemRow
+                mode="count"
+                counts={rarityCountsForGroup}
+                scopeLabel="in this pack"
+              />
+            </div>
+          )}
           <CardGrid cards={group.cards} cardById={cardById} />
         </div>
+      )}
+
+      {showContentsChip && packManifest && (
+        <PackContentsSheet
+          open={contentsOpen}
+          onClose={() => setContentsOpen(false)}
+          packName={packManifest.name}
+          books={packManifest.books}
+          ownedIds={ownedIdSet}
+        />
       )}
     </section>
   );
