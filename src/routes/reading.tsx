@@ -57,7 +57,7 @@ export const Route = createFileRoute("/reading")({
 type TabKey = ReadingStatus;
 const TABS: ReadonlyArray<{ key: TabKey; label: string }> = [
   { key: "reading", label: "Reading" },
-  { key: "tbr", label: "Want to read" },
+  { key: "tbr", label: "TBR" },
   { key: "finished", label: "Finished" },
 ];
 
@@ -117,12 +117,16 @@ function ReadingListPage() {
         }}
       />
 
-      {/* Tabs. Keeping them as a segmented-control row rather than a
-          router nested route because the three lists are small and
-          re-filtering client-side beats a round-trip per tab switch. */}
-      <nav
-        aria-label="Reading log tabs"
-        className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-0"
+      {/* Tabs. Pill-shaped segmented control matching the pattern on
+          /collection and /book/:id — the shared `.view-tab` utility
+          gives consistent height, rounded pills, and graceful mobile
+          overflow (horizontal scroll with snap) instead of wrapping
+          mid-row. Client-side re-filter beats a round-trip per tab
+          switch since the three lists already rode in on the loader. */}
+      <div
+        role="tablist"
+        aria-label="Reading log"
+        className="view-tabs flex gap-2 overflow-x-auto"
       >
         {TABS.map((t) => {
           const active = activeTab === t.key;
@@ -131,23 +135,30 @@ function ReadingListPage() {
             <button
               key={t.key}
               type="button"
-              aria-pressed={active}
+              role="tab"
+              aria-selected={active}
               onClick={() => setActiveTab(t.key)}
-              className={[
-                "rounded-t-2xl border border-b-0 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] transition-colors",
-                active
-                  ? "border-[var(--line)] bg-[var(--surface)] text-[var(--sea-ink)]"
-                  : "border-transparent text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]",
-              ].join(" ")}
+              className={`view-tab ${active ? "is-active" : ""}`}
             >
-              {t.label}
-              <span className="ml-1 normal-case tracking-normal text-[var(--sea-ink-soft)]">
-                · {count}
-              </span>
+              <span>{t.label}</span>
+              {/* Count is secondary information — smaller, lower
+                  contrast, and tucked to the right of the label so
+                  it never dominates the pill. Hidden at zero to keep
+                  empty tabs visually quiet. */}
+              {count > 0 && (
+                <span
+                  aria-hidden
+                  className={`ml-1.5 text-[10px] font-semibold ${
+                    active ? "opacity-80" : "opacity-60"
+                  }`}
+                >
+                  {count}
+                </span>
+              )}
             </button>
           );
         })}
-      </nav>
+      </div>
 
       {currentList.length === 0 ? (
         <EmptyState tab={activeTab} />
