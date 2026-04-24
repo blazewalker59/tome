@@ -538,6 +538,17 @@ function CardGrid({
                 {meta.packName}
               </p>
             )}
+            {/* Separate affordance from the flip interaction — the card
+                itself flips on tap, so navigation needs its own hit
+                target. Small + uppercase so it reads as a secondary
+                link, not a primary action. */}
+            <Link
+              to="/book/$id"
+              params={{ id: c.id }}
+              className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] underline-offset-4 hover:text-[var(--sea-ink)] hover:underline"
+            >
+              Details →
+            </Link>
           </div>
         );
       })}

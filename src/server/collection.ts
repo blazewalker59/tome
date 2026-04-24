@@ -383,3 +383,275 @@ export const recordRipFn = createServerFn({ method: 'POST' })
       }
     })
   }))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Read: single book detail
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ReadStatus = 'unread' | 'reading' | 'read'
+
+export interface BookDetailPayload {
+  /** Full public book metadata — same shape as `BookRow` with the id. */
+  book: BookRow
+  /** Packs this book appears in, for "Found in" breadcrumbs. Unordered;
+   *  the UI can sort by name if we ever ship many packs per book. */
+  packs: ReadonlyArray<{ id: string; slug: string; name: string }>
+  /** The signed-in user's collection entry for this book, or null when
+   *  anonymous or not-yet-owned. Lets the page show a read CTA for
+   *  owners and a "rip to unlock" state for everyone else. */
+  ownership: {
+    owned: boolean
+    quantity: number
+    status: ReadStatus
+    rating: number | null
+    note: string | null
+    firstAcquiredAt: number | null
+    firstAcquiredFromPackId: string | null
+  } | null
+}
+
+/**
+ * Fetch one book's full detail. Public — anonymous callers get the
+ * book + pack list but `ownership` is always null. This mirrors how
+ * `getEditorialPackFn` is public: the catalog itself is never secret,
+ * only the per-user overlay is.
+ */
+export const getBookFn = createServerFn({ method: 'GET' })
+  .inputValidator((raw: unknown): { bookId: string } => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('getBookFn: input must be an object')
+    }
+    const { bookId } = raw as Record<string, unknown>
+    if (typeof bookId !== 'string' || bookId.length === 0) {
+      throw new Error('getBookFn: bookId is required')
+    }
+    return { bookId }
+  })
+  .handler(
+    withErrorLogging('getBookFn', async ({ data }): Promise<BookDetailPayload | null> => {
+      const database = await getDb()
+
+      const [row] = await database
+        .select({
+          id: books.id,
+          title: books.title,
+          authors: books.authors,
+          coverUrl: books.coverUrl,
+          description: books.description,
+          pageCount: books.pageCount,
+          publishedYear: books.publishedYear,
+          genre: books.genre,
+          rarity: books.rarity,
+          moodTags: books.moodTags,
+        })
+        .from(books)
+        .where(eq(books.id, data.bookId))
+        .limit(1)
+
+      if (!row) return null
+
+      // Pack memberships — used for "Found in: Booker 2024". Safe to
+      // expose publicly since packs themselves are public.
+      const packRows = await database
+        .select({ id: packs.id, slug: packs.slug, name: packs.name })
+        .from(packBooks)
+        .innerJoin(packs, eq(packBooks.packId, packs.id))
+        .where(eq(packBooks.bookId, data.bookId))
+
+      // Owner overlay — only present when signed in AND the row exists.
+      const user = await getSessionUser()
+      let ownership: BookDetailPayload['ownership'] = null
+      if (user) {
+        const [entry] = await database
+          .select({
+            quantity: collectionCards.quantity,
+            status: collectionCards.status,
+            rating: collectionCards.rating,
+            note: collectionCards.note,
+            firstAcquiredAt: collectionCards.firstAcquiredAt,
+            firstAcquiredFromPackId: collectionCards.firstAcquiredFromPackId,
+          })
+          .from(collectionCards)
+          .where(
+            and(
+              eq(collectionCards.userId, user.id),
+              eq(collectionCards.bookId, data.bookId),
+            ),
+          )
+          .limit(1)
+
+        ownership = entry
+          ? {
+              owned: true,
+              quantity: entry.quantity,
+              status: entry.status as ReadStatus,
+              rating: entry.rating ?? null,
+              note: entry.note ?? null,
+              firstAcquiredAt: entry.firstAcquiredAt.getTime(),
+              firstAcquiredFromPackId: entry.firstAcquiredFromPackId ?? null,
+            }
+          : {
+              owned: false,
+              quantity: 0,
+              status: 'unread',
+              rating: null,
+              note: null,
+              firstAcquiredAt: null,
+              firstAcquiredFromPackId: null,
+            }
+      }
+
+      return {
+        book: row,
+        packs: packRows,
+        ownership,
+      }
+    }),
+  )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Write: update the user's collection entry (status / rating / note)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const READ_STATUSES: ReadonlyArray<ReadStatus> = ['unread', 'reading', 'read']
+
+export interface UpdateCollectionCardInput {
+  bookId: string
+  /** Undefined fields are left untouched; explicit null clears the
+   *  rating / note. Missing vs explicit-null matters because a blank
+   *  note field in the UI should clear the stored value, not be
+   *  indistinguishable from "don't change it". */
+  status?: ReadStatus
+  rating?: number | null
+  note?: string | null
+}
+
+export interface UpdateCollectionCardResult {
+  bookId: string
+  status: ReadStatus
+  rating: number | null
+  note: string | null
+}
+
+/**
+ * Patch the user's collection entry for a single book. Owner-only by
+ * construction: the UPDATE's WHERE clause includes `userId`, so a user
+ * can only touch their own rows even if they guessed another user's
+ * bookId. Returns a 0-row update (= error) if the user doesn't own the
+ * book yet — you can't rate a book you haven't pulled.
+ */
+export const updateCollectionCardFn = createServerFn({ method: 'POST' })
+  .inputValidator((raw: unknown): UpdateCollectionCardInput => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('updateCollectionCardFn: input must be an object')
+    }
+    const r = raw as Record<string, unknown>
+    const bookId = r.bookId
+    if (typeof bookId !== 'string' || bookId.length === 0) {
+      throw new Error('updateCollectionCardFn: bookId is required')
+    }
+
+    const out: UpdateCollectionCardInput = { bookId }
+
+    if (r.status !== undefined) {
+      if (
+        typeof r.status !== 'string' ||
+        !(READ_STATUSES as readonly string[]).includes(r.status)
+      ) {
+        throw new Error('updateCollectionCardFn: invalid status')
+      }
+      out.status = r.status as ReadStatus
+    }
+
+    if (r.rating !== undefined) {
+      if (r.rating === null) {
+        out.rating = null
+      } else if (
+        typeof r.rating === 'number' &&
+        Number.isInteger(r.rating) &&
+        r.rating >= 1 &&
+        r.rating <= 5
+      ) {
+        out.rating = r.rating
+      } else {
+        throw new Error('updateCollectionCardFn: rating must be an integer 1..5 or null')
+      }
+    }
+
+    if (r.note !== undefined) {
+      if (r.note === null) {
+        out.note = null
+      } else if (typeof r.note === 'string') {
+        // Cap to a reasonable length so a user can't store novels in
+        // the DB. 2000 chars ≈ a long diary entry and fits a single
+        // text column comfortably.
+        out.note = r.note.slice(0, 2000)
+      } else {
+        throw new Error('updateCollectionCardFn: note must be a string or null')
+      }
+    }
+
+    return out
+  })
+  .handler(
+    withErrorLogging(
+      'updateCollectionCardFn',
+      async ({ data }): Promise<UpdateCollectionCardResult> => {
+        const user = await getSessionUser()
+        if (!user) {
+          throw new Error('updateCollectionCardFn: not authenticated')
+        }
+
+        const database = await getDb()
+
+        // Build the SET clause dynamically so unspecified fields truly
+        // aren't touched. Drizzle requires at least one field; we also
+        // always bump updatedAt so downstream observers can notice.
+        const set: Record<string, unknown> = { updatedAt: sql`now()` }
+        if (data.status !== undefined) set.status = data.status
+        if (data.rating !== undefined) set.rating = data.rating
+        if (data.note !== undefined) set.note = data.note
+
+        // Only status / rating / note and updatedAt matter; if none of
+        // the three were passed, there's nothing to do.
+        if (
+          data.status === undefined &&
+          data.rating === undefined &&
+          data.note === undefined
+        ) {
+          throw new Error('updateCollectionCardFn: no fields to update')
+        }
+
+        const [updated] = await database
+          .update(collectionCards)
+          .set(set)
+          .where(
+            and(
+              eq(collectionCards.userId, user.id),
+              eq(collectionCards.bookId, data.bookId),
+            ),
+          )
+          .returning({
+            bookId: collectionCards.bookId,
+            status: collectionCards.status,
+            rating: collectionCards.rating,
+            note: collectionCards.note,
+          })
+
+        if (!updated) {
+          // The user doesn't own this book. The client-side form only
+          // renders for owners, so this is a defensive check, not a
+          // normal flow.
+          throw new Error('updateCollectionCardFn: book not in your collection')
+        }
+
+        return {
+          bookId: updated.bookId,
+          status: updated.status as ReadStatus,
+          rating: updated.rating ?? null,
+          note: updated.note ?? null,
+        }
+      },
+    ),
+  )
+
