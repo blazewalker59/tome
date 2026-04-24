@@ -13,7 +13,10 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as RipRouteImport } from './routes/rip'
 import { Route as CollectionRouteImport } from './routes/collection'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as RipIndexRouteImport } from './routes/rip.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as RipSlugRouteImport } from './routes/rip.$slug'
+import { Route as BookIdRouteImport } from './routes/book.$id'
 import { Route as AdminIngestRouteImport } from './routes/admin.ingest'
 import { Route as AdminBooksRouteImport } from './routes/admin.books'
 import { Route as AdminPacksIndexRouteImport } from './routes/admin.packs.index'
@@ -39,9 +42,24 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RipIndexRoute = RipIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => RipRoute,
+} as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/admin/',
   path: '/admin/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RipSlugRoute = RipSlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => RipRoute,
+} as any)
+const BookIdRoute = BookIdRouteImport.update({
+  id: '/book/$id',
+  path: '/book/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIngestRoute = AdminIngestRouteImport.update({
@@ -68,22 +86,27 @@ const AdminPacksSlugRoute = AdminPacksSlugRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
-  '/rip': typeof RipRoute
+  '/rip': typeof RipRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/books': typeof AdminBooksRoute
   '/admin/ingest': typeof AdminIngestRoute
+  '/book/$id': typeof BookIdRoute
+  '/rip/$slug': typeof RipSlugRoute
   '/admin/': typeof AdminIndexRoute
+  '/rip/': typeof RipIndexRoute
   '/admin/packs/$slug': typeof AdminPacksSlugRoute
   '/admin/packs/': typeof AdminPacksIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
-  '/rip': typeof RipRoute
   '/sign-in': typeof SignInRoute
   '/admin/books': typeof AdminBooksRoute
   '/admin/ingest': typeof AdminIngestRoute
+  '/book/$id': typeof BookIdRoute
+  '/rip/$slug': typeof RipSlugRoute
   '/admin': typeof AdminIndexRoute
+  '/rip': typeof RipIndexRoute
   '/admin/packs/$slug': typeof AdminPacksSlugRoute
   '/admin/packs': typeof AdminPacksIndexRoute
 }
@@ -91,11 +114,14 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
-  '/rip': typeof RipRoute
+  '/rip': typeof RipRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/books': typeof AdminBooksRoute
   '/admin/ingest': typeof AdminIngestRoute
+  '/book/$id': typeof BookIdRoute
+  '/rip/$slug': typeof RipSlugRoute
   '/admin/': typeof AdminIndexRoute
+  '/rip/': typeof RipIndexRoute
   '/admin/packs/$slug': typeof AdminPacksSlugRoute
   '/admin/packs/': typeof AdminPacksIndexRoute
 }
@@ -108,18 +134,23 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/admin/books'
     | '/admin/ingest'
+    | '/book/$id'
+    | '/rip/$slug'
     | '/admin/'
+    | '/rip/'
     | '/admin/packs/$slug'
     | '/admin/packs/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/collection'
-    | '/rip'
     | '/sign-in'
     | '/admin/books'
     | '/admin/ingest'
+    | '/book/$id'
+    | '/rip/$slug'
     | '/admin'
+    | '/rip'
     | '/admin/packs/$slug'
     | '/admin/packs'
   id:
@@ -130,7 +161,10 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/admin/books'
     | '/admin/ingest'
+    | '/book/$id'
+    | '/rip/$slug'
     | '/admin/'
+    | '/rip/'
     | '/admin/packs/$slug'
     | '/admin/packs/'
   fileRoutesById: FileRoutesById
@@ -138,10 +172,11 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CollectionRoute: typeof CollectionRoute
-  RipRoute: typeof RipRoute
+  RipRoute: typeof RipRouteWithChildren
   SignInRoute: typeof SignInRoute
   AdminBooksRoute: typeof AdminBooksRoute
   AdminIngestRoute: typeof AdminIngestRoute
+  BookIdRoute: typeof BookIdRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminPacksSlugRoute: typeof AdminPacksSlugRoute
   AdminPacksIndexRoute: typeof AdminPacksIndexRoute
@@ -177,11 +212,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/rip/': {
+      id: '/rip/'
+      path: '/'
+      fullPath: '/rip/'
+      preLoaderRoute: typeof RipIndexRouteImport
+      parentRoute: typeof RipRoute
+    }
     '/admin/': {
       id: '/admin/'
       path: '/admin'
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rip/$slug': {
+      id: '/rip/$slug'
+      path: '/$slug'
+      fullPath: '/rip/$slug'
+      preLoaderRoute: typeof RipSlugRouteImport
+      parentRoute: typeof RipRoute
+    }
+    '/book/$id': {
+      id: '/book/$id'
+      path: '/book/$id'
+      fullPath: '/book/$id'
+      preLoaderRoute: typeof BookIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/ingest': {
@@ -215,13 +271,26 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface RipRouteChildren {
+  RipSlugRoute: typeof RipSlugRoute
+  RipIndexRoute: typeof RipIndexRoute
+}
+
+const RipRouteChildren: RipRouteChildren = {
+  RipSlugRoute: RipSlugRoute,
+  RipIndexRoute: RipIndexRoute,
+}
+
+const RipRouteWithChildren = RipRoute._addFileChildren(RipRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CollectionRoute: CollectionRoute,
-  RipRoute: RipRoute,
+  RipRoute: RipRouteWithChildren,
   SignInRoute: SignInRoute,
   AdminBooksRoute: AdminBooksRoute,
   AdminIngestRoute: AdminIngestRoute,
+  BookIdRoute: BookIdRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminPacksSlugRoute: AdminPacksSlugRoute,
   AdminPacksIndexRoute: AdminPacksIndexRoute,

@@ -12,7 +12,7 @@
  */
 
 import { createServerFn } from '@tanstack/react-start'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 
 import { getDb } from '@/db/client'
 import {
@@ -67,6 +67,21 @@ export interface PackPayload {
   books: ReadonlyArray<BookRow>
 }
 
+/**
+ * Lightweight summary row for the pack-picker carousel on /rip.
+ * Omits the book list — the carousel only needs identity + art + a
+ * book count so it can render a cover thumbnail. The full book list is
+ * fetched lazily when the user drills into /rip/$slug.
+ */
+export interface PackSummary {
+  id: string
+  slug: string
+  name: string
+  description: string | null
+  coverImageUrl: string | null
+  bookCount: number
+}
+
 export interface AcquisitionEntry {
   bookId: string
   /** ID of the pack this book was first acquired from, or null if
@@ -82,10 +97,26 @@ export interface AcquisitionEntry {
   acquiredAt: number // epoch ms
 }
 
+export interface RecentPullEntry {
+  bookId: string
+  title: string
+  /** Nullable because `books.cover_url` is nullable (not every imported
+   *  book has art yet). UI renders a rarity-tinted placeholder when
+   *  missing rather than a broken `<img>`. */
+  coverUrl: string | null
+  rarity: string
+  acquiredAt: number
+}
+
 export interface CollectionPayload {
   ownedBookIds: ReadonlyArray<string>
   acquisitions: ReadonlyArray<AcquisitionEntry>
   shardBalance: number
+  /** Newest-first snapshot of the last 5 unique books the user pulled.
+   *  Enough metadata (title + cover + rarity) so the Home "recent rips"
+   *  row can render without an extra query. Kept short — the Home card
+   *  just needs a glance, and more rows would crowd the viewport. */
+  recentPulls: ReadonlyArray<RecentPullEntry>
 }
 
 export interface RecordRipInput {
@@ -117,60 +148,146 @@ export const DEFAULT_PACK_SLUG = 'booker-shortlist-2024'
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Internal: load a pack + its books by slug. Used by both the
+ * default-pack fetcher (home/landing animation) and the slug-param
+ * fetcher (/rip/$slug). Throws if the slug doesn't resolve — callers
+ * can translate that into a 404.
+ */
+async function loadPackBySlug(slug: string): Promise<PackPayload> {
+  const database = await getDb()
+
+  const [pack] = await database
+    .select({
+      id: packs.id,
+      slug: packs.slug,
+      name: packs.name,
+      description: packs.description,
+    })
+    .from(packs)
+    .where(eq(packs.slug, slug))
+    .limit(1)
+
+  if (!pack) {
+    throw new Error(`[server/collection] pack "${slug}" not found.`)
+  }
+
+  const rows = await database
+    .select({
+      id: books.id,
+      title: books.title,
+      authors: books.authors,
+      coverUrl: books.coverUrl,
+      description: books.description,
+      pageCount: books.pageCount,
+      publishedYear: books.publishedYear,
+      genre: books.genre,
+      rarity: books.rarity,
+      moodTags: books.moodTags,
+    })
+    .from(packBooks)
+    .innerJoin(books, eq(packBooks.bookId, books.id))
+    .where(eq(packBooks.packId, pack.id))
+
+  return {
+    packId: pack.id,
+    slug: pack.slug,
+    name: pack.name,
+    description: pack.description,
+    books: rows,
+  }
+}
+
+/**
  * Return the books belonging to the default editorial pack. Public — no auth
  * required so the anonymous landing animation can still roll a visual pack.
  */
 export const getEditorialPackFn = createServerFn({ method: 'GET' }).handler(
   withErrorLogging('getEditorialPackFn', async (): Promise<PackPayload> => {
-    const database = await getDb()
+    return loadPackBySlug(DEFAULT_PACK_SLUG)
+  }),
+)
 
-    const [pack] = await database
+/**
+ * Fetch a specific pack by slug — used by `/rip/$slug` when the user
+ * picks a pack from the carousel. Public so anonymous users can
+ * preview; auth is enforced only when they actually commit a rip.
+ */
+export const getPackBySlugFn = createServerFn({ method: 'GET' })
+  .inputValidator((raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('getPackBySlugFn: expected { slug: string }')
+    }
+    const { slug } = raw as { slug?: unknown }
+    if (typeof slug !== 'string' || slug.length === 0) {
+      throw new Error('getPackBySlugFn: slug must be a non-empty string')
+    }
+    return { slug }
+  })
+  .handler(
+    withErrorLogging('getPackBySlugFn', async ({ data }): Promise<PackPayload> => {
+      return loadPackBySlug(data.slug)
+    }),
+  )
+
+/**
+ * List every editorial pack in the catalog, newest first, with a book
+ * count. Drives the /rip picker carousel. Kept separate from
+ * `getPackBySlugFn` so the carousel doesn't pay the cost of pulling
+ * every book in every pack just to show cover thumbnails. Public.
+ */
+export const getRipPacksFn = createServerFn({ method: 'GET' }).handler(
+  withErrorLogging('getRipPacksFn', async (): Promise<ReadonlyArray<PackSummary>> => {
+    const database = await getDb()
+    const rows = await database
       .select({
         id: packs.id,
         slug: packs.slug,
         name: packs.name,
         description: packs.description,
+        coverImageUrl: packs.coverImageUrl,
+        // Per-pack book count via a correlated aggregate. Avoids a
+        // separate N+1 pass and keeps the payload compact for the
+        // carousel.
+        bookCount: sql<number>`(
+          SELECT COUNT(*)::int
+          FROM ${packBooks}
+          WHERE ${packBooks.packId} = ${packs.id}
+        )`,
       })
       .from(packs)
-      .where(eq(packs.slug, DEFAULT_PACK_SLUG))
-      .limit(1)
+      .where(eq(packs.kind, 'editorial'))
+      .orderBy(desc(packs.createdAt))
 
-    if (!pack) {
-      throw new Error(
-        `[server/collection] pack "${DEFAULT_PACK_SLUG}" not found. Run \`pnpm db:seed\`.`,
-      )
-    }
-
-    const rows = await database
-      .select({
-        id: books.id,
-        title: books.title,
-        authors: books.authors,
-        coverUrl: books.coverUrl,
-        description: books.description,
-        pageCount: books.pageCount,
-        publishedYear: books.publishedYear,
-        genre: books.genre,
-        rarity: books.rarity,
-        moodTags: books.moodTags,
-      })
-      .from(packBooks)
-      .innerJoin(books, eq(packBooks.bookId, books.id))
-      .where(eq(packBooks.packId, pack.id))
-
-    return {
-      packId: pack.id,
-      slug: pack.slug,
-      name: pack.name,
-      description: pack.description,
-      books: rows,
-    }
+    return rows
   }),
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read: user collection
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Lightweight shard-balance read. Lives separately from
+ * `getCollectionFn` so chrome like the header dropdown can fetch just
+ * the number without pulling every owned book. Returns `null` for
+ * anonymous callers so the caller can decide whether to render a
+ * placeholder or skip rendering entirely.
+ */
+export const getShardBalanceFn = createServerFn({ method: 'GET' }).handler(
+  withErrorLogging('getShardBalanceFn', async (): Promise<{ shards: number } | null> => {
+    const user = await getSessionUser()
+    if (!user) return null
+
+    const database = await getDb()
+    const [row] = await database
+      .select({ shards: shardBalances.shards })
+      .from(shardBalances)
+      .where(eq(shardBalances.userId, user.id))
+      .limit(1)
+
+    return { shards: row?.shards ?? 0 }
+  }),
+)
 
 /**
  * Return the signed-in user's collection. Returns `null` for anonymous
@@ -204,6 +321,25 @@ export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
       .where(eq(shardBalances.userId, user.id))
       .limit(1)
 
+    // Recent pulls: 5 newest unique books by first-acquisition time.
+    // Separate query (rather than shaping from `rows`) so we can INNER
+    // JOIN `books` for the card preview metadata and cap server-side
+    // via LIMIT — pulling every row to slice in JS wouldn't scale once
+    // collections grow past a few hundred books.
+    const recentRows = await database
+      .select({
+        bookId: collectionCards.bookId,
+        firstAcquiredAt: collectionCards.firstAcquiredAt,
+        title: books.title,
+        coverUrl: books.coverUrl,
+        rarity: books.rarity,
+      })
+      .from(collectionCards)
+      .innerJoin(books, eq(collectionCards.bookId, books.id))
+      .where(eq(collectionCards.userId, user.id))
+      .orderBy(sql`${collectionCards.firstAcquiredAt} desc`)
+      .limit(5)
+
     return {
       ownedBookIds: rows.map((r) => r.bookId),
       acquisitions: rows.map((r) => ({
@@ -214,6 +350,13 @@ export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
         acquiredAt: r.firstAcquiredAt.getTime(),
       })),
       shardBalance: balance?.shards ?? 0,
+      recentPulls: recentRows.map((r) => ({
+        bookId: r.bookId,
+        title: r.title,
+        coverUrl: r.coverUrl,
+        rarity: r.rarity,
+        acquiredAt: r.firstAcquiredAt.getTime(),
+      })),
     }
   }),
 )
@@ -383,3 +526,275 @@ export const recordRipFn = createServerFn({ method: 'POST' })
       }
     })
   }))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Read: single book detail
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ReadStatus = 'unread' | 'reading' | 'read'
+
+export interface BookDetailPayload {
+  /** Full public book metadata — same shape as `BookRow` with the id. */
+  book: BookRow
+  /** Packs this book appears in, for "Found in" breadcrumbs. Unordered;
+   *  the UI can sort by name if we ever ship many packs per book. */
+  packs: ReadonlyArray<{ id: string; slug: string; name: string }>
+  /** The signed-in user's collection entry for this book, or null when
+   *  anonymous or not-yet-owned. Lets the page show a read CTA for
+   *  owners and a "rip to unlock" state for everyone else. */
+  ownership: {
+    owned: boolean
+    quantity: number
+    status: ReadStatus
+    rating: number | null
+    note: string | null
+    firstAcquiredAt: number | null
+    firstAcquiredFromPackId: string | null
+  } | null
+}
+
+/**
+ * Fetch one book's full detail. Public — anonymous callers get the
+ * book + pack list but `ownership` is always null. This mirrors how
+ * `getEditorialPackFn` is public: the catalog itself is never secret,
+ * only the per-user overlay is.
+ */
+export const getBookFn = createServerFn({ method: 'GET' })
+  .inputValidator((raw: unknown): { bookId: string } => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('getBookFn: input must be an object')
+    }
+    const { bookId } = raw as Record<string, unknown>
+    if (typeof bookId !== 'string' || bookId.length === 0) {
+      throw new Error('getBookFn: bookId is required')
+    }
+    return { bookId }
+  })
+  .handler(
+    withErrorLogging('getBookFn', async ({ data }): Promise<BookDetailPayload | null> => {
+      const database = await getDb()
+
+      const [row] = await database
+        .select({
+          id: books.id,
+          title: books.title,
+          authors: books.authors,
+          coverUrl: books.coverUrl,
+          description: books.description,
+          pageCount: books.pageCount,
+          publishedYear: books.publishedYear,
+          genre: books.genre,
+          rarity: books.rarity,
+          moodTags: books.moodTags,
+        })
+        .from(books)
+        .where(eq(books.id, data.bookId))
+        .limit(1)
+
+      if (!row) return null
+
+      // Pack memberships — used for "Found in: Booker 2024". Safe to
+      // expose publicly since packs themselves are public.
+      const packRows = await database
+        .select({ id: packs.id, slug: packs.slug, name: packs.name })
+        .from(packBooks)
+        .innerJoin(packs, eq(packBooks.packId, packs.id))
+        .where(eq(packBooks.bookId, data.bookId))
+
+      // Owner overlay — only present when signed in AND the row exists.
+      const user = await getSessionUser()
+      let ownership: BookDetailPayload['ownership'] = null
+      if (user) {
+        const [entry] = await database
+          .select({
+            quantity: collectionCards.quantity,
+            status: collectionCards.status,
+            rating: collectionCards.rating,
+            note: collectionCards.note,
+            firstAcquiredAt: collectionCards.firstAcquiredAt,
+            firstAcquiredFromPackId: collectionCards.firstAcquiredFromPackId,
+          })
+          .from(collectionCards)
+          .where(
+            and(
+              eq(collectionCards.userId, user.id),
+              eq(collectionCards.bookId, data.bookId),
+            ),
+          )
+          .limit(1)
+
+        ownership = entry
+          ? {
+              owned: true,
+              quantity: entry.quantity,
+              status: entry.status as ReadStatus,
+              rating: entry.rating ?? null,
+              note: entry.note ?? null,
+              firstAcquiredAt: entry.firstAcquiredAt.getTime(),
+              firstAcquiredFromPackId: entry.firstAcquiredFromPackId ?? null,
+            }
+          : {
+              owned: false,
+              quantity: 0,
+              status: 'unread',
+              rating: null,
+              note: null,
+              firstAcquiredAt: null,
+              firstAcquiredFromPackId: null,
+            }
+      }
+
+      return {
+        book: row,
+        packs: packRows,
+        ownership,
+      }
+    }),
+  )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Write: update the user's collection entry (status / rating / note)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const READ_STATUSES: ReadonlyArray<ReadStatus> = ['unread', 'reading', 'read']
+
+export interface UpdateCollectionCardInput {
+  bookId: string
+  /** Undefined fields are left untouched; explicit null clears the
+   *  rating / note. Missing vs explicit-null matters because a blank
+   *  note field in the UI should clear the stored value, not be
+   *  indistinguishable from "don't change it". */
+  status?: ReadStatus
+  rating?: number | null
+  note?: string | null
+}
+
+export interface UpdateCollectionCardResult {
+  bookId: string
+  status: ReadStatus
+  rating: number | null
+  note: string | null
+}
+
+/**
+ * Patch the user's collection entry for a single book. Owner-only by
+ * construction: the UPDATE's WHERE clause includes `userId`, so a user
+ * can only touch their own rows even if they guessed another user's
+ * bookId. Returns a 0-row update (= error) if the user doesn't own the
+ * book yet — you can't rate a book you haven't pulled.
+ */
+export const updateCollectionCardFn = createServerFn({ method: 'POST' })
+  .inputValidator((raw: unknown): UpdateCollectionCardInput => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('updateCollectionCardFn: input must be an object')
+    }
+    const r = raw as Record<string, unknown>
+    const bookId = r.bookId
+    if (typeof bookId !== 'string' || bookId.length === 0) {
+      throw new Error('updateCollectionCardFn: bookId is required')
+    }
+
+    const out: UpdateCollectionCardInput = { bookId }
+
+    if (r.status !== undefined) {
+      if (
+        typeof r.status !== 'string' ||
+        !(READ_STATUSES as readonly string[]).includes(r.status)
+      ) {
+        throw new Error('updateCollectionCardFn: invalid status')
+      }
+      out.status = r.status as ReadStatus
+    }
+
+    if (r.rating !== undefined) {
+      if (r.rating === null) {
+        out.rating = null
+      } else if (
+        typeof r.rating === 'number' &&
+        Number.isInteger(r.rating) &&
+        r.rating >= 1 &&
+        r.rating <= 5
+      ) {
+        out.rating = r.rating
+      } else {
+        throw new Error('updateCollectionCardFn: rating must be an integer 1..5 or null')
+      }
+    }
+
+    if (r.note !== undefined) {
+      if (r.note === null) {
+        out.note = null
+      } else if (typeof r.note === 'string') {
+        // Cap to a reasonable length so a user can't store novels in
+        // the DB. 2000 chars ≈ a long diary entry and fits a single
+        // text column comfortably.
+        out.note = r.note.slice(0, 2000)
+      } else {
+        throw new Error('updateCollectionCardFn: note must be a string or null')
+      }
+    }
+
+    return out
+  })
+  .handler(
+    withErrorLogging(
+      'updateCollectionCardFn',
+      async ({ data }): Promise<UpdateCollectionCardResult> => {
+        const user = await getSessionUser()
+        if (!user) {
+          throw new Error('updateCollectionCardFn: not authenticated')
+        }
+
+        const database = await getDb()
+
+        // Build the SET clause dynamically so unspecified fields truly
+        // aren't touched. Drizzle requires at least one field; we also
+        // always bump updatedAt so downstream observers can notice.
+        const set: Record<string, unknown> = { updatedAt: sql`now()` }
+        if (data.status !== undefined) set.status = data.status
+        if (data.rating !== undefined) set.rating = data.rating
+        if (data.note !== undefined) set.note = data.note
+
+        // Only status / rating / note and updatedAt matter; if none of
+        // the three were passed, there's nothing to do.
+        if (
+          data.status === undefined &&
+          data.rating === undefined &&
+          data.note === undefined
+        ) {
+          throw new Error('updateCollectionCardFn: no fields to update')
+        }
+
+        const [updated] = await database
+          .update(collectionCards)
+          .set(set)
+          .where(
+            and(
+              eq(collectionCards.userId, user.id),
+              eq(collectionCards.bookId, data.bookId),
+            ),
+          )
+          .returning({
+            bookId: collectionCards.bookId,
+            status: collectionCards.status,
+            rating: collectionCards.rating,
+            note: collectionCards.note,
+          })
+
+        if (!updated) {
+          // The user doesn't own this book. The client-side form only
+          // renders for owners, so this is a defensive check, not a
+          // normal flow.
+          throw new Error('updateCollectionCardFn: book not in your collection')
+        }
+
+        return {
+          bookId: updated.bookId,
+          status: updated.status as ReadStatus,
+          rating: updated.rating ?? null,
+          note: updated.note ?? null,
+        }
+      },
+    ),
+  )
+

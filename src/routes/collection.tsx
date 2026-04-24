@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { ChevronDown } from "lucide-react";
+import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
+import { BookOpen, ChevronDown } from "lucide-react";
 import { Card } from "@/components/cards/Card";
+import { RarityGemRow } from "@/components/RarityGemRow";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import {
   groupCards,
@@ -10,8 +11,7 @@ import {
   type GroupBy,
   type SortMode,
 } from "@/lib/cards/filter";
-import { RARITY_STYLES } from "@/lib/cards/style";
-import type { CardData, Rarity } from "@/lib/cards/types";
+import type { CardData } from "@/lib/cards/types";
 import { getCollectionFn, getEditorialPackFn } from "@/server/collection";
 
 /**
@@ -28,8 +28,66 @@ import { getCollectionFn, getEditorialPackFn } from "@/server/collection";
  * or "just one bucket", and search covers the long-tail case. Keeping
  * the toolbar to three controls (search, sort, view) also matches the
  * available horizontal real estate on a phone without a second row.
+ *
+ * State persistence: `view`, `q` (search), and `sort` are all mirrored
+ * to the URL via TanStack Router's `validateSearch`. None are required
+ * — defaults stay out of the URL so a plain `/collection` link looks
+ * clean. This makes "grouped by rarity" and similar views shareable
+ * (copy the URL) and browser-history friendly (back arrow restores the
+ * prior view).
  */
+
+// Accepted values, declared once so `validateSearch` and the UI stay
+// aligned. The `as const` lets us derive the union type directly.
+const VIEW_VALUES = ["all", "pack", "author", "rarity", "genre"] as const;
+const SORT_VALUES = ["newest", "rarity", "title", "author"] as const;
+
+interface CollectionSearch {
+  /** Grouping pivot. Defaults to `all` and is omitted from the URL
+   *  when at default so `/collection` stays clean. */
+  view?: GroupBy;
+  /** Sort mode. Defaults to `newest`; omitted when at default. */
+  sort?: SortMode;
+  /** Case-insensitive search query. Omitted when empty. We use `q`
+   *  (not `search`) to keep URLs compact and match convention. */
+  q?: string;
+}
+
+/**
+ * Parse + coerce the raw `?...` params into a typed search object.
+ *
+ * Accepts anything, returns only valid values. Unknown strings (e.g. a
+ * stale link pointing at a view we removed) silently degrade to
+ * undefined → the component falls back to its default. This is
+ * intentionally forgiving: strict parsing would turn a shared URL into
+ * a route error if we ever rename an enum value.
+ */
+function parseCollectionSearch(raw: Record<string, unknown>): CollectionSearch {
+  const out: CollectionSearch = {};
+
+  const view = raw.view;
+  if (typeof view === "string" && (VIEW_VALUES as readonly string[]).includes(view)) {
+    out.view = view as GroupBy;
+  }
+
+  const sort = raw.sort;
+  if (typeof sort === "string" && (SORT_VALUES as readonly string[]).includes(sort)) {
+    out.sort = sort as SortMode;
+  }
+
+  const q = raw.q;
+  if (typeof q === "string" && q.trim().length > 0) {
+    // Cap the length — search params round-trip through SSR and we
+    // don't want an attacker to stuff a 100kB string into a URL that
+    // then ends up in server logs.
+    out.q = q.slice(0, 200);
+  }
+
+  return out;
+}
+
 export const Route = createFileRoute("/collection")({
+  validateSearch: parseCollectionSearch,
   loader: async () => {
     const [collection, pack] = await Promise.all([getCollectionFn(), getEditorialPackFn()]);
     if (!collection) {
@@ -39,8 +97,6 @@ export const Route = createFileRoute("/collection")({
   },
   component: CollectionPage,
 });
-
-const ALL_RARITIES: Rarity[] = ["common", "uncommon", "rare", "foil", "legendary"];
 
 const SORT_OPTIONS: Array<{ value: SortMode; label: string }> = [
   { value: "newest", label: "Newest" },
@@ -65,6 +121,47 @@ const AUTO_COLLAPSE_THRESHOLD = 4;
 
 function CollectionPage() {
   const { collection, pack } = Route.useLoaderData();
+  const searchParams = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+
+  // Resolve defaults locally so the render path never has to branch on
+  // "is the param present?". The URL stays minimal because we only
+  // write non-default values back via `updateSearch`.
+  const view: GroupBy = searchParams.view ?? "all";
+  const sortMode: SortMode = searchParams.sort ?? "newest";
+  const search = searchParams.q ?? "";
+
+  /**
+   * Patch the URL search params. Keys set to `undefined` are removed
+   * (TanStack Router's convention). `replace: true` avoids polluting
+   * browser history with every keystroke; the back button should step
+   * between meaningful states, not typed characters. Use `push` only
+   * for the view/sort changes below where a history entry makes sense.
+   */
+  const updateSearch = (
+    patch: Partial<CollectionSearch>,
+    options: { replace?: boolean } = {},
+  ) => {
+    void navigate({
+      search: (prev) => {
+        const next = { ...prev, ...patch };
+        // Strip keys that are at their default value so clean URLs
+        // stay clean. Without this, picking "Newest" and "All" still
+        // leaves ?view=all&sort=newest hanging in the bar.
+        if (next.view === "all") delete next.view;
+        if (next.sort === "newest") delete next.sort;
+        if (!next.q) delete next.q;
+        return next;
+      },
+      replace: options.replace ?? false,
+    });
+  };
+
+  // Local state for the search input so typing feels instant. We only
+  // push to the URL on blur / explicit submit — otherwise every
+  // keystroke would land in history and (on slow networks) trigger a
+  // re-render through the router update cycle.
+  const [searchDraft, setSearchDraft] = useState(search);
 
   // Map the pack's books into CardData once per pack payload, then split into
   // the subset the user owns. We derive from the pack (not the collection's
@@ -96,14 +193,9 @@ function CollectionPage() {
     return m;
   }, [collection.acquisitions]);
 
-  const [search, setSearch] = useState("");
-  const [sortMode, setSortMode] = useState<SortMode>("newest");
-  const [view, setView] = useState<GroupBy>("all");
-
-  // Search filter — simple case-insensitive match on title + authors.
-  // We do it inline rather than go through `filterCards` since the chip
-  // filters are gone; keeping it inline avoids re-introducing the whole
-  // CollectionFilter surface for a one-field check.
+  // Use the URL-synced value (not the draft) for the actual filter so
+  // the displayed grid reflects what the URL says. This keeps paste-a-
+  // URL behaviour correct: the incoming `?q=gaiman` filters immediately.
   const searched = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return ownedCards;
@@ -149,40 +241,69 @@ function CollectionPage() {
   }
 
   return (
-    <main className="page-wrap py-6 sm:py-12">
-      <header className="mb-6 sm:mb-8">
-        <p className="island-kicker">Your library</p>
-        <h1 className="display-title mt-2 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-          Collection
-        </h1>
-        <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
-          <span>
-            <span className="text-[var(--sea-ink)]">{ownedCards.length}</span> /{" "}
-            {totalCards.length} books
-          </span>
-          <span aria-hidden>·</span>
-          <span>
-            Shards <span className="text-[var(--sea-ink)]">{collection.shardBalance}</span>
-          </span>
+    <main className="page-wrap pb-6 pt-4 sm:py-12">
+      <header className="mb-4 flex items-end justify-between gap-4 sm:mb-8">
+        <div className="min-w-0">
+          {/* Single-line header — no eyebrow kicker, since "Your
+              library" above "Collection" repeated the same idea. */}
+          <h1 className="display-title text-2xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+            Collection
+          </h1>
         </div>
+        {/* Stats: only books-owned now. Shards moved to the profile
+            dropdown in the header — they're a per-user wallet, not a
+            collection-page metric, and the header is the natural
+            place for account chrome.
+            Visual weight: the icon's stroke is beefed up (2.5) and
+            sized slightly larger than the numerator so it reads at
+            the same weight as the bold count. The denominator sits
+            at a step smaller so the owned count is the primary
+            figure and `/12` reads as a quiet reference. */}
+        <dl className="flex shrink-0 items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] sm:gap-2.5 sm:text-xs sm:tracking-[0.16em]">
+          <dt className="sr-only">Books owned</dt>
+          <BookOpen
+            aria-hidden
+            className="h-5 w-5 text-[var(--sea-ink)] sm:h-6 sm:w-6"
+          />
+          <dd className="flex items-baseline tabular-nums leading-none">
+            <span className="text-xs font-semibold text-[var(--sea-ink-soft)] sm:text-sm">
+              {ownedCards.length}/
+            </span>
+            <span className="text-xl font-semibold text-[var(--sea-ink)] sm:text-2xl">
+              {totalCards.length}
+            </span>
+          </dd>
+        </dl>
       </header>
 
-      <RarityProgress owned={ownedRarityCounts} total={totalRarityCounts} />
+      <RarityGemRow mode="progress" owned={ownedRarityCounts} total={totalRarityCounts} />
 
       {/* View switcher — the top-level pivot. Sits directly under the
           progress strip and above the toolbar so it reads as a primary
           navigation control, not a filter option. */}
-      <ViewTabs value={view} onChange={setView} />
+      <ViewTabs value={view} onChange={(v) => updateSearch({ view: v })} />
 
       {/* Toolbar — search + sort. Sticky on mobile so the user always has
           it within thumb reach while scrolling. Filters are gone: search
           + view covers the use cases that used to need chips. */}
-      <div className="sticky top-[64px] z-30 -mx-4 mt-4 mb-4 border-y border-[var(--line)] bg-[var(--header-bg)] px-4 py-3 backdrop-blur sm:relative sm:top-auto sm:mx-0 sm:rounded-2xl sm:border sm:border-[var(--line)] sm:bg-[var(--surface)] sm:px-4 sm:py-3">
+      <div className="sticky top-[var(--header-h,64px)] z-30 -mx-4 mt-4 mb-4 border-y border-[var(--line)] bg-[var(--header-bg)] px-4 py-3 backdrop-blur sm:relative sm:top-auto sm:mx-0 sm:rounded-2xl sm:border sm:border-[var(--line)] sm:bg-[var(--surface)] sm:px-4 sm:py-3">
         <div className="flex items-center gap-2">
           <input
             type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchDraft}
+            onChange={(e) => setSearchDraft(e.target.value)}
+            // Commit to URL on blur (tab-away / tap elsewhere) and on
+            // Enter. Both are natural "I'm done typing" signals and
+            // avoid writing to the URL on every keystroke.
+            onBlur={() =>
+              searchDraft !== search &&
+              updateSearch({ q: searchDraft || undefined }, { replace: true })
+            }
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.currentTarget.blur();
+              }
+            }}
             placeholder="Search title or author"
             className="input-field min-h-[44px] flex-1 rounded-full px-4 text-sm"
           />
@@ -190,7 +311,7 @@ function CollectionPage() {
             <span className="hidden sm:inline">Sort</span>
             <select
               value={sortMode}
-              onChange={(e) => setSortMode(e.target.value as SortMode)}
+              onChange={(e) => updateSearch({ sort: e.target.value as SortMode })}
               className="input-field min-h-[44px] rounded-full px-3 text-xs font-semibold"
               aria-label="Sort"
             >
@@ -209,22 +330,18 @@ function CollectionPage() {
           No books match your search.
         </p>
       ) : view === "all" ? (
-        <CardGrid
-          cards={sorted}
-          cardById={cardById}
-          acquisitions={acquisitionMap}
-        />
+        <CardGrid cards={sorted} cardById={cardById} />
       ) : (
-        <GroupedView
-          groups={groups}
-          view={view}
-          cardById={cardById}
-          acquisitions={acquisitionMap}
-        />
+        <GroupedView groups={groups} view={view} cardById={cardById} />
       )}
     </main>
   );
 }
+
+// Exported for tests — the parser is the whole URL→state contract and
+// deserves targeted coverage independent of the rest of the route.
+export { parseCollectionSearch };
+export type { CollectionSearch };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // View switcher
@@ -246,7 +363,7 @@ function ViewTabs({
     <div
       role="tablist"
       aria-label="Collection view"
-      className="view-tabs mt-5 mb-2 flex gap-2 overflow-x-auto"
+      className="view-tabs mt-3 mb-1 flex gap-2 overflow-x-auto sm:mt-5 sm:mb-2"
     >
       {VIEW_OPTIONS.map((o) => {
         const active = value === o.value;
@@ -275,15 +392,10 @@ function GroupedView({
   groups,
   view,
   cardById,
-  acquisitions,
 }: {
   groups: ReadonlyArray<{ key: string; label: string; cards: ReadonlyArray<CardData> }>;
   view: GroupBy;
   cardById: ReadonlyMap<string, CardData>;
-  acquisitions: ReadonlyMap<
-    string,
-    { packId: string | null; packName: string; acquiredAt: number }
-  >;
 }) {
   // Auto-collapse when there are many groups. Tracked per view+group-key
   // so switching views resets cleanly (each view has its own identity
@@ -314,7 +426,6 @@ function GroupedView({
           expanded={isExpanded(g.key)}
           onToggle={() => toggle(g.key)}
           cardById={cardById}
-          acquisitions={acquisitions}
         />
       ))}
     </div>
@@ -326,16 +437,11 @@ function CollapsibleGroup({
   expanded,
   onToggle,
   cardById,
-  acquisitions,
 }: {
   group: { key: string; label: string; cards: ReadonlyArray<CardData> };
   expanded: boolean;
   onToggle: () => void;
   cardById: ReadonlyMap<string, CardData>;
-  acquisitions: ReadonlyMap<
-    string,
-    { packId: string | null; packName: string; acquiredAt: number }
-  >;
 }) {
   // Preview strip — a handful of cover thumbnails shown in the collapsed
   // header so the user has visual recognition without expanding. Capped
@@ -390,7 +496,7 @@ function CollapsibleGroup({
 
       {expanded && (
         <div className="border-t border-[var(--line)] px-3 pb-4 pt-4 sm:px-4">
-          <CardGrid cards={group.cards} cardById={cardById} acquisitions={acquisitions} />
+          <CardGrid cards={group.cards} cardById={cardById} />
         </div>
       )}
     </section>
@@ -404,66 +510,18 @@ function CollapsibleGroup({
 function CardGrid({
   cards,
   cardById,
-  acquisitions,
 }: {
   cards: ReadonlyArray<{ id: string }>;
   cardById: ReadonlyMap<string, CardData>;
-  acquisitions: ReadonlyMap<
-    string,
-    { packId: string | null; packName: string; acquiredAt: number }
-  >;
 }) {
   return (
     <div className="grid grid-cols-2 gap-4 justify-items-center sm:grid-cols-3 sm:gap-6 md:grid-cols-4 lg:grid-cols-5">
       {cards.map((c) => {
         const card = cardById.get(c.id);
         if (!card) return null;
-        const meta = acquisitions.get(c.id);
         return (
           <div key={c.id} className="flex w-full flex-col items-center gap-2">
-            <Card card={card} />
-            {meta && (
-              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-                {meta.packName}
-              </p>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function RarityProgress({
-  owned,
-  total,
-}: {
-  owned: Record<Rarity, number>;
-  total: Record<Rarity, number>;
-}) {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-      {ALL_RARITIES.map((r) => {
-        const o = owned[r];
-        const t = total[r];
-        const pct = t === 0 ? 0 : Math.round((o / t) * 100);
-        const style = RARITY_STYLES[r];
-        return (
-          <div
-            key={r}
-            className={`rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3 backdrop-blur ${style.ring}`}
-          >
-            <p className="island-kicker">{style.label}</p>
-            <p className="mt-1 text-lg font-bold text-[var(--sea-ink)]">
-              {o}
-              <span className="text-sm font-normal text-[var(--sea-ink-soft)]">
-                {" / "}
-                {t}
-              </span>
-            </p>
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--track-bg)]">
-              <div className="h-full bg-[var(--lagoon)]" style={{ width: `${pct}%` }} />
-            </div>
+            <Card card={card} detailHref={`/book/${c.id}`} />
           </div>
         );
       })}
