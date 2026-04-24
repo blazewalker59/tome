@@ -593,12 +593,15 @@ function CardGrid({
     }
     return urls;
   }, [cards, cardById]);
-  // 5s ceiling per the design decision — a single slow/broken CDN
-  // link should never keep the user staring at skeletons indefinitely.
-  // After the timeout we reveal regardless and let the `<img>` tags
-  // fall back to their natural broken-image behavior (Card already
-  // renders a neutral tile when coverUrl is null).
-  const ready = useImagesReady(preloadUrls, 5000);
+  // 15s ceiling. A slow CDN or a cold-cache cover can easily spend
+  // several seconds resolving, and bailing at 5s left real (not
+  // broken) images mid-decode — the grid revealed with frozen half-
+  // painted tiles that never finished. 15s is long enough that
+  // every real load completes; anything still outstanding at that
+  // point is genuinely broken and the `<img>` fallback takes over
+  // (Card already renders a neutral tile when coverUrl is null or
+  // the request errors).
+  const ready = useImagesReady(preloadUrls, 15000);
   return (
     <div className="grid grid-cols-2 gap-4 justify-items-center sm:grid-cols-3 sm:gap-6 md:grid-cols-4 lg:grid-cols-5">
       {cards.map((c, i) => {
