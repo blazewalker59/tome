@@ -46,11 +46,11 @@ function Home() {
         <div className="pointer-events-none absolute -bottom-20 -right-20 h-56 w-56 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--clay)_35%,transparent),transparent_66%)]" />
         <p className="island-kicker mb-3">Tome</p>
         <h1 className="display-title mb-4 max-w-3xl text-3xl leading-[1.05] font-bold tracking-tight text-[var(--sea-ink)] sm:mb-5 sm:text-6xl sm:leading-[1.02]">
-          Rip packs. Collect books. Build decks.
+          Rip packs. Collect books. Build your own.
         </h1>
         <p className="mb-6 max-w-2xl text-sm text-[var(--sea-ink-soft)] sm:mb-8 sm:text-lg">
           Tome turns your reading life into a trading-card collection. Open curated packs, discover
-          books across every genre, and shape decks worth sharing.
+          books across every genre, and craft packs worth sharing.
         </p>
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <Link to="/rip" className="btn-primary rounded-full px-5 text-sm">
@@ -59,6 +59,14 @@ function Home() {
           <Link to="/collection" className="btn-secondary rounded-full px-5 text-sm">
             View collection
           </Link>
+          {/* Only surface the builder for signed-in users — anon
+              visitors can't create a draft without an account, and the
+              primary acquisition path is still "rip a pack first". */}
+          {collection && (
+            <Link to="/packs/new" className="btn-secondary rounded-full px-5 text-sm">
+              Build a pack
+            </Link>
+          )}
         </div>
       </section>
 
@@ -342,7 +350,7 @@ function HowItWorksCard() {
     {
       icon: <Layers aria-hidden className="h-5 w-5" />,
       title: "Build",
-      body: "Group your library by pack, author, or rarity. Deck-building arrives soon.",
+      body: "Curate your own packs from books you love and share them with other readers.",
     },
   ];
 
