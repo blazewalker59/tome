@@ -73,23 +73,19 @@ function Home() {
           <Link to="/rip" className="btn-primary rounded-full px-5 text-sm">
             Rip a pack
           </Link>
-          <Link to="/collection" className="btn-secondary rounded-full px-5 text-sm">
+          <Link to="/library/collection" className="btn-secondary rounded-full px-5 text-sm">
             View collection
           </Link>
-          {/* Only surface the builder for signed-in users — anon
-              visitors can't create a draft without an account, and the
-              primary acquisition path is still "rip a pack first". */}
-          {collection && (
-            <Link to="/packs/new" className="btn-secondary rounded-full px-5 text-sm">
-              Build a pack
-            </Link>
-          )}
-          {/* Reading log also gated on sign-in: every entry lives on a
+          {/* Reading log is gated on sign-in: every entry lives on a
               user account, so an anon CTA would just bounce through
-              sign-in. Placed next to Build a pack so the two creator
-              actions sit together at the end of the hero row. */}
+              sign-in. The pack builder CTA used to sit here too but
+              was removed from the hero — creating packs is a deeper
+              power-user flow that shouldn't compete with the primary
+              Rip / Collect loop on the landing surface. The builder
+              is still reachable via the main nav and /packs routes
+              for users who go looking for it. */}
           {collection && (
-            <Link to="/reading" className="btn-secondary rounded-full px-5 text-sm">
+            <Link to="/library/reading" className="btn-secondary rounded-full px-5 text-sm">
               Log a book
             </Link>
           )}
@@ -164,7 +160,7 @@ function LibraryGlanceCard({
           </h2>
         </div>
         <Link
-          to="/collection"
+          to="/library/collection"
           className="shrink-0 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] underline-offset-4 hover:text-[var(--sea-ink)] hover:underline"
         >
           Open →
@@ -175,7 +171,7 @@ function LibraryGlanceCard({
         label="Now reading"
         entries={reading}
         emptyCta={{
-          href: "/reading",
+          href: "/library/reading",
           copy: "Nothing in progress. Start a book to earn 5 shards.",
           linkText: "Log a book →",
         }}
@@ -185,7 +181,7 @@ function LibraryGlanceCard({
         label="Next up"
         entries={nextUp}
         emptyCta={{
-          href: "/reading",
+          href: "/library/reading",
           copy: "Shelf up to three books you want to read next.",
           linkText: "Add to TBR →",
         }}
@@ -217,7 +213,7 @@ function ReadingStrip({
 }: {
   label: string;
   entries: ReadonlyArray<ReadingEntry>;
-  emptyCta: { href: "/reading"; copy: string; linkText: string };
+  emptyCta: { href: "/library/reading"; copy: string; linkText: string };
 }) {
   return (
     <div className="mt-6 first:mt-0">
@@ -246,15 +242,14 @@ function ReadingStrip({
         // the strip reads as continuous while content stays aligned
         // to the padded gutter on both sides.
         <div className="-mx-5 overflow-x-auto px-5 py-1 sm:-mx-8 sm:px-8">
-          {/* items-stretch + fixed title slot keeps all tiles the
-              same height regardless of title length. Same trick used
-              in RecentPulls. */}
           <ul className="flex items-stretch gap-3 snap-x snap-mandatory">
             {entries.map((e) => (
               <li key={e.bookId} className="shrink-0 snap-start">
                 <Link
                   to="/book/$id"
                   params={{ id: e.bookId }}
+                  aria-label={e.book.title}
+                  title={e.book.title}
                   className="flex h-full w-20 flex-col rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md"
                 >
                   {e.book.coverUrl ? (
@@ -265,16 +260,15 @@ function ReadingStrip({
                       className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
                     />
                   ) : (
+                    // Covers the "no cover art" case. The title
+                    // initial keeps the tile from reading as broken
+                    // now that the explicit title bar is gone; the
+                    // full title is still available via the link's
+                    // title/aria-label for hover + assistive tech.
                     <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
                       {e.book.title.slice(0, 1)}
                     </div>
                   )}
-                  <p
-                    className="mt-1 line-clamp-2 min-h-[2.2em] text-[10px] font-medium leading-tight text-[var(--sea-ink)]"
-                    title={e.book.title}
-                  >
-                    {e.book.title}
-                  </p>
                 </Link>
               </li>
             ))}
@@ -282,7 +276,7 @@ function ReadingStrip({
                 with the same "see the whole list" affordance. */}
             <li className="shrink-0 snap-start">
               <Link
-                to="/reading"
+                to="/library/reading"
                 className="flex h-full w-20 flex-col items-center justify-center rounded-lg border border-dashed border-[var(--line)] p-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
               >
                 View all →
@@ -314,11 +308,6 @@ function RecentPulls({
           rarity rings (up to 4px outside the tile) room to render
           without being clipped by the scroll container. */}
       <div className="-mx-5 overflow-x-auto px-5 py-1 sm:-mx-8 sm:px-8">
-        {/* `items-stretch` makes every tile share the row's tallest
-            height; the title slot reserves two lines' worth of
-            vertical space so a one-liner doesn't collapse the tile
-            below a two-liner's height. Result: a clean, ragged-free
-            row no matter the title lengths. */}
         <ul className="flex items-stretch gap-3 snap-x snap-mandatory">
           {pulls.map((p) => {
             const style = RARITY_STYLES[p.rarity as Rarity];
@@ -327,6 +316,8 @@ function RecentPulls({
                 <Link
                   to="/book/$id"
                   params={{ id: p.bookId }}
+                  aria-label={p.title}
+                  title={p.title}
                   className={`flex h-full w-20 flex-col rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md ${style?.ring ?? ""}`}
                 >
                   {p.coverUrl ? (
@@ -339,21 +330,13 @@ function RecentPulls({
                   ) : (
                     // No cover → keep the footprint so the row stays
                     // aligned. A muted initial is quieter than an
-                    // empty box and hints at the title.
+                    // empty box and hints at the title; the full
+                    // title is still available via hover + a11y
+                    // label on the link itself.
                     <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
                       {p.title.slice(0, 1)}
                     </div>
                   )}
-                  {/* Fixed 2-line title slot. `min-h` plus the
-                      explicit line-height gives us ~2 lines of room;
-                      line-clamp-2 trims anything longer. Keeps every
-                      tile the same height regardless of title length. */}
-                  <p
-                    className="mt-1 line-clamp-2 min-h-[2.2em] text-[10px] font-medium leading-tight text-[var(--sea-ink)]"
-                    title={p.title}
-                  >
-                    {p.title}
-                  </p>
                 </Link>
               </li>
             );
@@ -362,7 +345,7 @@ function RecentPulls({
               has a clean end cap rather than trailing off. */}
           <li className="shrink-0 snap-start">
             <Link
-              to="/collection"
+              to="/library/collection"
               className="flex h-full w-20 flex-col items-center justify-center rounded-lg border border-dashed border-[var(--line)] p-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
             >
               View all →
