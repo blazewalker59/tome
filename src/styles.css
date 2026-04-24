@@ -734,3 +734,52 @@ body {
     transform: translateY(0);
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Route transitions (mobile only)
+   TanStack Router calls `document.startViewTransition()` around every
+   navigation (enabled via `defaultViewTransition: true` on the router).
+   The browser snapshots the old DOM and the new DOM into pseudo-elements
+   (`::view-transition-old/new(root)`) and we animate them. Default
+   browser behavior is a cross-fade; we override with a slide on mobile.
+   Desktop falls through to the cross-fade, which reads as normal web
+   navigation at that width. Respects prefers-reduced-motion via the
+   no-preference guard.
+   --------------------------------------------------------------------------- */
+@media (max-width: 639.98px) and (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root) {
+    animation: route-slide-out-left 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  ::view-transition-new(root) {
+    animation: route-slide-in-right 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+@keyframes route-slide-in-right {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes route-slide-out-left {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-16px);
+    opacity: 0;
+  }
+}
+
+/* Prevent the off-screen starting position from expanding the
+   viewport. Without this, a horizontal transform starting at 16px
+   could trigger a horizontal scrollbar flash during the transition. */
+body {
+  overflow-x: clip;
+}
