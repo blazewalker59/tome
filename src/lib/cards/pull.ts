@@ -7,7 +7,9 @@
  *   would uniformly").
  * - `applyRip` consumes a list of pulls and a set of already-owned book IDs,
  *   classifies each pull as `newCard` or `duplicate`, and tallies shards
- *   earned on the duplicates (per SPEC §5 yields).
+ *   earned on the duplicates. Shard yield is injected by the caller (the
+ *   authoritative value lives in `economy_config` and is flat v1) so the
+ *   UI preview matches what the server will actually credit.
  *
  * Both functions are deterministic given an injected `rng`. No I/O, no DB,
  * no globals — they're meant to be exercised by the server function that
@@ -34,6 +36,9 @@ export interface PullResult {
  * as a common to be selected on any single pull. The pool composition still
  * dominates: a pack with 100 commons and 1 legendary will pull mostly
  * commons.
+ *
+ * CORE_LOOP_PLAN §3 proposes a different distribution (60/25/10/4/1) once
+ * global book rarity is recomputed; that's a separate PR.
  */
 export const PULL_WEIGHTS: Record<Rarity, number> = {
   common: 1,
@@ -41,17 +46,6 @@ export const PULL_WEIGHTS: Record<Rarity, number> = {
   rare: 2.5,
   foil: 4,
   legendary: 8,
-};
-
-/**
- * Shards yielded when a duplicate of a given rarity is rolled. From SPEC §5.
- */
-export const SHARD_YIELDS: Record<Rarity, number> = {
-  common: 1,
-  uncommon: 2,
-  rare: 5,
-  foil: 10,
-  legendary: 25,
 };
 
 export const DEFAULT_PULL_COUNT = 5;
@@ -121,21 +115,30 @@ export interface ApplyRipOptions {
   pulls: ReadonlyArray<PullResult>;
   /** Book IDs already in the user's collection BEFORE this rip. */
   ownedBookIds: ReadonlySet<string>;
+  /**
+   * Flat shards credited per duplicate (from economy_config.dupeRefund).
+   * Passed in by the caller so the client preview stays in lock-step with
+   * the server's authoritative grant. Shape could become per-rarity later
+   * without changing call sites if we switch to a Record<Rarity, number>.
+   */
+  shardsPerDupe: number;
 }
 
-export function applyRip({ pulls, ownedBookIds }: ApplyRipOptions): RipOutcome {
+export function applyRip({
+  pulls,
+  ownedBookIds,
+  shardsPerDupe,
+}: ApplyRipOptions): RipOutcome {
   const newCards: PullResult[] = [];
   const duplicates: PullResult[] = [];
   // Track books gained DURING this rip so a second copy in the same pack
   // collapses to shards too.
   const gainedThisRip = new Set<string>();
-  let shardsEarned = 0;
 
   for (const pull of pulls) {
     const alreadyOwned = ownedBookIds.has(pull.bookId) || gainedThisRip.has(pull.bookId);
     if (alreadyOwned) {
       duplicates.push(pull);
-      shardsEarned += SHARD_YIELDS[pull.rarity];
     } else {
       newCards.push(pull);
       gainedThisRip.add(pull.bookId);
@@ -146,6 +149,6 @@ export function applyRip({ pulls, ownedBookIds }: ApplyRipOptions): RipOutcome {
     pulls: [...pulls],
     newCards,
     duplicates,
-    shardsEarned,
+    shardsEarned: duplicates.length * shardsPerDupe,
   };
 }

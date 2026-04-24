@@ -19,6 +19,8 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { getDb } from "@/db/client";
 import { getEnv } from "@/lib/env";
+import { getEconomy } from "@/lib/economy/config";
+import { grantShards } from "@/lib/economy/ledger";
 import { deriveUsername } from "./username";
 
 async function requireEnv(name: string): Promise<string> {
@@ -114,6 +116,33 @@ export async function getAuth() {
                 avatarUrl: user.image ?? null,
               },
             };
+          },
+          // Runs after the user row has been committed. Idempotent by
+          // design — grantShards writes to the uncapped `welcome_grant`
+          // reason which has no uniqueness guard, so in the exotic case
+          // where Better Auth retried the hook we'd double-grant. Guard
+          // with a read of existing welcome_grant rows? Not yet; the
+          // `create.after` hook is documented as firing exactly once per
+          // successful create and there's no retry path inside Better
+          // Auth that would fire it twice.
+          after: async (user) => {
+            const cfg = await getEconomy();
+            if (cfg.welcomeGrant <= 0) return;
+            // Grants happen on their own mini-transaction since Better
+            // Auth doesn't hand us the user-create transaction. Failure
+            // here MUST NOT roll back the user — log and continue. A
+            // missing welcome grant is recoverable (admin can top them
+            // up); a failed user create because of a grant error is not.
+            try {
+              await db.transaction(async (tx) => {
+                await grantShards(tx, user.id, "welcome_grant", cfg.welcomeGrant);
+              });
+            } catch (err) {
+              console.error("[tome/auth] welcome grant failed", {
+                userId: user.id,
+                cause: (err as Error)?.cause ?? err,
+              });
+            }
           },
         },
       },
