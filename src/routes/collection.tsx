@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
-import { ChevronDown, Gem } from "lucide-react";
+import { BookOpen, ChevronDown, Gem } from "lucide-react";
 import { Card } from "@/components/cards/Card";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import {
@@ -243,22 +243,39 @@ function CollectionPage() {
   }
 
   return (
-    <main className="page-wrap py-6 sm:py-12">
-      <header className="mb-6 sm:mb-8">
-        <p className="island-kicker">Your library</p>
-        <h1 className="display-title mt-2 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
-          Collection
-        </h1>
-        <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
-          <span>
-            <span className="text-[var(--sea-ink)]">{ownedCards.length}</span> /{" "}
-            {totalCards.length} books
-          </span>
-          <span aria-hidden>·</span>
-          <span>
-            Shards <span className="text-[var(--sea-ink)]">{collection.shardBalance}</span>
-          </span>
+    <main className="page-wrap pb-6 pt-4 sm:py-12">
+      <header className="mb-4 flex items-end justify-between gap-4 sm:mb-8">
+        <div className="min-w-0">
+          {/* Single-line header — no eyebrow kicker, since "Your
+              library" above "Collection" repeated the same idea. */}
+          <h1 className="display-title text-2xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+            Collection
+          </h1>
         </div>
+        {/* Stats: only books-owned now. Shards moved to the profile
+            dropdown in the header — they're a per-user wallet, not a
+            collection-page metric, and the header is the natural
+            place for account chrome.
+            Visual weight: the icon's stroke is beefed up (2.5) and
+            sized slightly larger than the numerator so it reads at
+            the same weight as the bold count. The denominator sits
+            at a step smaller so the owned count is the primary
+            figure and `/12` reads as a quiet reference. */}
+        <dl className="flex shrink-0 items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] sm:gap-2.5 sm:text-xs sm:tracking-[0.16em]">
+          <dt className="sr-only">Books owned</dt>
+          <BookOpen
+            aria-hidden
+            className="h-5 w-5 text-[var(--sea-ink)] sm:h-6 sm:w-6"
+          />
+          <dd className="flex items-baseline tabular-nums leading-none">
+            <span className="text-xs font-semibold text-[var(--sea-ink-soft)] sm:text-sm">
+              {ownedCards.length}/
+            </span>
+            <span className="text-xl font-semibold text-[var(--sea-ink)] sm:text-2xl">
+              {totalCards.length}
+            </span>
+          </dd>
+        </dl>
       </header>
 
       <RarityProgress owned={ownedRarityCounts} total={totalRarityCounts} />
@@ -271,7 +288,7 @@ function CollectionPage() {
       {/* Toolbar — search + sort. Sticky on mobile so the user always has
           it within thumb reach while scrolling. Filters are gone: search
           + view covers the use cases that used to need chips. */}
-      <div className="sticky top-[64px] z-30 -mx-4 mt-4 mb-4 border-y border-[var(--line)] bg-[var(--header-bg)] px-4 py-3 backdrop-blur sm:relative sm:top-auto sm:mx-0 sm:rounded-2xl sm:border sm:border-[var(--line)] sm:bg-[var(--surface)] sm:px-4 sm:py-3">
+      <div className="sticky top-[var(--header-h,64px)] z-30 -mx-4 mt-4 mb-4 border-y border-[var(--line)] bg-[var(--header-bg)] px-4 py-3 backdrop-blur sm:relative sm:top-auto sm:mx-0 sm:rounded-2xl sm:border sm:border-[var(--line)] sm:bg-[var(--surface)] sm:px-4 sm:py-3">
         <div className="flex items-center gap-2">
           <input
             type="search"
@@ -348,7 +365,7 @@ function ViewTabs({
     <div
       role="tablist"
       aria-label="Collection view"
-      className="view-tabs mt-5 mb-2 flex gap-2 overflow-x-auto"
+      className="view-tabs mt-3 mb-1 flex gap-2 overflow-x-auto sm:mt-5 sm:mb-2"
     >
       {VIEW_OPTIONS.map((o) => {
         const active = value === o.value;

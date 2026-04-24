@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { LogIn, LogOut, ShieldCheck, User, BookOpen } from "lucide-react";
+import { LogIn, LogOut, ShieldCheck, Sparkles, User, BookOpen } from "lucide-react";
 import ThemeToggle, { ThemeSegmented } from "./ThemeToggle";
 import { signOut, useAuth, useIsAdmin } from "@/lib/auth/hooks";
+import { getShardBalanceFn } from "@/server/collection";
 
 /**
  * Top app bar.
@@ -23,8 +24,35 @@ import { signOut, useAuth, useIsAdmin } from "@/lib/auth/hooks";
  * shell, just with different items inside.
  */
 export default function Header() {
+  // Publish the header's rendered height to CSS as `--header-h` so
+  // sticky elements below (e.g. the collection toolbar) can pin flush
+  // to the header's bottom edge without hardcoding a pixel value.
+  // The header's height varies with safe-area insets and viewport size
+  // (mobile py-2 vs desktop py-4), so a static `top-[64px]` on child
+  // stickies leaves a visible sliver where scrolling cards show
+  // through. ResizeObserver keeps it accurate across rotations and
+  // breakpoint changes.
+  const headerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const sync = () => {
+      document.documentElement.style.setProperty(
+        "--header-h",
+        `${el.offsetHeight}px`,
+      );
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
-    <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--header-bg)] px-4 pt-[env(safe-area-inset-top)] backdrop-blur-lg">
+    <header
+      ref={headerRef}
+      className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--header-bg)] px-4 pt-[env(safe-area-inset-top)] backdrop-blur-lg"
+    >
       <nav className="page-wrap flex items-center gap-3 py-2 sm:py-4">
         <Link
           to="/"
@@ -130,6 +158,26 @@ function AccountMenu({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Shards are fetched lazily the first time the menu opens for an
+  // authed user — they aren't header chrome so there's no reason to
+  // pay for the query on every page load. `null` means "not fetched
+  // yet" so we can distinguish from "fetched and is zero". Cached
+  // across subsequent opens in the same session; a rip will usually
+  // navigate or trigger a re-render that remounts this anyway.
+  const [shards, setShards] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!open || !authed || shards !== null) return;
+    let cancelled = false;
+    void getShardBalanceFn().then((res) => {
+      if (cancelled) return;
+      setShards(res?.shards ?? 0);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, authed, shards]);
+
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
@@ -200,6 +248,19 @@ function AccountMenu({
               {email && email !== label && (
                 <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">{email}</p>
               )}
+              {/* Shards live in the profile block: they're a per-user
+                  stat, not navigation, and the block already has the
+                  right visual weight for a compact stat line. The
+                  number fades in once the lazy fetch resolves — a
+                  dash placeholder avoids the "0 → real value" flash
+                  for users with any balance. */}
+              <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-[var(--sea-ink-soft)]">
+                <Sparkles aria-hidden className="h-3.5 w-3.5 text-[var(--lagoon)]" />
+                <span className="tabular-nums text-[var(--sea-ink)]">
+                  {shards === null ? "—" : shards}
+                </span>
+                <span>shards</span>
+              </p>
             </div>
           )}
 

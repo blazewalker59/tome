@@ -189,6 +189,29 @@ export const getEditorialPackFn = createServerFn({ method: 'GET' }).handler(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Lightweight shard-balance read. Lives separately from
+ * `getCollectionFn` so chrome like the header dropdown can fetch just
+ * the number without pulling every owned book. Returns `null` for
+ * anonymous callers so the caller can decide whether to render a
+ * placeholder or skip rendering entirely.
+ */
+export const getShardBalanceFn = createServerFn({ method: 'GET' }).handler(
+  withErrorLogging('getShardBalanceFn', async (): Promise<{ shards: number } | null> => {
+    const user = await getSessionUser()
+    if (!user) return null
+
+    const database = await getDb()
+    const [row] = await database
+      .select({ shards: shardBalances.shards })
+      .from(shardBalances)
+      .where(eq(shardBalances.userId, user.id))
+      .limit(1)
+
+    return { shards: row?.shards ?? 0 }
+  }),
+)
+
+/**
  * Return the signed-in user's collection. Returns `null` for anonymous
  * callers so the UI can render a sign-in prompt instead of an empty state.
  */
