@@ -188,9 +188,9 @@ function makeDb(priorCreatedAt: Date | null) {
 }
 
 describe("shouldGrantFinish", () => {
-  it("grants when no prior start_reading event exists (retroactive log)", async () => {
+  it("suppresses when no prior start_reading event exists (retroactive log — user is shelving a book they already read, no shards)", async () => {
     const db = makeDb(null);
-    await expect(shouldGrantFinish(db, "u1", "b1")).resolves.toBe(true);
+    await expect(shouldGrantFinish(db, "u1", "b1")).resolves.toBe(false);
   });
 
   it("grants when the start event is exactly FINISH_GUARD_MS old (boundary: inclusive)", async () => {

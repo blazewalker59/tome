@@ -159,11 +159,16 @@ export function computeReadingTimestamps(
  * stamp `finishedAt` and skip the ledger insert.
  *
  * Policy:
- *   • No prior start_reading event → grant (retroactive log case: the
- *     user is telling us about a book they finished before they ever
- *     marked it reading).
- *   • Prior start_reading event ≥ FINISH_GUARD_MS old → grant.
+ *   • No prior start_reading event → suppress. This is the "I'm logging
+ *     a book I already read" path: the user should be able to shelve it
+ *     as finished for their records, but they haven't demonstrated any
+ *     reading activity inside the system, so no shards are minted.
+ *     Without this rule the one-tap farm is trivial — search, tap
+ *     Finished, collect 100 shards, repeat.
+ *   • Prior start_reading event ≥ FINISH_GUARD_MS old → grant. The
+ *     honest "started last night, finished this afternoon" case.
  *   • Prior start_reading event < FINISH_GUARD_MS old → suppress.
+ *     Same farm shape, just with an extra start→finish tap.
  *
  * The once-per-book DB index still blocks repeat finish grants even if
  * this check is bypassed, so this layer is about pacing rather than
@@ -190,7 +195,10 @@ export async function shouldGrantFinish(
     .orderBy(desc(shardEvents.createdAt))
     .limit(1);
 
-  if (!prior) return true;
+  // Flip from the old "no prior = grant" rule to "no prior = suppress".
+  // A finish with no preceding start is a retroactive log and shouldn't
+  // earn shards; the entry still writes so the user can track it.
+  if (!prior) return false;
   return Date.now() - prior.createdAt.getTime() >= FINISH_GUARD_MS;
 }
 
@@ -522,10 +530,18 @@ export const upsertReadingEntryFn = createServerFn({ method: "POST" })
             // grants for this (user, book). Letting the row stay
             // un-inserted preserves the once-per-book invariant: a
             // legitimate finish later still qualifies.
+            //
+            // Use the transaction handle for this read, NOT the outer
+            // `database`. Our Neon pool runs with `max: 1`, so any
+            // query on the outer connection while the transaction is
+            // open will wait forever for the pool's single socket to
+            // free up — the exact hang we saw when users tapped
+            // Finished. The read is a plain SELECT on `shard_events`
+            // (different table than the one being written), so the
+            // transaction's snapshot gives us a consistent view
+            // without any lock contention.
             const allowed = await shouldGrantFinish(
-              // Read uses the outer connection to avoid locking within
-              // the transaction on rows we only query.
-              database,
+              tx,
               user.id,
               data.bookId,
             );
