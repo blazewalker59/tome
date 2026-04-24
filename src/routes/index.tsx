@@ -420,12 +420,14 @@ function StarterPacksCard({ packs }: { packs: ReadonlyArray<PackSummary> }) {
         </Link>
       </div>
 
-      {/* Horizontal scroll on narrow screens; 5-up grid on sm+ so the
-          whole strip is visible without swiping on a laptop. The
-          negative-margin + padding trick lets the scroll area bleed
-          to the card edges without widening the island-shell. */}
-      <div className="mt-5 -mx-5 sm:mx-0">
-        <ul className="flex gap-3 overflow-x-auto px-5 pb-1 snap-x snap-mandatory sm:grid sm:grid-cols-5 sm:gap-4 sm:overflow-visible sm:px-0">
+      {/* 5-up grid on sm+, horizontal snap-scroll on narrow screens.
+          The scroll area stays inside the card's padding — bleeding
+          to the card edges made the tiles look unpadded against
+          the island border. A touch of extra end-padding on the
+          scroller preserves the "there's more" affordance on phones
+          without sacrificing the inset. */}
+      <div className="mt-5">
+        <ul className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory sm:grid sm:grid-cols-5 sm:gap-4 sm:overflow-visible">
           {packs.map((pack) => (
             <li key={pack.id} className="snap-start shrink-0 w-[44%] sm:w-auto">
               <StarterPackTile pack={pack} />
