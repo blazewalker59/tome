@@ -72,11 +72,11 @@ export default function Header() {
             Rip
           </Link>
           <Link
-            to="/collection"
+            to="/library/collection"
             className="nav-link"
             activeProps={{ className: "nav-link is-active" }}
           >
-            Collection
+            Library
           </Link>
         </div>
 
@@ -288,17 +288,11 @@ function AccountMenu({
             </Link>
           )}
 
-          {authed && (
-            <Link
-              to="/reading"
-              role="menuitem"
-              onClick={() => setOpen(false)}
-              className="flex items-center gap-2 border-b border-[var(--line)] px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] no-underline hover:bg-[var(--link-bg-hover)]"
-            >
-              <BookOpen aria-hidden className="h-4 w-4 text-[var(--lagoon)]" />
-              <span>Reading list</span>
-            </Link>
-          )}
+          {/* "Reading list" used to live here as its own dropdown
+              shortcut; the reading log is now a tab inside /library
+              reachable from the main-nav "Library" link, so a
+              dedicated dropdown entry duplicates the discovery and
+              is omitted. */}
 
           <div className="border-b border-[var(--line)] px-4 py-3">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">

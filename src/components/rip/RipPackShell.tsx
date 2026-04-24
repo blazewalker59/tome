@@ -308,7 +308,7 @@ function InsufficientShardsState({
 
           <div className="mt-6 flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
             <Link
-              to="/collection"
+              to="/library/collection"
               className="btn-primary w-full rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
             >
               <BookOpen aria-hidden className="mr-1.5 inline-block h-4 w-4" />
