@@ -498,7 +498,7 @@ function BookSearchPanel({
             </h3>
             <span
               aria-hidden
-              className={`text-xs text-[var(--sea-ink-soft)] transition-transform ${hardcoverExpanded ? "rotate-90" : ""}`}
+              className={`text-base leading-none text-[var(--sea-ink)] transition-transform ${hardcoverExpanded ? "rotate-90" : ""}`}
             >
               ▸
             </span>
