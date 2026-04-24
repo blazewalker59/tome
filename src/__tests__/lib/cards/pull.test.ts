@@ -4,9 +4,16 @@ import {
   DEFAULT_PULL_COUNT,
   PULL_WEIGHTS,
   pullPack,
-  SHARD_YIELDS,
   type PoolEntry,
 } from "@/lib/cards/pull";
+
+/**
+ * Flat per-dupe refund used across tests. Matches the default in
+ * `DEFAULTS.dupeRefund.shardsPerDupe` (CORE_LOOP_PLAN §1), but any
+ * positive number would work — these tests only care that the
+ * arithmetic `duplicates.length * shardsPerDupe` is respected.
+ */
+const SHARDS_PER_DUPE = 5;
 
 /**
  * Tiny seeded RNG (mulberry32). We don't care about cryptographic quality —
@@ -129,13 +136,17 @@ describe("applyRip", () => {
       { bookId: "b1", rarity: "common" as const },
       { bookId: "b2", rarity: "rare" as const },
     ];
-    const result = applyRip({ pulls, ownedBookIds: new Set() });
+    const result = applyRip({
+      pulls,
+      ownedBookIds: new Set(),
+      shardsPerDupe: SHARDS_PER_DUPE,
+    });
     expect(result.newCards).toEqual(pulls);
     expect(result.duplicates).toEqual([]);
     expect(result.shardsEarned).toBe(0);
   });
 
-  it("treats every pull as a duplicate when all are already owned, awarding shards by rarity", () => {
+  it("treats every pull as a duplicate when all are already owned, awarding a flat per-dupe refund", () => {
     const pulls = [
       { bookId: "b1", rarity: "common" as const },
       { bookId: "b2", rarity: "uncommon" as const },
@@ -144,17 +155,17 @@ describe("applyRip", () => {
       { bookId: "b5", rarity: "legendary" as const },
     ];
     const owned = new Set(pulls.map((p) => p.bookId));
-    const result = applyRip({ pulls, ownedBookIds: owned });
+    const result = applyRip({
+      pulls,
+      ownedBookIds: owned,
+      shardsPerDupe: SHARDS_PER_DUPE,
+    });
 
     expect(result.newCards).toEqual([]);
     expect(result.duplicates).toEqual(pulls);
-    expect(result.shardsEarned).toBe(
-      SHARD_YIELDS.common +
-        SHARD_YIELDS.uncommon +
-        SHARD_YIELDS.rare +
-        SHARD_YIELDS.foil +
-        SHARD_YIELDS.legendary,
-    );
+    // Flat refund per dupe — rarity doesn't affect the payout in v1
+    // (CORE_LOOP_PLAN §1). Per-rarity tuning is a later change.
+    expect(result.shardsEarned).toBe(pulls.length * SHARDS_PER_DUPE);
   });
 
   it("handles a mix of new and duplicate pulls", () => {
@@ -166,6 +177,7 @@ describe("applyRip", () => {
     const result = applyRip({
       pulls,
       ownedBookIds: new Set(["owned-1", "owned-2"]),
+      shardsPerDupe: SHARDS_PER_DUPE,
     });
 
     expect(result.newCards).toEqual([{ bookId: "new-1", rarity: "common" }]);
@@ -173,7 +185,7 @@ describe("applyRip", () => {
       { bookId: "owned-1", rarity: "rare" },
       { bookId: "owned-2", rarity: "legendary" },
     ]);
-    expect(result.shardsEarned).toBe(SHARD_YIELDS.rare + SHARD_YIELDS.legendary);
+    expect(result.shardsEarned).toBe(2 * SHARDS_PER_DUPE);
   });
 
   it("collapses a second copy of the same book pulled in the same rip into shards", () => {
@@ -182,12 +194,39 @@ describe("applyRip", () => {
       { bookId: "x", rarity: "foil" as const },
       { bookId: "x", rarity: "foil" as const },
     ];
-    const result = applyRip({ pulls, ownedBookIds: new Set() });
+    const result = applyRip({
+      pulls,
+      ownedBookIds: new Set(),
+      shardsPerDupe: SHARDS_PER_DUPE,
+    });
 
     // First copy is new; copies 2 and 3 are dupes-in-pack.
     expect(result.newCards).toEqual([{ bookId: "x", rarity: "foil" }]);
     expect(result.duplicates).toHaveLength(2);
-    expect(result.shardsEarned).toBe(SHARD_YIELDS.foil * 2);
+    expect(result.shardsEarned).toBe(2 * SHARDS_PER_DUPE);
+  });
+
+  it("scales linearly with shardsPerDupe", () => {
+    const pulls = [
+      { bookId: "a", rarity: "common" as const },
+      { bookId: "b", rarity: "common" as const },
+    ];
+    const owned = new Set(["a", "b"]);
+    const at5 = applyRip({ pulls, ownedBookIds: owned, shardsPerDupe: 5 });
+    const at10 = applyRip({ pulls, ownedBookIds: owned, shardsPerDupe: 10 });
+    expect(at5.shardsEarned).toBe(10);
+    expect(at10.shardsEarned).toBe(20);
+  });
+
+  it("awards zero shards when shardsPerDupe is zero", () => {
+    const pulls = [{ bookId: "a", rarity: "legendary" as const }];
+    const result = applyRip({
+      pulls,
+      ownedBookIds: new Set(["a"]),
+      shardsPerDupe: 0,
+    });
+    expect(result.duplicates).toHaveLength(1);
+    expect(result.shardsEarned).toBe(0);
   });
 
   it("preserves the original pulls in order", () => {
@@ -195,7 +234,11 @@ describe("applyRip", () => {
       { bookId: "a", rarity: "common" as const },
       { bookId: "b", rarity: "rare" as const },
     ];
-    const result = applyRip({ pulls, ownedBookIds: new Set(["b"]) });
+    const result = applyRip({
+      pulls,
+      ownedBookIds: new Set(["b"]),
+      shardsPerDupe: SHARDS_PER_DUPE,
+    });
     expect(result.pulls).toEqual(pulls);
     // Must be a copy, not the same reference (defensive).
     expect(result.pulls).not.toBe(pulls);

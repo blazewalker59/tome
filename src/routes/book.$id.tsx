@@ -8,6 +8,7 @@ import {
 import { BookOpen, Check, Star } from "lucide-react";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import { Card } from "@/components/cards/Card";
+import { useToast } from "@/components/Toast";
 import { RARITY_STYLES, formatGenre } from "@/lib/cards/style";
 import {
   getBookFn,
@@ -203,6 +204,7 @@ const STATUS_OPTIONS: Array<{ value: ReadStatus; label: string }> = [
 function OwnerPanel({ detail }: { detail: BookDetailPayload }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
+  const toast = useToast();
   const own = detail.ownership!;
 
   const [status, setStatus] = useState<ReadStatus>(own.status);
@@ -227,10 +229,33 @@ function OwnerPanel({ detail }: { detail: BookDetailPayload }) {
   ) => {
     setError(null);
     try {
-      await updateCollectionCardFn({
+      const res = await updateCollectionCardFn({
         data: { bookId: detail.book.id, ...patch },
       });
       setSavedAt(Date.now());
+
+      // Surface any shard grants the server applied as a toast.
+      // Server returns `grants: []` when a change didn't qualify
+      // (cap hit, already granted historically, non-status change),
+      // so this naturally no-ops when there's nothing to celebrate.
+      for (const g of res.grants) {
+        if (g.reason === "start_reading") {
+          toast.push({
+            title: "Started reading",
+            description: "Finish the book for a bigger payout.",
+            tone: "shard",
+            amount: g.amount,
+          });
+        } else if (g.reason === "finish_reading") {
+          toast.push({
+            title: "Book finished",
+            description: "Nice work — enough to rip a fresh pack.",
+            tone: "shard",
+            amount: g.amount,
+          });
+        }
+      }
+
       // Re-run the loader so any SSR cache + other tabs stay in sync.
       // Wrapped in startTransition so the save indicator doesn't
       // flicker when React suspends on the refetch.

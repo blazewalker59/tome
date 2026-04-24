@@ -12,6 +12,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -336,9 +337,83 @@ export const packRips = pgTable(
   (t) => [index("pack_rips_user_idx").on(t.userId, t.rippedAt)],
 );
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Shard ledger + economy config
+//
+// Every shard change — welcome grants, reading-transition rewards, pack
+// purchases, dupe refunds — is a row in `shard_events`. Balance and cap
+// windows are derived from the ledger:
+//
+//   balance   = SUM(delta) WHERE user_id = $1
+//   daily cap = COUNT(*)  WHERE user_id = $1 AND reason = $2
+//                                AND created_at > now() - interval '1 day'
+//
+// `shard_balances` survives as a write-through cache so the Header can
+// read balance in one indexed row without a reduction. Every write to
+// the ledger bumps the cache inside the same transaction; the cache
+// is always reconstructible from the ledger if it drifts.
+//
+// The partial unique index on (user_id, reason, ref_book_id) enforces
+// "each book earns each transition at most once, ever" at the database
+// level. Un-reading and re-starting the same book cannot double-grant
+// because the insert will conflict. Dupe refunds and rip debits share
+// the table but skip this constraint (different reasons).
+// ──────────────────────────────────────────────────────────────────────────────
+
+export const shardEvents = pgTable(
+  "shard_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /**
+     * Signed integer. Positive for grants, negative for pack purchases.
+     * Summed across a user to derive balance.
+     */
+    delta: integer("delta").notNull(),
+    /**
+     * String enum (kept as `text` rather than a pgEnum so we can add new
+     * reasons without a migration). App-layer validation keeps this tight.
+     * Current reasons: welcome_grant, start_reading, finish_reading,
+     * dupe_refund, rip.
+     */
+    reason: text("reason").notNull(),
+    /**
+     * Optional references to what triggered the event. start/finish grants
+     * point at a book; rip debits + dupe refunds point at a pack and/or a
+     * specific rip row. Nullable because not every reason ties back to a
+     * specific row (welcome_grant, future manual adjustments).
+     */
+    refBookId: uuid("ref_book_id").references(() => books.id, {
+      onDelete: "set null",
+    }),
+    refPackId: uuid("ref_pack_id").references(() => packs.id, {
+      onDelete: "set null",
+    }),
+    refRipId: uuid("ref_rip_id").references(() => packRips.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Cap-window queries scan by (user, reason, time). This covers
+    // them and the balance sum (which needs only `user_id`).
+    index("shard_events_user_reason_created_idx").on(t.userId, t.reason, t.createdAt),
+    // Enforces once-ever-per-book for the two reasons that need it.
+    // Partial index so rip debits / dupe refunds (same book, many times)
+    // don't conflict.
+    uniqueIndex("shard_events_once_per_book_uq")
+      .on(t.userId, t.reason, t.refBookId)
+      .where(sql`reason in ('start_reading', 'finish_reading')`),
+  ],
+);
+
 /**
- * Running balance per user. We could derive this from `pack_rips` but a
- * cached counter is cheaper at read time and fine for a single-shard MVP.
+ * Running balance cache — one row per user. Derived state: updated
+ * inside the same transaction as every ledger insert. If this ever
+ * drifts from the ledger, the ledger wins and the cache can be rebuilt
+ * via `SELECT user_id, SUM(delta) FROM shard_events GROUP BY user_id`.
  */
 export const shardBalances = pgTable("shard_balances", {
   userId: uuid("user_id")
@@ -348,24 +423,21 @@ export const shardBalances = pgTable("shard_balances", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Pack credits (daily + earned bonuses)
-// ──────────────────────────────────────────────────────────────────────────────
-
-export const packCredits = pgTable("pack_credits", {
-  userId: uuid("user_id")
-    .primaryKey()
-    .references(() => users.id, { onDelete: "cascade" }),
-  /** Free packs available right now (capped in app layer, e.g. max 5). */
-  available: integer("available").notNull().default(0),
-  /** Used to enforce daily-pack timer. */
-  lastDailyGrantedAt: timestamp("last_daily_granted_at", {
-    withTimezone: true,
-  }),
-  /** Idempotency for read-bonus grants. */
-  bonusesGrantedToday: integer("bonuses_granted_today").notNull().default(0),
-  bonusesDay: text("bonuses_day"), // ISO date "YYYY-MM-DD" in user TZ
-  hasOnboarded: boolean("has_onboarded").notNull().default(false),
+/**
+ * Key/value singleton for tunable economy numbers — shard yields, caps,
+ * pack cost, welcome grant, etc. One row per logical config bundle
+ * (currently only `'current'`). Value is a JSON blob shaped by
+ * `EconomyConfig` in `src/lib/economy/config.ts`.
+ *
+ * We read through a per-isolate cache rather than hitting this table
+ * on every server-fn call — config is read hundreds of times more
+ * often than it's written. When we add an admin UI for editing it,
+ * the cache is invalidated by bumping `updatedAt`.
+ */
+export const economyConfig = pgTable("economy_config", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -382,10 +454,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
     fields: [users.id],
     references: [shardBalances.userId],
   }),
-  packCredit: one(packCredits, {
-    fields: [users.id],
-    references: [packCredits.userId],
-  }),
+  shardEvents: many(shardEvents),
 }));
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({
@@ -481,4 +550,11 @@ export const followsRelations = relations(follows, ({ one }) => ({
     references: [users.id],
     relationName: "followee",
   }),
+}));
+
+export const shardEventsRelations = relations(shardEvents, ({ one }) => ({
+  user: one(users, { fields: [shardEvents.userId], references: [users.id] }),
+  book: one(books, { fields: [shardEvents.refBookId], references: [books.id] }),
+  pack: one(packs, { fields: [shardEvents.refPackId], references: [packs.id] }),
+  rip: one(packRips, { fields: [shardEvents.refRipId], references: [packRips.id] }),
 }));

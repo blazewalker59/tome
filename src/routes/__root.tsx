@@ -4,6 +4,7 @@ import { TanStackDevtools } from "@tanstack/react-devtools";
 import BottomTabs from "../components/BottomTabs";
 import Footer from "../components/Footer";
 import Header from "../components/Header";
+import { ToastProvider } from "../components/Toast";
 
 import appCss from "../styles.css?url";
 
@@ -128,10 +129,12 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="font-sans antialiased [overflow-wrap:anywhere] selection:bg-[color:var(--lagoon)]/30">
-        <Header />
-        {children}
-        <Footer />
-        <BottomTabs />
+        <ToastProvider>
+          <Header />
+          {children}
+          <Footer />
+          <BottomTabs />
+        </ToastProvider>
         <TanStackDevtools
           config={{
             position: "bottom-right",

@@ -24,7 +24,8 @@ import {
   shardBalances,
 } from '@/db/schema'
 import { getSessionUser } from '@/lib/auth/session'
-import { SHARD_YIELDS } from '@/lib/cards/pull'
+import { getEconomy } from '@/lib/economy/config'
+import { grantShards, spendShards } from '@/lib/economy/ledger'
 import type { BookRow } from '@/lib/cards/book-to-card'
 
 /**
@@ -129,14 +130,32 @@ export interface RecordRipResult {
   newBookIds: ReadonlyArray<string>
   /** Book IDs already in the collection — converted to shards. */
   duplicateBookIds: ReadonlyArray<string>
+  /**
+   * Total shards credited by this rip — sum of dupe refunds only.
+   * Does NOT include the pack cost debit (which reduces balance).
+   * UI can compute net change as `shardsAwarded - packCost` if it
+   * wants to show "-25 net" on a bad rip.
+   */
   shardsAwarded: number
+  /** Shards deducted for the rip itself. */
+  packCost: number
+  /** User's balance after the entire rip (debit + refunds). */
   newShardBalance: number
 }
 
-// Shard economy lives server-side so we can evolve it without a client
-// redeploy. The canonical yield table is `SHARD_YIELDS` in `lib/cards/pull`
-// (shared with the client so the post-rip animation can preview the award).
-const SHARD_VALUE_BY_RARITY: Record<string, number> = SHARD_YIELDS
+/**
+ * Thrown by `recordRipFn` when the user can't afford the pack cost.
+ * The client checks `err.message.startsWith('INSUFFICIENT_SHARDS:')`
+ * to render a "need N more shards" state instead of a generic error.
+ * Kept as a string-prefix convention rather than a discriminated
+ * union result so existing callers don't have to change their
+ * throw/catch shape.
+ */
+export const INSUFFICIENT_SHARDS_PREFIX = 'INSUFFICIENT_SHARDS:'
+
+// Shard payout is derived from the economy config (CORE_LOOP_PLAN §1).
+// Flat per-dupe in v1; the config shape allows per-rarity overrides
+// later without touching this file.
 
 // Hard-coded for now — the editorial pack is the only pack that exists. When
 // packs become data-driven (deck packs, themed drops) we'll thread the slug
@@ -404,10 +423,16 @@ export const recordRipFn = createServerFn({ method: 'POST' })
     const database = await getDb()
     const { packId, pulledBookIds } = data
 
+    const cfg = await getEconomy()
+    const packCost = cfg.packCost
+    const perDupe = cfg.dupeRefund.shardsPerDupe
+
     return await database.transaction(async (tx) => {
-      // 1. Load the rarity for each pulled book so we can compute shards.
-      //    Also serves as a validity check — referring to a book that doesn't
-      //    exist errors here instead of failing the collection insert later.
+      // 1. Charge the pack cost first. If the user can't afford it we
+      //    bail before touching anything else — no collection insert,
+      //    no audit row, no dupe refunds. `spendShards` row-locks the
+      //    balance so two concurrent rips can't both drain the account
+      //    below zero.
       //
       //    Note: we used to defensively upsert a `users` row here to cover
       //    the case where the Supabase-era `handle_new_user` trigger hadn't
@@ -415,19 +440,28 @@ export const recordRipFn = createServerFn({ method: 'POST' })
       //    `databaseHooks.user.create.before` (see `src/lib/auth/server.ts`)
       //    runs synchronously inside the OAuth callback and guarantees the
       //    `users` row exists before any server fn can be called.
+      const debit = await spendShards(tx, user.id, packCost, { packId })
+      if (!debit.applied) {
+        throw new Error(
+          `${INSUFFICIENT_SHARDS_PREFIX}have=${debit.newBalance} need=${packCost}`,
+        )
+      }
+
+      // 2. Validate each pulled id exists. Failing here rolls back the
+      //    debit cleanly via the surrounding transaction.
       const bookRows = await tx
-        .select({ id: books.id, rarity: books.rarity })
+        .select({ id: books.id })
         .from(books)
         .where(inArray(books.id, pulledBookIds as string[]))
 
-      const rarityById = new Map(bookRows.map((b) => [b.id, b.rarity]))
+      const knownIds = new Set(bookRows.map((b) => b.id))
       for (const id of pulledBookIds) {
-        if (!rarityById.has(id)) {
+        if (!knownIds.has(id)) {
           throw new Error(`recordRip: unknown book id ${id}`)
         }
       }
 
-      // 2. Find which of the pulled books the user already owns.
+      // 3. Find which of the pulled books the user already owns.
       const existing = await tx
         .select({ bookId: collectionCards.bookId })
         .from(collectionCards)
@@ -452,12 +486,6 @@ export const recordRipFn = createServerFn({ method: 'POST' })
       const duplicateBookIds = pulledBookIds.filter(
         (id, idx) => ownedSet.has(id) || newBookIds.indexOf(id) !== idx,
       )
-
-      // 3. Shard payout: every duplicate pays out its rarity value.
-      let shardsAwarded = 0
-      for (const id of duplicateBookIds) {
-        shardsAwarded += SHARD_VALUE_BY_RARITY[rarityById.get(id)!] ?? 0
-      }
 
       // 4. Insert fresh collection rows. ON CONFLICT handles the
       //    theoretical race where a concurrent rip inserts the same row.
@@ -495,34 +523,56 @@ export const recordRipFn = createServerFn({ method: 'POST' })
           )
       }
 
-      // 6. Shard balance — upsert row, add shards.
-      const [newBalance] = await tx
-        .insert(shardBalances)
-        .values({ userId: user.id, shards: shardsAwarded })
-        .onConflictDoUpdate({
-          target: shardBalances.userId,
-          set: {
-            shards: sql`${shardBalances.shards} + ${shardsAwarded}`,
-            updatedAt: sql`now()`,
-          },
+      // 6. Insert the audit row first so the dupe refunds can reference
+      //    it. `duplicates` stores the COUNT of dupes, not the ids.
+      //    `shardsAwarded` is filled in after the refunds; initial 0
+      //    is replaced below.
+      const [rip] = await tx
+        .insert(packRips)
+        .values({
+          userId: user.id,
+          packId,
+          pulledBookIds: pulledBookIds as string[],
+          duplicates: duplicateBookIds.length,
+          shardsAwarded: 0,
         })
-        .returning({ shards: shardBalances.shards })
+        .returning({ id: packRips.id })
 
-      // 7. Audit log. `duplicates` stores the COUNT of dupes, not the ids,
-      //    matching the schema's integer column.
-      await tx.insert(packRips).values({
-        userId: user.id,
-        packId,
-        pulledBookIds: pulledBookIds as string[],
-        duplicates: duplicateBookIds.length,
-        shardsAwarded,
-      })
+      // 7. Grant flat dupe refunds via the ledger — one `dupe_refund`
+      //    row per dupe instance, each tied back to the rip id so we
+      //    can reconstruct "this rip yielded 2 dupes worth 10 shards"
+      //    later. `grantShards` updates the balance cache for us.
+      let shardsAwarded = 0
+      let newShardBalance = debit.newBalance
+      for (const bookId of duplicateBookIds) {
+        if (perDupe <= 0) break
+        const r = await grantShards(tx, user.id, 'dupe_refund', perDupe, {
+          bookId,
+          packId,
+          ripId: rip.id,
+        })
+        if (r.applied) {
+          shardsAwarded += r.delta
+          newShardBalance = r.newBalance
+        }
+      }
+
+      // 8. Backfill the rip row's shardsAwarded now that we know the
+      //    total. Keeping it denormalized on pack_rips makes "biggest
+      //    rip ever" and similar queries cheap.
+      if (shardsAwarded > 0) {
+        await tx
+          .update(packRips)
+          .set({ shardsAwarded })
+          .where(eq(packRips.id, rip.id))
+      }
 
       return {
         newBookIds: dedupedNewIds,
         duplicateBookIds,
         shardsAwarded,
-        newShardBalance: newBalance.shards,
+        packCost,
+        newShardBalance,
       }
     })
   }))
@@ -674,6 +724,20 @@ export interface UpdateCollectionCardResult {
   status: ReadStatus
   rating: number | null
   note: string | null
+  /**
+   * Shard events triggered by this update (typically a
+   * `start_reading` or `finish_reading` grant on a status transition).
+   * Empty array when the update didn't qualify for a grant — either
+   * the field didn't change, the cap was hit, or the book already
+   * earned this transition historically. The UI uses this to show
+   * a "+N shards" toast.
+   */
+  grants: Array<{
+    reason: 'start_reading' | 'finish_reading'
+    amount: number
+    /** Caller's new balance after this grant; `null` if not applied. */
+    newBalance: number | null
+  }>
 }
 
 /**
@@ -765,35 +829,109 @@ export const updateCollectionCardFn = createServerFn({ method: 'POST' })
           throw new Error('updateCollectionCardFn: no fields to update')
         }
 
-        const [updated] = await database
-          .update(collectionCards)
-          .set(set)
-          .where(
-            and(
-              eq(collectionCards.userId, user.id),
-              eq(collectionCards.bookId, data.bookId),
-            ),
-          )
-          .returning({
-            bookId: collectionCards.bookId,
-            status: collectionCards.status,
-            rating: collectionCards.rating,
-            note: collectionCards.note,
-          })
+        // Run the update + any shard grants together: a failure after
+        // the grant would otherwise leave a ledger entry pointing at
+        // an unchanged status. Transaction gives us all-or-nothing.
+        return await database.transaction(async (tx) => {
+          // Read the prior status before updating so we can detect
+          // transitions ("was unread, now reading" → start_reading
+          // grant). If the user didn't change status we skip grants
+          // entirely; ratings and notes are not shard-earning events.
+          const [prior] = await tx
+            .select({ status: collectionCards.status })
+            .from(collectionCards)
+            .where(
+              and(
+                eq(collectionCards.userId, user.id),
+                eq(collectionCards.bookId, data.bookId),
+              ),
+            )
+            .limit(1)
 
-        if (!updated) {
-          // The user doesn't own this book. The client-side form only
-          // renders for owners, so this is a defensive check, not a
-          // normal flow.
-          throw new Error('updateCollectionCardFn: book not in your collection')
-        }
+          if (!prior) {
+            // The user doesn't own this book. The client-side form only
+            // renders for owners, so this is a defensive check, not a
+            // normal flow.
+            throw new Error('updateCollectionCardFn: book not in your collection')
+          }
 
-        return {
-          bookId: updated.bookId,
-          status: updated.status as ReadStatus,
-          rating: updated.rating ?? null,
-          note: updated.note ?? null,
-        }
+          const [updated] = await tx
+            .update(collectionCards)
+            .set(set)
+            .where(
+              and(
+                eq(collectionCards.userId, user.id),
+                eq(collectionCards.bookId, data.bookId),
+              ),
+            )
+            .returning({
+              bookId: collectionCards.bookId,
+              status: collectionCards.status,
+              rating: collectionCards.rating,
+              note: collectionCards.note,
+            })
+
+          if (!updated) {
+            throw new Error('updateCollectionCardFn: update returned no row')
+          }
+
+          // Fire grants based on the transition. Rules (see
+          // CORE_LOOP_PLAN §1):
+          //   - 'start_reading' when moving *into* 'reading' from
+          //     anywhere except 'reading'.
+          //   - 'finish_reading' when moving *into* 'read' from
+          //     anywhere except 'read'.
+          // Each is at-most-once-per-book-ever via the partial unique
+          // index on shard_events; caps are enforced inside
+          // grantShards. Non-applied grants are intentionally dropped
+          // from the response so the UI doesn't toast a no-op.
+          const grants: UpdateCollectionCardResult['grants'] = []
+          const oldStatus = prior.status
+          const newStatus = updated.status as ReadStatus
+          const cfg = await getEconomy()
+
+          if (newStatus === 'reading' && oldStatus !== 'reading') {
+            const r = await grantShards(
+              tx,
+              user.id,
+              'start_reading',
+              cfg.transitions.startReading.shards,
+              { bookId: data.bookId },
+            )
+            if (r.applied) {
+              grants.push({
+                reason: 'start_reading',
+                amount: r.delta,
+                newBalance: r.newBalance,
+              })
+            }
+          }
+
+          if (newStatus === 'read' && oldStatus !== 'read') {
+            const r = await grantShards(
+              tx,
+              user.id,
+              'finish_reading',
+              cfg.transitions.finishReading.shards,
+              { bookId: data.bookId },
+            )
+            if (r.applied) {
+              grants.push({
+                reason: 'finish_reading',
+                amount: r.delta,
+                newBalance: r.newBalance,
+              })
+            }
+          }
+
+          return {
+            bookId: updated.bookId,
+            status: newStatus,
+            rating: updated.rating ?? null,
+            note: updated.note ?? null,
+            grants,
+          }
+        })
       },
     ),
   )

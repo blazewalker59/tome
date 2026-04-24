@@ -15,6 +15,13 @@
       "when": 1776734302398,
       "tag": "0001_regular_valeria_richards",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777000930455,
+      "tag": "0002_silly_sabretooth",
+      "breakpoints": true
     }
   ]
 }
