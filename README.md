@@ -40,6 +40,8 @@ pnpm db:generate        # create a migration from schema changes
 pnpm db:migrate         # apply migrations
 pnpm db:studio          # browse the DB in a browser UI
 pnpm db:seed            # seed mock data
+pnpm db:seed-editor-packs  # ingest 5 real-Hardcover editorial starter packs
+pnpm db:rebucket        # recompute rarity buckets across the catalog
 ```
 
 Schema lives at [`src/db/schema.ts`](./src/db/schema.ts). Migrations are in `src/db/migrations/`.
