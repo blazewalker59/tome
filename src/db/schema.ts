@@ -201,10 +201,27 @@ export const books = pgTable(
     averageRating: text("average_rating"),
 
     rawMetadata: jsonb("raw_metadata"),
+    /**
+     * Who ingested this book and when. Null for admin-ingested rows
+     * (the original editorial catalog) and for rows created before this
+     * column existed. Populated when a signed-in user ingests a book
+     * on-demand from the pack builder so we can rate-limit and, later,
+     * flag user-ingested rows for admin review.
+     */
+    ingestedByUserId: uuid("ingested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("books_rarity_idx").on(t.rarity), index("books_genre_idx").on(t.genre)],
+  (t) => [
+    index("books_rarity_idx").on(t.rarity),
+    index("books_genre_idx").on(t.genre),
+    // Covers the per-user throttle query: "how many books has this user
+    // ingested in the last hour?" → scans by (ingested_by, ingested_at).
+    index("books_ingested_by_at_idx").on(t.ingestedByUserId, t.ingestedAt),
+  ],
 );
 
 // ──────────────────────────────────────────────────────────────────────────────

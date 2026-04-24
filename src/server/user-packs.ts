@@ -28,7 +28,7 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
-import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, ilike, inArray, or, sql } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
 import { books, packBooks, packs, users } from "@/db/schema";
@@ -37,6 +37,12 @@ import { getEconomy } from "@/lib/economy/config";
 import type { Rarity } from "@/lib/packs/composition";
 import { checkPackComposition } from "@/lib/packs/composition";
 import { getPublishUnlockStatus } from "@/lib/packs/unlock";
+import { bookResponseToRow } from "@/lib/cards/hardcover";
+import {
+  fetchBookById,
+  searchBooks,
+  type HardcoverSearchHit,
+} from "./hardcover";
 import { normalizeKebab } from "./catalog";
 import { withErrorLogging } from "./_shared";
 
@@ -728,6 +734,277 @@ export const searchBooksForBuilderFn = createServerFn({ method: "GET" })
           .limit(20);
 
         return rows.map((r) => ({ ...r, rarity: r.rarity as Rarity }));
+      },
+    ),
+  );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hardcover fallback search + on-demand ingest
+//
+// The pack builder calls `searchBooksForBuilderFn` first. When that returns
+// fewer than LOCAL_SPARSE_THRESHOLD hits, the UI follows up with
+// `searchHardcoverForBuilderFn` to surface books not yet in our catalog.
+// Picking one of those hits runs `ingestHardcoverBookForBuilderFn`, which
+// fetches the full Hardcover record, inserts a `books` row (marked with
+// the ingesting user), and links it to the caller's pack draft.
+//
+// Rate-limiting is two-layered: the Hardcover client enforces a global
+// ~54 req/min floor via its FIFO queue, and we enforce a per-user hourly
+// cap below to prevent a single account from burning the shared budget.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Below this many local hits the builder UI should also query Hardcover.
+ * Kept here (not in economy config) because it's a UX knob, not a game
+ * lever; changes don't need to flow through the admin config surface.
+ */
+export const LOCAL_SPARSE_THRESHOLD = 5;
+
+/**
+ * Hourly cap on user-driven ingests. Each successful insert counts; an
+ * existing-row upsert (dedup hit) does not. Tuned low to prevent abuse
+ * of the shared 60 req/min Hardcover budget without disrupting a creator
+ * curating one pack at a time.
+ */
+const USER_INGEST_HOURLY_CAP = 10;
+
+/**
+ * Shape surfaced to the builder UI. `alreadyInCatalogBookId` is populated
+ * when our `books` table already has this `hardcover_id` — the UI shows
+ * it as "already added, pick from local results" instead of re-ingesting.
+ */
+export interface BuilderHardcoverHit {
+  hardcoverId: number;
+  title: string;
+  authors: ReadonlyArray<string>;
+  coverUrl: string | null;
+  releaseYear: number | null;
+  /** Populated iff we already ingested this hardcover_id. */
+  alreadyInCatalogBookId: string | null;
+}
+
+/**
+ * Web-search fallback for the pack builder. Only hits Hardcover; the UI
+ * is expected to call this in parallel with (or after) the local search
+ * when local returns few hits. Any signed-in user can call this — rate
+ * limiting is global (Hardcover client queue) plus per-user (see
+ * `ingestHardcoverBookForBuilderFn`).
+ */
+export const searchHardcoverForBuilderFn = createServerFn({ method: "GET" })
+  .inputValidator((raw: unknown): { query: string } => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("searchHardcoverForBuilderFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    const query = String(r.query ?? "").trim();
+    if (query.length < 2) {
+      throw new Error("Search query must be at least 2 characters");
+    }
+    return { query };
+  })
+  .handler(
+    withErrorLogging(
+      "searchHardcoverForBuilderFn",
+      async ({ data }): Promise<ReadonlyArray<BuilderHardcoverHit>> => {
+        // Signed-in only so anonymous traffic can't drain the rate budget
+        // by hammering the search box.
+        await requireSessionUser();
+
+        let result: { hits: ReadonlyArray<HardcoverSearchHit> };
+        try {
+          result = await searchBooks(data.query, { page: 1, perPage: 20 });
+        } catch (err) {
+          // Surface a cleaner message than the raw HardcoverError so the
+          // builder UI can show it without leaking internals.
+          throw new Error(
+            err instanceof Error
+              ? `Hardcover search failed: ${err.message}`
+              : "Hardcover search failed",
+          );
+        }
+
+        if (result.hits.length === 0) return [];
+
+        // Dedup against our catalog in a single round-trip so the UI can
+        // tag "already in catalog" hits without needing a second call.
+        const database = await getDb();
+        const ids = result.hits.map((h) => h.id);
+        const existing = await database
+          .select({ id: books.id, hardcoverId: books.hardcoverId })
+          .from(books)
+          .where(inArray(books.hardcoverId, ids));
+        const byHardcoverId = new Map<number, string>(
+          existing.map((e) => [e.hardcoverId, e.id]),
+        );
+
+        return result.hits.map((h) => ({
+          hardcoverId: h.id,
+          title: h.title ?? "Untitled",
+          authors: h.authorNames,
+          coverUrl: h.coverUrl,
+          releaseYear: h.releaseYear,
+          alreadyInCatalogBookId: byHardcoverId.get(h.id) ?? null,
+        }));
+      },
+    ),
+  );
+
+export interface IngestHardcoverForBuilderResult {
+  bookId: string;
+  /** True if we created a new row; false if we linked to an existing one. */
+  created: boolean;
+}
+
+/**
+ * User-initiated ingest from the pack builder. Unlike the admin
+ * `ingestBookFn`, this path:
+ *
+ *   - requires only a signed-in user (no `requireAdmin`);
+ *   - defaults curation (`genre = "unknown"`, `moodTags = []`) since we
+ *     don't want to ask non-admins to pick a genre at ingest time — an
+ *     admin can re-curate later;
+ *   - stamps `ingested_by_user_id` + `ingested_at` for provenance and
+ *     for the per-user hourly throttle;
+ *   - links the resulting book to the caller's pack draft in the same
+ *     call, so the UI doesn't need a second round-trip;
+ *   - dedups: if the book is already in the catalog (by `hardcover_id`),
+ *     we skip the Hardcover fetch entirely and just link to the existing
+ *     row. This also means repeated clicks on a hit don't double-ingest.
+ */
+export const ingestHardcoverBookForBuilderFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): { packId: string; hardcoverId: number } => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("ingestHardcoverBookForBuilderFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    const packId = String(r.packId ?? "");
+    if (packId.length === 0) throw new Error("packId is required");
+    const hardcoverId = Number(r.hardcoverId);
+    if (!Number.isInteger(hardcoverId) || hardcoverId <= 0) {
+      throw new Error(`Invalid Hardcover id: ${r.hardcoverId}`);
+    }
+    return { packId, hardcoverId };
+  })
+  .handler(
+    withErrorLogging(
+      "ingestHardcoverBookForBuilderFn",
+      async ({ data }): Promise<IngestHardcoverForBuilderResult> => {
+        const user = await requireSessionUser();
+        const database = await getDb();
+
+        // Ownership check up-front so we never waste a Hardcover call on
+        // a URL-guessed pack id.
+        const pack = await assertPackOwnedBy(database, data.packId, user.id);
+        if (pack.isPublic) {
+          // Published packs are content-frozen (see plan). Matches the
+          // guard in `addBookToPackDraftFn`.
+          throw new Error("Cannot add books to a published pack; unpublish first");
+        }
+
+        // Dedup short-circuit: if we already have this hardcover_id, just
+        // link it. No Hardcover fetch, no throttle charge — the user
+        // picked a hit we could've shown in the local results.
+        const [existing] = await database
+          .select({ id: books.id })
+          .from(books)
+          .where(eq(books.hardcoverId, data.hardcoverId))
+          .limit(1);
+
+        if (existing) {
+          await database
+            .insert(packBooks)
+            .values({ packId: pack.id, bookId: existing.id })
+            .onConflictDoNothing();
+          return { bookId: existing.id, created: false };
+        }
+
+        // Throttle: count only this user's ingests (`ingested_by_user_id`
+        // is null for admin and legacy rows, so those don't count). The
+        // index `books_ingested_by_at_idx` covers this predicate.
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        const [{ count: recentCount }] = await database
+          .select({ count: sql<number>`count(*)::int` })
+          .from(books)
+          .where(
+            and(
+              eq(books.ingestedByUserId, user.id),
+              gt(books.ingestedAt, oneHourAgo),
+            ),
+          );
+        if (recentCount >= USER_INGEST_HOURLY_CAP) {
+          throw new Error(
+            `You've added ${recentCount} books from Hardcover in the last hour. ` +
+              `Try again later (limit ${USER_INGEST_HOURLY_CAP}/hour).`,
+          );
+        }
+
+        // Fetch from Hardcover (rate-limited by the client). Any HTTP or
+        // GraphQL error bubbles up wrapped by withErrorLogging.
+        const hardcoverBook = await fetchBookById(data.hardcoverId);
+        if (!hardcoverBook) {
+          throw new Error(
+            `Hardcover book ${data.hardcoverId} not found. It may have been ` +
+              `removed or the id is wrong.`,
+          );
+        }
+
+        // `genre = "unknown"` is a deliberate sentinel: admins sweep these
+        // during periodic curation. Mood tags stay empty for the same
+        // reason. Rarity defaults to `common`; the rebucket script will
+        // reassign it based on ratings_count × average_rating.
+        const row = bookResponseToRow(hardcoverBook, {
+          genre: "unknown",
+          moodTags: [],
+        });
+
+        // Upsert: race conditions between two users ingesting the same
+        // hardcover_id concurrently should not throw a unique-violation.
+        // We also set the provenance columns ONLY on insert — a later
+        // admin re-ingest (which runs the admin path) shouldn't flip
+        // provenance from user to null. `xmax = 0` tells us insert vs
+        // update; the UPDATE branch only refreshes editorial fields.
+        const [upserted] = await database
+          .insert(books)
+          .values({
+            ...row,
+            ingestedByUserId: user.id,
+            ingestedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: books.hardcoverId,
+            set: {
+              title: row.title,
+              authors: row.authors,
+              coverUrl: row.coverUrl,
+              description: row.description,
+              pageCount: row.pageCount,
+              publishedYear: row.publishedYear,
+              ratingsCount: row.ratingsCount,
+              averageRating: row.averageRating,
+              rawMetadata: row.rawMetadata,
+              updatedAt: sql`now()`,
+              // Intentionally NOT updating: genre, moodTags, rarity,
+              // ingestedByUserId, ingestedAt. Curation is the admin's
+              // domain; provenance is write-once on first ingest.
+            },
+          })
+          .returning({
+            id: books.id,
+            created: sql<boolean>`(xmax = 0)`,
+          });
+
+        if (!upserted) {
+          throw new Error(
+            `Upsert of hardcoverId=${data.hardcoverId} returned no row`,
+          );
+        }
+
+        await database
+          .insert(packBooks)
+          .values({ packId: pack.id, bookId: upserted.id })
+          .onConflictDoNothing();
+
+        return { bookId: upserted.id, created: Boolean(upserted.created) };
       },
     ),
   );

@@ -6,11 +6,15 @@ import {
   addBookToPackDraftFn,
   getMyPackFn,
   getMyPublishUnlockFn,
+  ingestHardcoverBookForBuilderFn,
+  LOCAL_SPARSE_THRESHOLD,
   publishPackFn,
   removeBookFromPackDraftFn,
   searchBooksForBuilderFn,
+  searchHardcoverForBuilderFn,
   unpublishPackFn,
   updatePackDraftFn,
+  type BuilderHardcoverHit,
   type MyPackDetail,
 } from "@/server/user-packs";
 import { checkPackComposition, type Rarity } from "@/lib/packs/composition";
@@ -279,31 +283,81 @@ function BookSearchPanel({
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<BookHit[]>([]);
+  const [hardcoverHits, setHardcoverHits] = useState<BuilderHardcoverHit[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchingHardcover, setSearchingHardcover] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hardcoverError, setHardcoverError] = useState<string | null>(null);
+  const [ingestingId, setIngestingId] = useState<number | null>(null);
 
   // Debounce the search so every keystroke doesn't fire a server fn.
+  //
+  // Two-phase: local catalog first, then if the local result set is sparse
+  // (< LOCAL_SPARSE_THRESHOLD) also hit Hardcover for books we haven't
+  // ingested yet. Running them sequentially (not in parallel) means the
+  // Hardcover call — which is rate-limited globally — only runs when
+  // the local results don't cover the user's intent. The effect on the
+  // UI is "results appear fast; a 'From Hardcover' section fades in a
+  // moment later when needed."
   useEffect(() => {
-    if (query.trim().length < 2) {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
       setResults([]);
+      setHardcoverHits([]);
       setError(null);
+      setHardcoverError(null);
       return;
     }
+    let cancelled = false;
     const handle = setTimeout(async () => {
       setSearching(true);
       try {
         const rows = await searchBooksForBuilderFn({
-          data: { query: query.trim(), excludePackId: packId },
+          data: { query: trimmed, excludePackId: packId },
         });
+        if (cancelled) return;
         setResults([...rows]);
         setError(null);
+
+        if (rows.length < LOCAL_SPARSE_THRESHOLD) {
+          setSearchingHardcover(true);
+          setHardcoverError(null);
+          try {
+            const hcRows = await searchHardcoverForBuilderFn({
+              data: { query: trimmed },
+            });
+            if (cancelled) return;
+            // The server already tags hits whose `hardcover_id` is in our
+            // catalog via `alreadyInCatalogBookId`. Dropping those keeps
+            // the fallback list focused on books the user can't find
+            // locally — the whole point of the section.
+            setHardcoverHits(
+              hcRows.filter((h) => h.alreadyInCatalogBookId === null),
+            );
+          } catch (err) {
+            if (!cancelled) {
+              setHardcoverError(
+                err instanceof Error ? err.message : "Hardcover search failed",
+              );
+              setHardcoverHits([]);
+            }
+          } finally {
+            if (!cancelled) setSearchingHardcover(false);
+          }
+        } else {
+          setHardcoverHits([]);
+          setHardcoverError(null);
+        }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Search failed");
+        if (!cancelled) setError(err instanceof Error ? err.message : "Search failed");
       } finally {
-        setSearching(false);
+        if (!cancelled) setSearching(false);
       }
     }, 250);
-    return () => clearTimeout(handle);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
   }, [query, packId]);
 
   const onAdd = async (bookId: string) => {
@@ -316,6 +370,24 @@ function BookSearchPanel({
     } catch (err) {
       // eslint-disable-next-line no-alert
       alert(err instanceof Error ? err.message : "Failed to add");
+    }
+  };
+
+  const onIngestAndAdd = async (hardcoverId: number) => {
+    setIngestingId(hardcoverId);
+    try {
+      await ingestHardcoverBookForBuilderFn({
+        data: { packId, hardcoverId },
+      });
+      await onAdded();
+      // Drop the just-added hit so the list doesn't stay full of
+      // already-added entries.
+      setHardcoverHits((prev) => prev.filter((h) => h.hardcoverId !== hardcoverId));
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(err instanceof Error ? err.message : "Failed to add from Hardcover");
+    } finally {
+      setIngestingId(null);
     }
   };
 
@@ -368,6 +440,59 @@ function BookSearchPanel({
             </li>
           ))}
         </ul>
+      )}
+      {/* Hardcover fallback section. Only rendered when local was sparse
+          and we actually have hits to show (or are loading / errored). */}
+      {(searchingHardcover || hardcoverHits.length > 0 || hardcoverError) && (
+        <div className="mt-5">
+          <h3 className="island-kicker mb-2 text-[11px]">From Hardcover</h3>
+          {searchingHardcover && (
+            <p className="text-xs text-[var(--sea-ink-soft)]">Searching Hardcover…</p>
+          )}
+          {hardcoverError && (
+            <p className="text-xs text-[color:var(--rarity-legendary)]">
+              {hardcoverError}
+            </p>
+          )}
+          {hardcoverHits.length > 0 && (
+            <ul className="space-y-2">
+              {hardcoverHits.map((h) => (
+                <li
+                  key={h.hardcoverId}
+                  className="flex items-center gap-3 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-3"
+                >
+                  {h.coverUrl ? (
+                    <img
+                      src={h.coverUrl}
+                      alt=""
+                      className="h-14 w-10 shrink-0 rounded-md object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
+                      {h.title}
+                    </p>
+                    <p className="truncate text-xs text-[var(--sea-ink-soft)]">
+                      {h.authors.join(", ") || "Unknown author"}
+                      {h.releaseYear ? ` · ${h.releaseYear}` : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={ingestingId === h.hardcoverId}
+                    onClick={() => void onIngestAndAdd(h.hardcoverId)}
+                    className="btn-primary rounded-full px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] disabled:opacity-50"
+                  >
+                    {ingestingId === h.hardcoverId ? "Adding…" : "Add"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </section>
   );
