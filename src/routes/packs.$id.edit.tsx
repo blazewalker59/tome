@@ -440,7 +440,10 @@ function BookSearchPanel({
                 <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
               )}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
+                <p
+                  title={b.title}
+                  className="line-clamp-1 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
+                >
                   {b.title}
                 </p>
                 <p className="truncate text-xs text-[var(--sea-ink-soft)]">
@@ -489,7 +492,10 @@ function BookSearchPanel({
                     <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
+                    <p
+                      title={h.title}
+                      className="line-clamp-1 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
+                    >
                       {h.title}
                     </p>
                     <p className="truncate text-xs text-[var(--sea-ink-soft)]">
@@ -563,7 +569,10 @@ function CurrentBooksPanel({
                 <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
               )}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
+                <p
+                  title={b.title}
+                  className="line-clamp-1 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
+                >
                   {b.title}
                 </p>
                 <p className="truncate text-xs text-[var(--sea-ink-soft)]">
