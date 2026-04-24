@@ -274,6 +274,23 @@ interface BookHit {
   rarity: Rarity;
 }
 
+/**
+ * Render a compact, cap-width author byline. Hardcover hits sometimes
+ * list every contributor (translators, editors, illustrators, …) which
+ * produces a single comma-joined string long enough to blow past
+ * `truncate`'s effective width on narrow flex items — the full string
+ * still counts toward the row's min-content size even if it's clipped
+ * visually, and on mobile that pushed the Add button past the viewport
+ * edge. Showing at most two names plus a "+N more" tail keeps the line
+ * short enough that truncation on the *title* is the only thing the
+ * layout has to handle.
+ */
+function formatAuthors(authors: ReadonlyArray<string>): string {
+  if (authors.length === 0) return "Unknown author";
+  if (authors.length <= 2) return authors.join(", ");
+  return `${authors[0]}, ${authors[1]} +${authors.length - 2} more`;
+}
+
 function BookSearchPanel({
   packId,
   onAdded,
@@ -427,7 +444,7 @@ function BookSearchPanel({
                   {b.title}
                 </p>
                 <p className="truncate text-xs text-[var(--sea-ink-soft)]">
-                  {b.authors.join(", ")} · {b.rarity}
+                  {formatAuthors(b.authors)} · {b.rarity}
                 </p>
               </div>
               <button
@@ -476,7 +493,7 @@ function BookSearchPanel({
                       {h.title}
                     </p>
                     <p className="truncate text-xs text-[var(--sea-ink-soft)]">
-                      {h.authors.join(", ") || "Unknown author"}
+                      {formatAuthors(h.authors)}
                       {h.releaseYear ? ` · ${h.releaseYear}` : ""}
                     </p>
                   </div>
@@ -550,14 +567,14 @@ function CurrentBooksPanel({
                   {b.title}
                 </p>
                 <p className="truncate text-xs text-[var(--sea-ink-soft)]">
-                  {b.authors.join(", ")} · {b.rarity}
+                  {formatAuthors(b.authors)} · {b.rarity}
                 </p>
               </div>
               {!pack.isPublic && (
                 <button
                   type="button"
                   onClick={() => void onRemove(b.id)}
-                  className="rounded-full border border-[var(--line)] px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+                  className="shrink-0 rounded-full border border-[var(--line)] px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
                 >
                   Remove
                 </button>
