@@ -34,10 +34,6 @@ export const cardRarity = pgEnum("card_rarity", [
 
 export const readStatus = pgEnum("read_status", ["unread", "reading", "read"]);
 
-export const deckVisibility = pgEnum("deck_visibility", ["public", "unlisted", "private"]);
-
-export const packKind = pgEnum("pack_kind", ["editorial", "deck"]);
-
 // ──────────────────────────────────────────────────────────────────────────────
 // Auth tables (Better Auth core schema)
 //
@@ -213,22 +209,72 @@ export const books = pgTable(
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Packs
+//
+// A pack is either editorial (Tome-authored, `creator_id` NULL) or
+// user-built (`creator_id` set). Drafts live in this same table with
+// `is_public = false`; publishing flips the flag, stamps `published_at`,
+// and freezes membership — creators can still edit name/description, but
+// `pack_books` rows are immutable post-publish (enforced in server fns,
+// not the DB, so we can still run data migrations).
+//
+// Slugs are scoped per-creator: each user has their own namespace, plus
+// the editorial namespace (creator_id IS NULL) is its own. Postgres
+// treats NULLs as distinct in ordinary unique constraints, so we use two
+// partial unique indexes instead of a single composite unique.
 // ──────────────────────────────────────────────────────────────────────────────
 
 export const packs = pgTable(
   "packs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    slug: text("slug").notNull().unique(),
+    slug: text("slug").notNull(),
     name: text("name").notNull(),
     description: text("description"),
-    kind: packKind("kind").notNull(),
-    /** Set when kind = 'deck'. */
-    sourceDeckId: uuid("source_deck_id"),
+    /**
+     * NULL = editorial (Tome-authored); otherwise the user who built the
+     * pack. Deleting the creator nulls this out so their published packs
+     * remain accessible as orphaned editorial rather than vanishing.
+     */
+    creatorId: uuid("creator_id").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * Drafts are private to the creator. Flipping to true requires passing
+     * the composition validator; un-publishing flips it back (and allows
+     * edits again). Editorial packs are always public.
+     */
+    isPublic: boolean("is_public").notNull().default(false),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    /**
+     * Creator-curated genre tags (1–3) shown on the public pack page and
+     * used for discovery. Distinct from per-book `books.genre` — a pack's
+     * tags describe the curated collection, not any single book in it.
+     */
+    genreTags: text("genre_tags")
+      .array()
+      .notNull()
+      .default(sql`ARRAY[]::text[]`),
+    /**
+     * Denormalized trending signal: rip count over the last 7 days.
+     * Bumped by `recordRipFn`; the reset mechanism (scheduled job) is
+     * TODO — for now this grows unbounded and sort-by-trending is
+     * effectively sort-by-all-time. Accepted so the schema is stable for
+     * when the job lands.
+     */
+    ripCountWeek: integer("rip_count_week").notNull().default(0),
     coverImageUrl: text("cover_image_url"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("packs_kind_idx").on(t.kind)],
+  (t) => [
+    index("packs_creator_idx").on(t.creatorId),
+    index("packs_public_idx").on(t.isPublic),
+    // Per-creator slug uniqueness (user namespace).
+    uniqueIndex("packs_creator_slug_uq")
+      .on(t.creatorId, t.slug)
+      .where(sql`creator_id IS NOT NULL`),
+    // Editorial slug uniqueness (shared Tome namespace).
+    uniqueIndex("packs_editorial_slug_uq")
+      .on(t.slug)
+      .where(sql`creator_id IS NULL`),
+  ],
 );
 
 export const packBooks = pgTable(
@@ -240,6 +286,12 @@ export const packBooks = pgTable(
     bookId: uuid("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "restrict" }),
+    /**
+     * Creator-chosen ordering inside the pack. Not exposed in the rip
+     * animation (which shuffles), but shown in the pack detail view and
+     * the builder's drag-to-reorder list.
+     */
+    position: integer("position").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.packId, t.bookId] })],
 );
@@ -273,45 +325,6 @@ export const collectionCards = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [unique("collection_user_book_uq").on(t.userId, t.bookId)],
-);
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Decks
-// ──────────────────────────────────────────────────────────────────────────────
-
-export const decks = pgTable(
-  "decks",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    slug: text("slug").notNull().unique(),
-    name: text("name").notNull(),
-    description: text("description"),
-    coverBookId: uuid("cover_book_id").references(() => books.id, {
-      onDelete: "set null",
-    }),
-    visibility: deckVisibility("visibility").notNull().default("private"),
-    publishedAt: timestamp("published_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("decks_user_idx").on(t.userId)],
-);
-
-export const deckBooks = pgTable(
-  "deck_books",
-  {
-    deckId: uuid("deck_id")
-      .notNull()
-      .references(() => decks.id, { onDelete: "cascade" }),
-    bookId: uuid("book_id")
-      .notNull()
-      .references(() => books.id, { onDelete: "restrict" }),
-    position: integer("position").notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.deckId, t.bookId] })],
 );
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -448,7 +461,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   sessions: many(sessions),
   accounts: many(accounts),
   collection: many(collectionCards),
-  decks: many(decks),
+  authoredPacks: many(packs),
   rips: many(packRips),
   shardBalance: one(shardBalances, {
     fields: [users.id],
@@ -467,25 +480,15 @@ export const accountsRelations = relations(accounts, ({ one }) => ({
 
 export const booksRelations = relations(books, ({ many }) => ({
   inPacks: many(packBooks),
-  inDecks: many(deckBooks),
   collectionRows: many(collectionCards),
 }));
 
 export const packsRelations = relations(packs, ({ many, one }) => ({
   books: many(packBooks),
   rips: many(packRips),
-  sourceDeck: one(decks, {
-    fields: [packs.sourceDeckId],
-    references: [decks.id],
-  }),
-}));
-
-export const decksRelations = relations(decks, ({ many, one }) => ({
-  owner: one(users, { fields: [decks.userId], references: [users.id] }),
-  books: many(deckBooks),
-  coverBook: one(books, {
-    fields: [decks.coverBookId],
-    references: [books.id],
+  creator: one(users, {
+    fields: [packs.creatorId],
+    references: [users.id],
   }),
 }));
 
@@ -504,17 +507,6 @@ export const packBooksRelations = relations(packBooks, ({ one }) => ({
   }),
   book: one(books, {
     fields: [packBooks.bookId],
-    references: [books.id],
-  }),
-}));
-
-export const deckBooksRelations = relations(deckBooks, ({ one }) => ({
-  deck: one(decks, {
-    fields: [deckBooks.deckId],
-    references: [decks.id],
-  }),
-  book: one(books, {
-    fields: [deckBooks.bookId],
     references: [books.id],
   }),
 }));

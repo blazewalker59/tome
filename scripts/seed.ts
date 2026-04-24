@@ -95,17 +95,23 @@ try {
 
   console.log(`[seed] upserting editorial pack "${EDITORIAL_PACK.slug}"…`)
 
+  // Editorial seed pack: creator_id = NULL so it lives in the shared
+  // Tome namespace. The unique target matches the partial index
+  // `packs_editorial_slug_uq` (slug WHERE creator_id IS NULL).
   const [pack] = await db
     .insert(packs)
     .values({
       slug: EDITORIAL_PACK.slug,
       name: EDITORIAL_PACK.name,
       description: EDITORIAL_PACK.description,
-      kind: 'editorial',
+      creatorId: null,
+      isPublic: true,
+      publishedAt: sql`now()`,
       coverImageUrl: EDITORIAL_PACK.coverImageUrl,
     })
     .onConflictDoUpdate({
       target: packs.slug,
+      targetWhere: sql`creator_id IS NULL`,
       set: {
         name: EDITORIAL_PACK.name,
         description: EDITORIAL_PACK.description,
