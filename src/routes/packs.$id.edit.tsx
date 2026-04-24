@@ -311,6 +311,12 @@ function BookSearchPanel({
   const [error, setError] = useState<string | null>(null);
   const [hardcoverError, setHardcoverError] = useState<string | null>(null);
   const [ingestingId, setIngestingId] = useState<number | null>(null);
+  // When local results exist, Hardcover hits are usually noise — they
+  // mostly duplicate what we already have plus a long tail of foreign
+  // editions and translations. Hide them behind a toggle so the primary
+  // list stays calm; auto-expand only when local came back empty, since
+  // that's the case where the user actually needs the fallback.
+  const [hardcoverExpanded, setHardcoverExpanded] = useState(false);
 
   // Debounce the search so every keystroke doesn't fire a server fn.
   //
@@ -356,6 +362,10 @@ function BookSearchPanel({
             setHardcoverHits(
               hcRows.filter((h) => h.alreadyInCatalogBookId === null),
             );
+            // Auto-expand only when local had nothing to show. Any local
+            // hit means the user's query was satisfied; they can opt in
+            // to the fallback via the toggle.
+            setHardcoverExpanded(rows.length === 0);
           } catch (err) {
             if (!cancelled) {
               setHardcoverError(
@@ -467,58 +477,84 @@ function BookSearchPanel({
         </ul>
       )}
       {/* Hardcover fallback section. Only rendered when local was sparse
-          and we actually have hits to show (or are loading / errored). */}
+          and we actually have hits to show (or are loading / errored).
+          When local produced matches, the list stays collapsed behind a
+          caret toggle — see hardcoverExpanded. */}
       {(searchingHardcover || hardcoverHits.length > 0 || hardcoverError) && (
         <div className="mt-5">
-          <h3 className="island-kicker mb-2 text-[11px]">From Hardcover</h3>
-          {searchingHardcover && (
-            <p className="text-xs text-[var(--sea-ink-soft)]">Searching Hardcover…</p>
-          )}
-          {hardcoverError && (
-            <p className="text-xs text-[color:var(--rarity-legendary)]">
-              {hardcoverError}
-            </p>
-          )}
-          {hardcoverHits.length > 0 && (
-            <ul className="space-y-2">
-              {hardcoverHits.map((h) => (
-                <li
-                  key={h.hardcoverId}
-                  className="flex min-w-0 items-center gap-3 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-3"
-                >
-                  {h.coverUrl ? (
-                    <img
-                      src={h.coverUrl}
-                      alt=""
-                      className="h-14 w-10 shrink-0 rounded-md object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p
-                      title={h.title}
-                      className="line-clamp-1 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
+          <button
+            type="button"
+            onClick={() => setHardcoverExpanded((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 text-left"
+            aria-expanded={hardcoverExpanded}
+          >
+            <h3 className="island-kicker text-[11px]">
+              From Hardcover
+              {hardcoverHits.length > 0 && (
+                <span className="ml-1 text-[var(--sea-ink-soft)] normal-case tracking-normal">
+                  · {hardcoverHits.length}
+                </span>
+              )}
+            </h3>
+            <span
+              aria-hidden
+              className={`text-xs text-[var(--sea-ink-soft)] transition-transform ${hardcoverExpanded ? "rotate-90" : ""}`}
+            >
+              ▸
+            </span>
+          </button>
+          {hardcoverExpanded && (
+            <div className="mt-2">
+              {searchingHardcover && (
+                <p className="text-xs text-[var(--sea-ink-soft)]">Searching Hardcover…</p>
+              )}
+              {hardcoverError && (
+                <p className="text-xs text-[color:var(--rarity-legendary)]">
+                  {hardcoverError}
+                </p>
+              )}
+              {hardcoverHits.length > 0 && (
+                <ul className="space-y-2">
+                  {hardcoverHits.map((h) => (
+                    <li
+                      key={h.hardcoverId}
+                      className="flex min-w-0 items-center gap-3 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-3"
                     >
-                      {h.title}
-                    </p>
-                    <p className="truncate text-xs text-[var(--sea-ink-soft)]">
-                      {formatAuthors(h.authors)}
-                      {h.releaseYear ? ` · ${h.releaseYear}` : ""}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={ingestingId === h.hardcoverId}
-                    onClick={() => void onIngestAndAdd(h.hardcoverId)}
-                    className="btn-primary shrink-0 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                  >
-                    {ingestingId === h.hardcoverId ? "Adding…" : "Add"}
-                  </button>
-                </li>
-              ))}
-            </ul>
+                      {h.coverUrl ? (
+                        <img
+                          src={h.coverUrl}
+                          alt=""
+                          className="h-14 w-10 shrink-0 rounded-md object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p
+                          title={h.title}
+                          className="line-clamp-1 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
+                        >
+                          {h.title}
+                        </p>
+                        <p className="truncate text-xs text-[var(--sea-ink-soft)]">
+                          {formatAuthors(h.authors)}
+                          {h.releaseYear ? ` · ${h.releaseYear}` : ""}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={ingestingId === h.hardcoverId}
+                        onClick={() => void onIngestAndAdd(h.hardcoverId)}
+                        className="btn-primary shrink-0 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                      >
+                        {ingestingId === h.hardcoverId ? "Adding…" : "Add"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
         </div>
       )}
