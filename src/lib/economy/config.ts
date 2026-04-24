@@ -42,6 +42,25 @@ export interface EconomyConfig {
     startReading: { shards: number; dailyCap: number };
     finishReading: { shards: number; weeklyCap: number };
   };
+  /**
+   * Gates on the publish action for user-built packs. Drafts are
+   * always unrestricted; only `publishPackFn` consults these. Starts
+   * at 3 finished books so the first-session user experience isn't
+   * blocked but drive-by accounts can't immediately spam packs.
+   */
+  publishUnlock: {
+    finishedBookThreshold: number;
+  };
+  /**
+   * Composition rules enforced at publish. Kept in config (not hard-
+   * coded) so we can tune them without a deploy as we watch what
+   * ratio of drafts fail validation. Mirrors the plan defaults.
+   */
+  packComposition: {
+    minBooks: number;
+    minUncommonOrAbove: number;
+    minRareOrAbove: number;
+  };
 }
 
 /**
@@ -61,6 +80,14 @@ export const DEFAULTS: EconomyConfig = {
   transitions: {
     startReading: { shards: 5, dailyCap: 5 },
     finishReading: { shards: 100, weeklyCap: 3 },
+  },
+  publishUnlock: {
+    finishedBookThreshold: 3,
+  },
+  packComposition: {
+    minBooks: 10,
+    minUncommonOrAbove: 3,
+    minRareOrAbove: 1,
   },
 };
 
@@ -126,6 +153,18 @@ function mergeWithDefaults(raw: Partial<EconomyConfig>): EconomyConfig {
           raw.transitions?.finishReading?.weeklyCap ??
           DEFAULTS.transitions.finishReading.weeklyCap,
       },
+    },
+    publishUnlock: {
+      finishedBookThreshold:
+        raw.publishUnlock?.finishedBookThreshold ??
+        DEFAULTS.publishUnlock.finishedBookThreshold,
+    },
+    packComposition: {
+      minBooks: raw.packComposition?.minBooks ?? DEFAULTS.packComposition.minBooks,
+      minUncommonOrAbove:
+        raw.packComposition?.minUncommonOrAbove ?? DEFAULTS.packComposition.minUncommonOrAbove,
+      minRareOrAbove:
+        raw.packComposition?.minRareOrAbove ?? DEFAULTS.packComposition.minRareOrAbove,
     },
   };
 }
