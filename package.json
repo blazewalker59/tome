@@ -22,6 +22,7 @@
     "db:seed": "tsx scripts/seed.ts",
     "db:seed-editor-packs": "tsx scripts/seed-editor-packs.ts",
     "db:rebucket": "tsx scripts/rebucket.ts",
+    "db:delete-booker-pack": "tsx scripts/delete-booker-pack.ts",
     "favicons": "tsx scripts/favicons.ts"
   },
   "dependencies": {
