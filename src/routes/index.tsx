@@ -446,13 +446,21 @@ function StarterPacksCard({ packs }: { packs: ReadonlyArray<PackSummary> }) {
  */
 function StarterPackTile({ pack }: { pack: PackSummary }) {
   const gradient = packGradient(pack.slug);
+  // Every starter gradient is saturated/dark enough that the label
+  // needs light parchment text — NOT the theme-reactive --on-accent,
+  // which flips to a dark sea-ink on the light theme and turns the
+  // pack name invisible against the plum/indigo/forest gradients.
+  // Using the dark-theme on-accent hex directly pins readability.
+  const labelColor = "#f8f2e2";
+  const labelColorSoft = "color-mix(in oklab, #f8f2e2 70%, transparent)";
   return (
     <Link
       to="/rip/$slug"
       params={{ slug: pack.slug }}
-      className="group block aspect-[2/3] w-full overflow-hidden rounded-2xl text-[var(--on-accent)] shadow-lg outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--lagoon)]"
+      className="group block aspect-[2/3] w-full overflow-hidden rounded-2xl shadow-lg outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--lagoon)]"
       style={{
         background: gradient.background,
+        color: labelColor,
         // Subtle glow that echoes the larger pack seals. Softer than
         // the rip carousel's so the home page doesn't look busy.
         boxShadow: `0 0 40px -16px ${gradient.glowColor}, 0 18px 32px -22px rgba(0, 0, 0, 0.45)`,
@@ -464,14 +472,20 @@ function StarterPackTile({ pack }: { pack: PackSummary }) {
             but lower opacity so the mini doesn't fight with its
             neighbours in a row of five. */}
         <div className="pointer-events-none absolute inset-0 opacity-15 [background-image:radial-gradient(circle_at_30%_20%,white,transparent_45%),radial-gradient(circle_at_70%_80%,white,transparent_45%)]" />
-        <div className="relative text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--on-accent)]/70">
+        <div
+          className="relative text-[9px] font-semibold uppercase tracking-[0.16em]"
+          style={{ color: labelColorSoft }}
+        >
           Starter
         </div>
         <div className="relative">
           <h3 className="display-title text-sm font-bold leading-tight sm:text-base">
             {pack.name}
           </h3>
-          <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-[var(--on-accent)]/70">
+          <p
+            className="mt-1 text-[10px] uppercase tracking-[0.14em]"
+            style={{ color: labelColorSoft }}
+          >
             {pack.bookCount} books
           </p>
         </div>
