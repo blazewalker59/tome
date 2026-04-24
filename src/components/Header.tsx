@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { LogIn, LogOut, ShieldCheck, Sparkles, User, BookOpen } from "lucide-react";
+import { LogIn, LogOut, Package, ShieldCheck, Sparkles, User, BookOpen } from "lucide-react";
 import ThemeToggle, { ThemeSegmented } from "./ThemeToggle";
 import { signOut, useAuth, useIsAdmin } from "@/lib/auth/hooks";
 import { getShardBalanceFn } from "@/server/collection";
@@ -273,6 +273,18 @@ function AccountMenu({
             >
               <ShieldCheck aria-hidden className="h-4 w-4 text-[var(--lagoon)]" />
               <span>Admin</span>
+            </Link>
+          )}
+
+          {authed && (
+            <Link
+              to="/packs"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 border-b border-[var(--line)] px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] no-underline hover:bg-[var(--link-bg-hover)]"
+            >
+              <Package aria-hidden className="h-4 w-4 text-[var(--lagoon)]" />
+              <span>My packs</span>
             </Link>
           )}
 

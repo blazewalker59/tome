@@ -14,6 +14,7 @@ import { Route as RipRouteImport } from './routes/rip'
 import { Route as CollectionRouteImport } from './routes/collection'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RipIndexRouteImport } from './routes/rip.index'
+import { Route as PacksIndexRouteImport } from './routes/packs.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as RipSlugRouteImport } from './routes/rip.$slug'
 import { Route as PacksNewRouteImport } from './routes/packs.new'
@@ -51,6 +52,11 @@ const RipIndexRoute = RipIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => RipRoute,
+} as any)
+const PacksIndexRoute = PacksIndexRouteImport.update({
+  id: '/packs/',
+  path: '/packs/',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/admin/',
@@ -124,6 +130,7 @@ export interface FileRoutesByFullPath {
   '/packs/new': typeof PacksNewRoute
   '/rip/$slug': typeof RipSlugRoute
   '/admin/': typeof AdminIndexRoute
+  '/packs/': typeof PacksIndexRoute
   '/rip/': typeof RipIndexRoute
   '/admin/packs/$slug': typeof AdminPacksSlugRoute
   '/packs/$id/edit': typeof PacksIdEditRoute
@@ -142,6 +149,7 @@ export interface FileRoutesByTo {
   '/packs/new': typeof PacksNewRoute
   '/rip/$slug': typeof RipSlugRoute
   '/admin': typeof AdminIndexRoute
+  '/packs': typeof PacksIndexRoute
   '/rip': typeof RipIndexRoute
   '/admin/packs/$slug': typeof AdminPacksSlugRoute
   '/packs/$id/edit': typeof PacksIdEditRoute
@@ -162,6 +170,7 @@ export interface FileRoutesById {
   '/packs/new': typeof PacksNewRoute
   '/rip/$slug': typeof RipSlugRoute
   '/admin/': typeof AdminIndexRoute
+  '/packs/': typeof PacksIndexRoute
   '/rip/': typeof RipIndexRoute
   '/admin/packs/$slug': typeof AdminPacksSlugRoute
   '/packs/$id/edit': typeof PacksIdEditRoute
@@ -183,6 +192,7 @@ export interface FileRouteTypes {
     | '/packs/new'
     | '/rip/$slug'
     | '/admin/'
+    | '/packs/'
     | '/rip/'
     | '/admin/packs/$slug'
     | '/packs/$id/edit'
@@ -201,6 +211,7 @@ export interface FileRouteTypes {
     | '/packs/new'
     | '/rip/$slug'
     | '/admin'
+    | '/packs'
     | '/rip'
     | '/admin/packs/$slug'
     | '/packs/$id/edit'
@@ -220,6 +231,7 @@ export interface FileRouteTypes {
     | '/packs/new'
     | '/rip/$slug'
     | '/admin/'
+    | '/packs/'
     | '/rip/'
     | '/admin/packs/$slug'
     | '/packs/$id/edit'
@@ -239,6 +251,7 @@ export interface RootRouteChildren {
   BookIdRoute: typeof BookIdRoute
   PacksNewRoute: typeof PacksNewRoute
   AdminIndexRoute: typeof AdminIndexRoute
+  PacksIndexRoute: typeof PacksIndexRoute
   AdminPacksSlugRoute: typeof AdminPacksSlugRoute
   PacksIdEditRoute: typeof PacksIdEditRoute
   UUsernameSlugRoute: typeof UUsernameSlugRoute
@@ -282,6 +295,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/rip/'
       preLoaderRoute: typeof RipIndexRouteImport
       parentRoute: typeof RipRoute
+    }
+    '/packs/': {
+      id: '/packs/'
+      path: '/packs'
+      fullPath: '/packs/'
+      preLoaderRoute: typeof PacksIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/admin/': {
       id: '/admin/'
@@ -394,6 +414,7 @@ const rootRouteChildren: RootRouteChildren = {
   BookIdRoute: BookIdRoute,
   PacksNewRoute: PacksNewRoute,
   AdminIndexRoute: AdminIndexRoute,
+  PacksIndexRoute: PacksIndexRoute,
   AdminPacksSlugRoute: AdminPacksSlugRoute,
   PacksIdEditRoute: PacksIdEditRoute,
   UUsernameSlugRoute: UUsernameSlugRoute,
