@@ -286,9 +286,14 @@ interface BookHit {
  * layout has to handle.
  */
 function formatAuthors(authors: ReadonlyArray<string>): string {
+  // Only ever render a single author inline. Hardcover entries routinely
+  // have 3-6 contributors (translators, illustrators, editors) which even
+  // with truncate/min-w-0 nudges the row's intrinsic min-width up enough
+  // to push the trailing Add button off-screen on the narrowest phones.
+  // The cover + title already identify the book; the rest is noise here.
   if (authors.length === 0) return "Unknown author";
-  if (authors.length <= 2) return authors.join(", ");
-  return `${authors[0]}, ${authors[1]} +${authors.length - 2} more`;
+  if (authors.length === 1) return authors[0]!;
+  return `${authors[0]} +${authors.length - 1} more`;
 }
 
 function BookSearchPanel({
