@@ -12,7 +12,7 @@
  */
 
 import { createServerFn } from '@tanstack/react-start'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 
 import { getDb } from '@/db/client'
 import {
@@ -65,6 +65,21 @@ export interface PackPayload {
   name: string
   description: string | null
   books: ReadonlyArray<BookRow>
+}
+
+/**
+ * Lightweight summary row for the pack-picker carousel on /rip.
+ * Omits the book list — the carousel only needs identity + art + a
+ * book count so it can render a cover thumbnail. The full book list is
+ * fetched lazily when the user drills into /rip/$slug.
+ */
+export interface PackSummary {
+  id: string
+  slug: string
+  name: string
+  description: string | null
+  coverImageUrl: string | null
+  bookCount: number
 }
 
 export interface AcquisitionEntry {
@@ -133,54 +148,117 @@ export const DEFAULT_PACK_SLUG = 'booker-shortlist-2024'
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Internal: load a pack + its books by slug. Used by both the
+ * default-pack fetcher (home/landing animation) and the slug-param
+ * fetcher (/rip/$slug). Throws if the slug doesn't resolve — callers
+ * can translate that into a 404.
+ */
+async function loadPackBySlug(slug: string): Promise<PackPayload> {
+  const database = await getDb()
+
+  const [pack] = await database
+    .select({
+      id: packs.id,
+      slug: packs.slug,
+      name: packs.name,
+      description: packs.description,
+    })
+    .from(packs)
+    .where(eq(packs.slug, slug))
+    .limit(1)
+
+  if (!pack) {
+    throw new Error(`[server/collection] pack "${slug}" not found.`)
+  }
+
+  const rows = await database
+    .select({
+      id: books.id,
+      title: books.title,
+      authors: books.authors,
+      coverUrl: books.coverUrl,
+      description: books.description,
+      pageCount: books.pageCount,
+      publishedYear: books.publishedYear,
+      genre: books.genre,
+      rarity: books.rarity,
+      moodTags: books.moodTags,
+    })
+    .from(packBooks)
+    .innerJoin(books, eq(packBooks.bookId, books.id))
+    .where(eq(packBooks.packId, pack.id))
+
+  return {
+    packId: pack.id,
+    slug: pack.slug,
+    name: pack.name,
+    description: pack.description,
+    books: rows,
+  }
+}
+
+/**
  * Return the books belonging to the default editorial pack. Public — no auth
  * required so the anonymous landing animation can still roll a visual pack.
  */
 export const getEditorialPackFn = createServerFn({ method: 'GET' }).handler(
   withErrorLogging('getEditorialPackFn', async (): Promise<PackPayload> => {
-    const database = await getDb()
+    return loadPackBySlug(DEFAULT_PACK_SLUG)
+  }),
+)
 
-    const [pack] = await database
+/**
+ * Fetch a specific pack by slug — used by `/rip/$slug` when the user
+ * picks a pack from the carousel. Public so anonymous users can
+ * preview; auth is enforced only when they actually commit a rip.
+ */
+export const getPackBySlugFn = createServerFn({ method: 'GET' })
+  .inputValidator((raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('getPackBySlugFn: expected { slug: string }')
+    }
+    const { slug } = raw as { slug?: unknown }
+    if (typeof slug !== 'string' || slug.length === 0) {
+      throw new Error('getPackBySlugFn: slug must be a non-empty string')
+    }
+    return { slug }
+  })
+  .handler(
+    withErrorLogging('getPackBySlugFn', async ({ data }): Promise<PackPayload> => {
+      return loadPackBySlug(data.slug)
+    }),
+  )
+
+/**
+ * List every editorial pack in the catalog, newest first, with a book
+ * count. Drives the /rip picker carousel. Kept separate from
+ * `getPackBySlugFn` so the carousel doesn't pay the cost of pulling
+ * every book in every pack just to show cover thumbnails. Public.
+ */
+export const getRipPacksFn = createServerFn({ method: 'GET' }).handler(
+  withErrorLogging('getRipPacksFn', async (): Promise<ReadonlyArray<PackSummary>> => {
+    const database = await getDb()
+    const rows = await database
       .select({
         id: packs.id,
         slug: packs.slug,
         name: packs.name,
         description: packs.description,
+        coverImageUrl: packs.coverImageUrl,
+        // Per-pack book count via a correlated aggregate. Avoids a
+        // separate N+1 pass and keeps the payload compact for the
+        // carousel.
+        bookCount: sql<number>`(
+          SELECT COUNT(*)::int
+          FROM ${packBooks}
+          WHERE ${packBooks.packId} = ${packs.id}
+        )`,
       })
       .from(packs)
-      .where(eq(packs.slug, DEFAULT_PACK_SLUG))
-      .limit(1)
+      .where(eq(packs.kind, 'editorial'))
+      .orderBy(desc(packs.createdAt))
 
-    if (!pack) {
-      throw new Error(
-        `[server/collection] pack "${DEFAULT_PACK_SLUG}" not found. Run \`pnpm db:seed\`.`,
-      )
-    }
-
-    const rows = await database
-      .select({
-        id: books.id,
-        title: books.title,
-        authors: books.authors,
-        coverUrl: books.coverUrl,
-        description: books.description,
-        pageCount: books.pageCount,
-        publishedYear: books.publishedYear,
-        genre: books.genre,
-        rarity: books.rarity,
-        moodTags: books.moodTags,
-      })
-      .from(packBooks)
-      .innerJoin(books, eq(packBooks.bookId, books.id))
-      .where(eq(packBooks.packId, pack.id))
-
-    return {
-      packId: pack.id,
-      slug: pack.slug,
-      name: pack.name,
-      description: pack.description,
-      books: rows,
-    }
+    return rows
   }),
 )
 
