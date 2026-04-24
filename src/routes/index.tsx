@@ -5,6 +5,7 @@ import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import { rarityCounts } from "@/lib/cards/filter";
 import { RARITY_STYLES } from "@/lib/cards/style";
 import type { Rarity } from "@/lib/cards/types";
+import { RarityGemRow } from "@/components/RarityGemRow";
 
 /**
  * Home route.
@@ -271,14 +272,6 @@ function Stat({
 // Featured pack
 // ─────────────────────────────────────────────────────────────────────────────
 
-const RARITY_DISPLAY_ORDER: ReadonlyArray<Rarity> = [
-  "legendary",
-  "foil",
-  "rare",
-  "uncommon",
-  "common",
-];
-
 function FeaturedPackCard({
   name,
   description,
@@ -314,26 +307,18 @@ function FeaturedPackCard({
         </Link>
       </div>
 
-      {/* Rarity spread — compact strip so the user sees what they're
-          rolling into. Counts are static per pack, so this is safe to
-          precompute. */}
-      <ul className="mt-5 grid grid-cols-5 gap-2">
-        {RARITY_DISPLAY_ORDER.map((r) => {
-          const style = RARITY_STYLES[r];
-          const count = rarityBreakdown[r];
-          return (
-            <li
-              key={r}
-              className={`rounded-lg border border-[var(--line)] bg-[var(--surface)] p-2 text-center ${style.ring}`}
-            >
-              <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-                {style.label}
-              </p>
-              <p className="mt-0.5 text-sm font-bold text-[var(--sea-ink)]">{count}</p>
-            </li>
-          );
-        })}
-      </ul>
+      {/* Rarity spread — shared RarityGemRow component in `count`
+          mode. Matches the visual language on /collection (same
+          tinted gems, same tap-to-open popovers) but swaps the
+          progress ring for a soft tint since the pack has no
+          owned-of-total dimension. */}
+      <div className="mt-5">
+        <RarityGemRow
+          mode="count"
+          counts={rarityBreakdown}
+          scopeLabel="in this pack"
+        />
+      </div>
     </section>
   );
 }
