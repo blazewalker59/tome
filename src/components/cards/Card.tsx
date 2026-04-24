@@ -15,6 +15,14 @@ export interface CardProps {
    * where the card isn't yet associated with a navigable detail page.
    */
   detailHref?: string;
+  /**
+   * Controls the cover's `loading` attribute. Defaults to `eager`
+   * because most use sites (rip reveal, book detail) render a single
+   * card and want it visible immediately. Large grids (e.g. the
+   * collection page) opt into `lazy` for off-screen cards so we
+   * only eagerly fetch the above-the-fold tiles.
+   */
+  coverLoading?: "eager" | "lazy";
 }
 
 /**
@@ -29,7 +37,7 @@ export interface CardProps {
  * above the button on the back face with a higher z-index + its own
  * click handler that stops propagation so navigating doesn't also flip.
  */
-export function Card({ card, startFlipped = false, detailHref }: CardProps) {
+export function Card({ card, startFlipped = false, detailHref, coverLoading = "eager" }: CardProps) {
   const [flipped, setFlipped] = useState(startFlipped);
   const rarity = RARITY_STYLES[card.rarity];
   const genreLabel = formatGenre(card.genre);
@@ -59,9 +67,9 @@ export function Card({ card, startFlipped = false, detailHref }: CardProps) {
             <img
               src={card.coverUrl}
               alt=""
-              loading="eager"
+              loading={coverLoading}
               decoding="async"
-              fetchPriority="high"
+              fetchPriority={coverLoading === "eager" ? "high" : "low"}
               className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
             />
             {card.rarity === "foil" && (

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { ChevronDown, Info } from "lucide-react";
 import { Card } from "@/components/cards/Card";
@@ -607,19 +607,142 @@ function CardGrid({
   cards: ReadonlyArray<{ id: string }>;
   cardById: ReadonlyMap<string, CardData>;
 }) {
+  // Gate the grid behind a skeleton until the above-the-fold covers
+  // have loaded. The largest grid (desktop lg) shows 5 columns × ~2
+  // rows initially, so preloading 10 covers the visible area on every
+  // breakpoint without over-fetching. Images past the tenth stay lazy
+  // so long collections don't hammer the network up-front.
+  const ABOVE_THE_FOLD = 10;
+  const preloadUrls = useMemo(() => {
+    const urls: string[] = [];
+    for (const c of cards) {
+      if (urls.length >= ABOVE_THE_FOLD) break;
+      const card = cardById.get(c.id);
+      if (card?.coverUrl) urls.push(card.coverUrl);
+    }
+    return urls;
+  }, [cards, cardById]);
+  // 5s ceiling per the design decision — a single slow/broken CDN
+  // link should never keep the user staring at skeletons indefinitely.
+  // After the timeout we reveal regardless and let the `<img>` tags
+  // fall back to their natural broken-image behavior (Card already
+  // renders a neutral tile when coverUrl is null).
+  const ready = useImagesReady(preloadUrls, 5000);
   return (
     <div className="grid grid-cols-2 gap-4 justify-items-center sm:grid-cols-3 sm:gap-6 md:grid-cols-4 lg:grid-cols-5">
-      {cards.map((c) => {
+      {cards.map((c, i) => {
         const card = cardById.get(c.id);
         if (!card) return null;
+        // While gating, render a skeleton for every cell so the
+        // layout doesn't reflow on reveal. Swap to the real card
+        // in one commit once images are ready (or the timeout
+        // fires). Beyond the above-the-fold window, images lazy-
+        // load as the user scrolls; no skeleton needed there.
+        if (!ready) {
+          return <CardSkeleton key={c.id} />;
+        }
         return (
           <div key={c.id} className="flex w-full flex-col items-center gap-2">
-            <Card card={card} detailHref={`/book/${c.id}`} />
+            <Card
+              card={card}
+              detailHref={`/book/${c.id}`}
+              // Pass lazy to off-fold cards so we only eagerly load
+              // the first ten. `i` maps to grid position because the
+              // parent sorted the list.
+              coverLoading={i < ABOVE_THE_FOLD ? "eager" : "lazy"}
+            />
           </div>
         );
       })}
     </div>
   );
+}
+
+/**
+ * Placeholder tile that mirrors a `<Card>`'s outer dimensions and
+ * 2:3 aspect ratio so the grid doesn't reflow when real cards
+ * mount in. Uses the page's existing skeleton background token so
+ * it reads as "loading" rather than "empty content". A soft
+ * animated shimmer comes from the `.skeleton` utility in
+ * styles.css — keeps the loading cue consistent across surfaces.
+ */
+function CardSkeleton() {
+  return (
+    <div className="flex w-full flex-col items-center gap-2">
+      <div
+        aria-hidden
+        className="skeleton aspect-[2/3] w-full max-w-[320px] rounded-2xl sm:max-w-[280px]"
+      />
+    </div>
+  );
+}
+
+/**
+ * Resolve to `true` once every URL in `urls` has either loaded or
+ * errored, or after `timeoutMs` — whichever comes first. An empty
+ * input set resolves immediately so an empty-grid render path
+ * (filtered-to-nothing search) doesn't get stuck on a skeleton.
+ *
+ * Implementation uses raw `Image` objects rather than `<img>` tags
+ * with `onLoad` handlers because we want to start the network
+ * fetch *before* the grid actually renders — the skeleton's whole
+ * job is to occupy the layout while the browser is hitting the
+ * wire. Relying on render-time <img> elements would defer the
+ * fetch until we've decided to show them, undoing the point.
+ *
+ * Each Image listener is cleaned up on unmount so an effect-
+ * restart (cards prop changes mid-flight) doesn't leak or
+ * race with stale resolutions from the prior URL set.
+ */
+function useImagesReady(urls: ReadonlyArray<string>, timeoutMs: number): boolean {
+  const [ready, setReady] = useState(urls.length === 0);
+  // Stabilise the dependency — a new array identity each render
+  // would restart the effect every time even when the URLs are
+  // unchanged. Joining gives a cheap structural key; the set is
+  // small (≤10) so the string concat cost is negligible.
+  const key = urls.join("|");
+  useEffect(() => {
+    if (urls.length === 0) {
+      setReady(true);
+      return;
+    }
+    setReady(false);
+    let remaining = urls.length;
+    let cancelled = false;
+    const imgs: HTMLImageElement[] = [];
+    const done = () => {
+      if (cancelled) return;
+      remaining -= 1;
+      if (remaining <= 0) setReady(true);
+    };
+    for (const u of urls) {
+      const img = new Image();
+      // Both paths count toward "resolved" — an error shouldn't
+      // leave us counting down forever. The user still gets the
+      // neutral tile fallback on the real render.
+      img.onload = done;
+      img.onerror = done;
+      img.src = u;
+      imgs.push(img);
+    }
+    const t = window.setTimeout(() => {
+      if (!cancelled) setReady(true);
+    }, timeoutMs);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+      // Detach handlers; browsers will keep the in-flight fetch
+      // warm in cache so subsequent <img> uses are instant, but
+      // we don't want stale `done` calls flipping state on a
+      // swapped-out URL set.
+      for (const img of imgs) {
+        img.onload = null;
+        img.onerror = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: stabilised via `key`
+  }, [key, timeoutMs]);
+  return ready;
 }
 
 function EmptyState() {

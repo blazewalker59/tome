@@ -805,3 +805,39 @@ body {
 body {
   overflow-x: clip;
 }
+
+/* Loading skeleton — a soft shimmering placeholder tile. Used by
+   the collection grid to gate above-the-fold cards behind their
+   real cover-image load so the page doesn't pop in with half-
+   loaded covers. The gradient reuses the app's sand/foam tokens
+   (light theme) and falls back to a neutral surface tint in
+   dark mode so the shimmer remains readable on both. The motion
+   is disabled when the user prefers reduced motion. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--sand) 60%, var(--foam)) 0%,
+      color-mix(in oklab, var(--foam) 85%, var(--sand)) 50%,
+      color-mix(in oklab, var(--sand) 60%, var(--foam)) 100%
+    );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
