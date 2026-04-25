@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useRouter } from "@tanstack/react-router";
-import { BookOpen, ChevronLeft, Gem, Info } from "lucide-react";
+import { BookOpen, ChevronLeft, Info, Sparkles } from "lucide-react";
 import { PackRip } from "@/components/cards/PackRip";
 import { PackContentsSheet } from "@/components/PackContentsSheet";
 import { useToast } from "@/components/Toast";
@@ -203,13 +203,16 @@ export function RipPackShell({
             shards they currently have. Dropped the "Owned" book count
             — it's not part of the decision here and clutters the
             header. Balance turns red when they can't afford the pack
-            so the reason for the gate below is obvious at a glance. */}
+            so the reason for the gate below is obvious at a glance.
+            Icon is `Sparkles` tinted lagoon — same glyph the profile
+            dropdown uses for the shard balance, so the visual language
+            for "shards" stays consistent across the app. */}
         <div className="mt-1 flex items-center justify-center gap-3 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
           <span className="inline-flex items-center gap-1.5">
             Cost
             <span className="inline-flex items-center gap-1 text-[var(--sea-ink)]">
               {economy.packCost}
-              <Gem aria-hidden className="h-3.5 w-3.5" />
+              <Sparkles aria-hidden className="h-3.5 w-3.5 text-[var(--lagoon)]" />
             </span>
           </span>
           <span aria-hidden>·</span>
@@ -223,7 +226,14 @@ export function RipPackShell({
               }`}
             >
               {collection.shardBalance}
-              <Gem aria-hidden className="h-3.5 w-3.5" />
+              <Sparkles
+                aria-hidden
+                className={`h-3.5 w-3.5 ${
+                  canAfford
+                    ? "text-[var(--lagoon)]"
+                    : "text-[color:var(--rarity-legendary)]"
+                }`}
+              />
             </span>
           </span>
         </div>
@@ -287,7 +297,7 @@ function InsufficientShardsState({
       <div className="mx-auto max-w-md">
         <div className="island-shell rounded-3xl p-6 text-center sm:p-8">
           <div className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-[color:var(--rarity-legendary-soft)] text-[color:var(--rarity-legendary)]">
-            <Gem aria-hidden className="h-6 w-6" />
+            <Sparkles aria-hidden className="h-6 w-6" />
           </div>
           <p className="island-kicker">Not enough shards</p>
           <h2 className="display-title mt-2 text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">

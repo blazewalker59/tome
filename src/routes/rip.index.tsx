@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion, type PanInfo } from "motion/react";
+import { Sparkles } from "lucide-react";
 import { getRipPacksFn, getShardBalanceFn, type PackSummary } from "@/server/collection";
 import { packGradient, packBoxShadow } from "@/lib/packs/gradient";
 
@@ -86,8 +87,13 @@ function RipPickerPage() {
           Choose your pack
         </h1>
         {shards !== null && (
-          <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
-            Shards <span className="text-[var(--sea-ink)]">{shards}</span>
+          // Balance chip uses the same Sparkles/lagoon glyph the
+          // profile dropdown and /rip/$slug header use for shards, so
+          // "that sparkly thing is the currency" reads the same way
+          // everywhere.
+          <p className="mt-1 inline-flex items-center justify-center gap-1 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+            <span className="tabular-nums text-[var(--sea-ink)]">{shards}</span>
+            <Sparkles aria-hidden className="h-3.5 w-3.5 text-[var(--lagoon)]" />
           </p>
         )}
       </header>
