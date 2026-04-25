@@ -6,21 +6,29 @@ import { getRipPacksFn, getShardBalanceFn, type PackSummary } from "@/server/col
 import { packGradient, packBoxShadow } from "@/lib/packs/gradient";
 
 /**
- * /rip — pack picker.
+ * /rip — rip hub.
  *
- * Top-level layer of the two-layer rip flow. Shows every editorial pack
- * as a carousel with the active pack centered and neighboring packs
- * peeking in from either side. Tapping the center pack navigates to
- * `/rip/$slug` for the tear-open experience.
+ * Top-level entry to the rip flow, structured as a hub of curated
+ * sections rather than a single full-bleed carousel:
  *
- * Public: anonymous users can browse the catalog; auth is enforced
+ *   1. Editor's picks — the original swipe carousel, now contained in
+ *      a fixed-height stage so other sections can ride beneath it on
+ *      the same scroll surface. Tapping the center pack navigates to
+ *      `/rip/$slug` for the tear-open experience.
+ *   2. Recently shared by community — placeholder strip. No server fn
+ *      exists yet for listing public user packs, so the section is
+ *      scaffolded with dashed tiles + a "start building" link to
+ *      /packs/new. When the data fn ships the placeholders are
+ *      swapped for real tiles.
+ *
+ * Public: anonymous users can browse both sections; auth is enforced
  * only at /rip/$slug when they try to actually open a pack. This
  * matches the "see what's available before signing up" product intent
  * without letting anons burn state.
  *
- * Minimum slot count is padded with placeholders so the carousel's
- * peek-in framing still reads when only one pack exists. That'll
- * happen often early in the app's life.
+ * Editorial slot count is padded with placeholders to MIN_SLOTS so the
+ * carousel's peek-in framing still reads when only one real pack
+ * exists — common early in the app's life.
  */
 export const Route = createFileRoute("/rip/")({
   loader: async () => {
@@ -80,8 +88,14 @@ function RipPickerPage() {
   const activeSlot = slots[activeIndex];
 
   return (
-    <main className="viewport-stage">
-      <header className="px-4 pt-3 pb-2 text-center sm:pt-5 sm:pb-3">
+    // Hub layout: scrollable page with discrete sections instead of a
+    // single full-viewport stage. The carousel still stars, but it
+    // sits inside a fixed-height stage so the "Recently shared by
+    // community" placeholder strip can ride underneath it on the same
+    // scroll surface. Dropped `viewport-stage` for `page-wrap` —
+    // matches /index, /library/* layouts.
+    <main className="page-wrap space-y-8 px-4 pb-10 pt-6 sm:space-y-10 sm:pt-10">
+      <header className="text-center">
         {/* Single h1 — dropped the "Rip a pack" kicker because it just
             restated what the h1 already says. "Choose your pack" is
             the action, that's all the framing the page needs. */}
@@ -102,88 +116,200 @@ function RipPickerPage() {
         )}
       </header>
 
-      {/* Stage. `onPanEnd` on the outer wrapper handles swipe
-          navigation; motion's built-in tap-vs-pan heuristic has a ~3px
-          movement threshold, so small taps fall through to the
-          child buttons cleanly. We kept the animation transform on a
-          plain `motion.div` (not `motion.button`) for each pack so
-          `disabled` attribute flipping can't interrupt in-flight
-          clicks. */}
-      <motion.div
-        className="relative flex min-h-0 flex-1 items-center justify-center touch-none select-none"
-        onPanEnd={handlePanEnd}
-      >
-        <div className="relative h-full w-full">
-          {slots.map((slot, idx) => (
-            <PackCarouselItem
-              key={slot.kind === "pack" ? slot.pack.id : slot.id}
-              slot={slot}
-              offset={idx - activeIndex}
-              onClick={() => {
-                if (idx === activeIndex) openActive();
-                else setActiveIndex(idx);
-              }}
-            />
-          ))}
-        </div>
-      </motion.div>
+      {/* ----- Editor's picks ----- */}
+      <section aria-labelledby="rip-editorial-heading">
+        <SectionHeading id="rip-editorial-heading" kicker="Curated by Tome">
+          Editor&rsquo;s picks
+        </SectionHeading>
 
-      {/* Pack metadata under the carousel — only shown for real packs.
-          Placeholder stays visual-only to keep the "more coming" vibe
-          without advertising an empty name. */}
-      <div className="px-4 pb-3 text-center">
-        {activeSlot?.kind === "pack" ? (
-          <>
-            <h2 className="text-base font-semibold text-[var(--sea-ink)]">
-              {activeSlot.pack.name}
-            </h2>
-            {activeSlot.pack.description && (
-              <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
-                {activeSlot.pack.description}
-              </p>
-            )}
-            <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
-              {activeSlot.pack.bookCount} books sealed
-            </p>
-            <Link
-              to="/rip/$slug"
-              params={{ slug: activeSlot.pack.slug }}
-              className="btn-primary mt-3 inline-flex w-full max-w-[320px] items-center justify-center rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
-            >
-              Open pack
-            </Link>
-          </>
-        ) : (
-          <p className="text-xs uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
-            More packs coming soon
-          </p>
+        {/* Stage. Fixed-height so the carousel composes with the rest
+            of the page rather than swallowing the viewport. clamp keeps
+            it readable on short phones without sprawling on tablets.
+            `onPanEnd` on the wrapper handles swipe nav; motion's
+            tap-vs-pan heuristic (~3px) lets small taps reach the child
+            buttons. Animation transforms live on `motion.div` (not
+            `motion.button`) so `disabled` flipping mid-tap can't kill
+            in-flight clicks. */}
+        <motion.div
+          className="relative flex items-center justify-center touch-none select-none"
+          style={{ height: "clamp(380px, 56vh, 480px)" }}
+          onPanEnd={handlePanEnd}
+        >
+          <div className="relative h-full w-full">
+            {slots.map((slot, idx) => (
+              <PackCarouselItem
+                key={slot.kind === "pack" ? slot.pack.id : slot.id}
+                slot={slot}
+                offset={idx - activeIndex}
+                onClick={() => {
+                  if (idx === activeIndex) openActive();
+                  else setActiveIndex(idx);
+                }}
+              />
+            ))}
+          </div>
+        </motion.div>
+
+        {/* Pagination dots — moved above the metadata so the dots sit
+            directly under the carousel they describe; the metadata +
+            CTA then anchor the section bottom. */}
+        {slots.length > 1 && (
+          <div className="mt-2 flex items-center justify-center gap-1.5">
+            {slots.map((slot, idx) => (
+              <button
+                key={slot.kind === "pack" ? slot.pack.id : slot.id}
+                type="button"
+                aria-label={
+                  slot.kind === "pack" ? `Go to ${slot.pack.name}` : `Upcoming pack ${idx + 1}`
+                }
+                onClick={() => setActiveIndex(idx)}
+                className={`h-1.5 rounded-full transition-all ${
+                  idx === activeIndex
+                    ? "w-6 bg-[var(--sea-ink)]"
+                    : "w-1.5 bg-[var(--sea-ink-soft)]/50"
+                }`}
+              />
+            ))}
+          </div>
         )}
+
+        {/* Pack metadata + CTA. Real packs get name/description/CTA;
+            placeholders get a single muted line so the section never
+            advertises an empty pack name. */}
+        <div className="mt-4 text-center">
+          {activeSlot?.kind === "pack" ? (
+            <>
+              <h3 className="text-base font-semibold text-[var(--sea-ink)]">
+                {activeSlot.pack.name}
+              </h3>
+              {activeSlot.pack.description && (
+                <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+                  {activeSlot.pack.description}
+                </p>
+              )}
+              <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
+                {activeSlot.pack.bookCount} books sealed
+              </p>
+              <Link
+                to="/rip/$slug"
+                params={{ slug: activeSlot.pack.slug }}
+                className="btn-primary mt-3 inline-flex w-full max-w-[320px] items-center justify-center rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
+              >
+                Open pack
+              </Link>
+            </>
+          ) : (
+            <p className="text-xs uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
+              More packs coming soon
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* ----- Recently shared by community ----- */}
+      {/* Scaffolded placeholder. There is no server fn yet for listing
+          public user packs; rather than block the hub redesign on that
+          backend work, this section renders dashed tiles in a swipeable
+          row so the slot is real (and design-tested) the day the data
+          arrives. When that fn lands, the .map below becomes a render
+          of the response and the placeholder branch is dropped. */}
+      <CommunityPacksPlaceholder />
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Section heading
+
+/**
+ * Shared heading style for hub sections. Kicker on top, big title
+ * underneath. Mirrors the framing used elsewhere in the app (home
+ * hero, library shelves) so the hub doesn't introduce a third text
+ * vocabulary.
+ */
+function SectionHeading({
+  id,
+  kicker,
+  children,
+}: {
+  id?: string;
+  kicker?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mb-3 px-1 text-center sm:text-left">
+      {kicker && <p className="island-kicker">{kicker}</p>}
+      <h2
+        id={id}
+        className="mt-1 display-title text-lg font-bold text-[var(--sea-ink)] sm:text-xl"
+      >
+        {children}
+      </h2>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Community packs placeholder
+//
+// Dashed-tile horizontal scroller standing in for the future
+// "user-made packs" feed. Tile silhouette matches the carousel pack
+// proportions (2:3) so the section reads as the same kind of object,
+// just empty. No interactivity — users can't tap into a placeholder
+// because there's nothing on the other side yet. When the server fn
+// for listing public user packs ships, the array below is replaced
+// with the loader result and tiles get wrapped in <Link>s.
+
+const COMMUNITY_PLACEHOLDER_COUNT = 4;
+
+function CommunityPacksPlaceholder() {
+  return (
+    <section aria-labelledby="rip-community-heading">
+      <SectionHeading id="rip-community-heading" kicker="Coming soon">
+        Recently shared by community
+      </SectionHeading>
+
+      {/* Edge-to-edge horizontal strip with a small left/right gutter
+          via padding-inline. `overflow-x-auto` + `snap-x` gives a
+          native swipe feel; `-mx-4 px-4` lets the row run flush to
+          the page edges while keeping the page-wrap padding intact
+          for sibling sections. */}
+      <div className="-mx-4 overflow-x-auto px-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <ul className="flex snap-x snap-mandatory gap-3">
+          {Array.from({ length: COMMUNITY_PLACEHOLDER_COUNT }).map((_, i) => (
+            <li
+              key={i}
+              className="snap-start shrink-0"
+              style={{ width: "min(42vw, 160px)" }}
+            >
+              <div
+                className="flex flex-col items-center justify-end overflow-hidden rounded-2xl border-2 border-dashed p-3 text-center text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]"
+                style={{
+                  aspectRatio: "2 / 3",
+                  borderColor:
+                    "color-mix(in oklab, var(--sea-ink-soft) 50%, transparent)",
+                  background:
+                    "color-mix(in oklab, var(--surface) 40%, transparent)",
+                }}
+              >
+                <span aria-hidden>—</span>
+              </div>
+            </li>
+          ))}
+        </ul>
       </div>
 
-      {/* Pagination dots. Cheap orientation cue; only rendered if we
-          have at least one real pack (placeholders aren't navigable
-          destinations, but they count as slots so user doesn't feel
-          the carousel "jumps" past them). */}
-      {slots.length > 1 && (
-        <div className="flex items-center justify-center gap-1.5 pb-4">
-          {slots.map((slot, idx) => (
-            <button
-              key={slot.kind === "pack" ? slot.pack.id : slot.id}
-              type="button"
-              aria-label={
-                slot.kind === "pack" ? `Go to ${slot.pack.name}` : `Upcoming pack ${idx + 1}`
-              }
-              onClick={() => setActiveIndex(idx)}
-              className={`h-1.5 rounded-full transition-all ${
-                idx === activeIndex
-                  ? "w-6 bg-[var(--sea-ink)]"
-                  : "w-1.5 bg-[var(--sea-ink-soft)]/50"
-              }`}
-            />
-          ))}
-        </div>
-      )}
-    </main>
+      <p className="mt-3 text-center text-xs text-[var(--sea-ink-soft)] sm:text-left">
+        User-built packs will land here soon. Want to make one?{" "}
+        <Link
+          to="/packs/new"
+          className="font-medium text-[var(--sea-ink)] underline decoration-dotted underline-offset-2"
+        >
+          Start building
+        </Link>
+        .
+      </p>
+    </section>
   );
 }
 
