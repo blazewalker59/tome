@@ -11,23 +11,30 @@ import { packGradient, packBoxShadow } from "@/lib/packs/gradient";
  * Top-level entry to the rip flow, structured as a hub of curated
  * sections rather than a single full-bleed carousel:
  *
- *   1. Editor's picks — the original swipe carousel, now contained in
- *      a fixed-height stage so other sections can ride beneath it on
- *      the same scroll surface. Tapping the center pack navigates to
- *      `/rip/$slug` for the tear-open experience.
- *   2. Recently shared by community — placeholder strip. No server fn
- *      exists yet for listing public user packs, so the section is
- *      scaffolded with dashed tiles + a "start building" link to
- *      /packs/new. When the data fn ships the placeholders are
- *      swapped for real tiles.
+ *   1. Editor's picks — swipe carousel of editorial packs. Tapping
+ *      the centered pack navigates to `/rip/$slug` for the tear-open
+ *      experience.
+ *   2. Recently shared by community — same carousel mechanics, but
+ *      every slot is a placeholder. No server fn exists yet for
+ *      listing public user packs; the section is scaffolded with
+ *      dashed tiles + a "start building" link to /packs/new so the
+ *      design slot is real (and sized correctly) the day the data
+ *      arrives. When that fn ships the slots-builder feeds real
+ *      pack rows into PackCarousel and the placeholder branch is
+ *      dropped.
+ *
+ * Both carousels share `PackCarousel` so swipe physics, tap-vs-pan
+ * heuristics, peek-in framing, and pagination dots stay identical
+ * across sections. Per-section concerns (active-pack metadata, CTA,
+ * navigation target) are passed in as render/callback props.
  *
  * Public: anonymous users can browse both sections; auth is enforced
  * only at /rip/$slug when they try to actually open a pack. This
  * matches the "see what's available before signing up" product intent
  * without letting anons burn state.
  *
- * Editorial slot count is padded with placeholders to MIN_SLOTS so the
- * carousel's peek-in framing still reads when only one real pack
+ * Editorial slot count is padded with placeholders to MIN_SLOTS so
+ * the carousel's peek-in framing still reads when only one real pack
  * exists — common early in the app's life.
  */
 export const Route = createFileRoute("/rip/")({
@@ -49,11 +56,11 @@ type Slot = { kind: "pack"; pack: PackSummary } | { kind: "placeholder"; id: str
 function RipPickerPage() {
   const { packs, shards } = Route.useLoaderData();
   const navigate = useNavigate();
-  const [activeIndex, setActiveIndex] = useState(0);
 
-  // Slots = real packs + placeholders padded to MIN_SLOTS. Stable ids
-  // on placeholders so motion layout effects have a key to track.
-  const slots = useMemo<Slot[]>(() => {
+  // Editorial slots = real packs + placeholders padded to MIN_SLOTS.
+  // Stable ids on placeholders so motion layout effects have a key
+  // to track.
+  const editorialSlots = useMemo<Slot[]>(() => {
     const real = packs.map<Slot>((pack) => ({ kind: "pack", pack }));
     const padded = [...real];
     let i = 0;
@@ -63,36 +70,24 @@ function RipPickerPage() {
     return padded;
   }, [packs]);
 
-  function gotoDelta(delta: number) {
-    const next = Math.max(0, Math.min(slots.length - 1, activeIndex + delta));
-    setActiveIndex(next);
-  }
-
-  function handlePanEnd(_: unknown, info: PanInfo) {
-    // Threshold-gated swipe navigation. Matches the feel of the
-    // post-rip card reveal (same module uses the same thresholds) so
-    // users get a consistent gesture vocabulary across the flow.
-    const distance = Math.abs(info.offset.x) > 60;
-    const velocity = Math.abs(info.velocity.x) > 400;
-    if (distance || velocity) {
-      gotoDelta(info.offset.x < 0 ? 1 : -1);
-    }
-  }
-
-  function openActive() {
-    const active = slots[activeIndex];
-    if (active?.kind !== "pack") return;
-    navigate({ to: "/rip/$slug", params: { slug: active.pack.slug } });
-  }
-
-  const activeSlot = slots[activeIndex];
+  // Community slots = all placeholders for now. Sized intentionally
+  // (5) so the carousel has visible neighbours on either side of the
+  // centered tile — same peek-in framing as editorial. When the
+  // user-pack feed lands these become real rows.
+  const communitySlots = useMemo<Slot[]>(
+    () =>
+      Array.from({ length: 5 }, (_, i) => ({
+        kind: "placeholder",
+        id: `community-${i}`,
+      })),
+    [],
+  );
 
   return (
     // Hub layout: scrollable page with discrete sections instead of a
-    // single full-viewport stage. The carousel still stars, but it
-    // sits inside a fixed-height stage so the "Recently shared by
-    // community" placeholder strip can ride underneath it on the same
-    // scroll surface. Dropped `viewport-stage` for `page-wrap` —
+    // single full-viewport stage. Both carousels live on the same
+    // scroll surface; the page itself owns vertical rhythm via
+    // page-wrap + space-y. Dropped `viewport-stage` for `page-wrap` —
     // matches /index, /library/* layouts.
     <main className="page-wrap space-y-8 px-4 pb-10 pt-6 sm:space-y-10 sm:pt-10">
       <header className="text-center">
@@ -122,98 +117,73 @@ function RipPickerPage() {
           Editor&rsquo;s picks
         </SectionHeading>
 
-        {/* Stage. Fixed-height so the carousel composes with the rest
-            of the page rather than swallowing the viewport. clamp keeps
-            it readable on short phones without sprawling on tablets.
-            `onPanEnd` on the wrapper handles swipe nav; motion's
-            tap-vs-pan heuristic (~3px) lets small taps reach the child
-            buttons. Animation transforms live on `motion.div` (not
-            `motion.button`) so `disabled` flipping mid-tap can't kill
-            in-flight clicks. */}
-        <motion.div
-          className="relative flex items-center justify-center touch-none select-none"
-          style={{ height: "clamp(380px, 56vh, 480px)" }}
-          onPanEnd={handlePanEnd}
-        >
-          <div className="relative h-full w-full">
-            {slots.map((slot, idx) => (
-              <PackCarouselItem
-                key={slot.kind === "pack" ? slot.pack.id : slot.id}
-                slot={slot}
-                offset={idx - activeIndex}
-                onClick={() => {
-                  if (idx === activeIndex) openActive();
-                  else setActiveIndex(idx);
-                }}
-              />
-            ))}
-          </div>
-        </motion.div>
-
-        {/* Pagination dots — moved above the metadata so the dots sit
-            directly under the carousel they describe; the metadata +
-            CTA then anchor the section bottom. */}
-        {slots.length > 1 && (
-          <div className="mt-2 flex items-center justify-center gap-1.5">
-            {slots.map((slot, idx) => (
-              <button
-                key={slot.kind === "pack" ? slot.pack.id : slot.id}
-                type="button"
-                aria-label={
-                  slot.kind === "pack" ? `Go to ${slot.pack.name}` : `Upcoming pack ${idx + 1}`
-                }
-                onClick={() => setActiveIndex(idx)}
-                className={`h-1.5 rounded-full transition-all ${
-                  idx === activeIndex
-                    ? "w-6 bg-[var(--sea-ink)]"
-                    : "w-1.5 bg-[var(--sea-ink-soft)]/50"
-                }`}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Pack metadata + CTA. Real packs get name/description/CTA;
-            placeholders get a single muted line so the section never
-            advertises an empty pack name. */}
-        <div className="mt-4 text-center">
-          {activeSlot?.kind === "pack" ? (
-            <>
-              <h3 className="text-base font-semibold text-[var(--sea-ink)]">
-                {activeSlot.pack.name}
-              </h3>
-              {activeSlot.pack.description && (
-                <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
-                  {activeSlot.pack.description}
+        <PackCarousel
+          slots={editorialSlots}
+          // Tapping the active pack opens the tear-flow. Tapping a
+          // neighbour just selects it (handled internally by
+          // PackCarousel — this callback only fires on active taps).
+          onActivate={(slot) => {
+            if (slot.kind !== "pack") return;
+            navigate({ to: "/rip/$slug", params: { slug: slot.pack.slug } });
+          }}
+          renderMetadata={(slot) =>
+            slot.kind === "pack" ? (
+              <>
+                <h3 className="text-base font-semibold text-[var(--sea-ink)]">
+                  {slot.pack.name}
+                </h3>
+                {slot.pack.description && (
+                  <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+                    {slot.pack.description}
+                  </p>
+                )}
+                <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
+                  {slot.pack.bookCount} books sealed
                 </p>
-              )}
-              <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
-                {activeSlot.pack.bookCount} books sealed
+                <Link
+                  to="/rip/$slug"
+                  params={{ slug: slot.pack.slug }}
+                  className="btn-primary mt-3 inline-flex w-full max-w-[320px] items-center justify-center rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
+                >
+                  Open pack
+                </Link>
+              </>
+            ) : (
+              <p className="text-xs uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
+                More packs coming soon
               </p>
-              <Link
-                to="/rip/$slug"
-                params={{ slug: activeSlot.pack.slug }}
-                className="btn-primary mt-3 inline-flex w-full max-w-[320px] items-center justify-center rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
-              >
-                Open pack
-              </Link>
-            </>
-          ) : (
-            <p className="text-xs uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
-              More packs coming soon
-            </p>
-          )}
-        </div>
+            )
+          }
+        />
       </section>
 
       {/* ----- Recently shared by community ----- */}
-      {/* Scaffolded placeholder. There is no server fn yet for listing
-          public user packs; rather than block the hub redesign on that
-          backend work, this section renders dashed tiles in a swipeable
-          row so the slot is real (and design-tested) the day the data
-          arrives. When that fn lands, the .map below becomes a render
-          of the response and the placeholder branch is dropped. */}
-      <CommunityPacksPlaceholder />
+      <section aria-labelledby="rip-community-heading">
+        <SectionHeading id="rip-community-heading" kicker="Coming soon">
+          Recently shared by community
+        </SectionHeading>
+
+        {/* Same carousel, all-placeholder slots, smaller stage so it
+            visually subordinates to editorial without losing the
+            peek-in framing. No metadata renderer — the trailing
+            "start building" link below is the section's CTA. */}
+        <PackCarousel
+          slots={communitySlots}
+          stageHeight="clamp(300px, 44vh, 380px)"
+          tileWidth="min(48vw, 180px)"
+        />
+
+        <p className="mt-4 text-center text-xs text-[var(--sea-ink-soft)]">
+          User-built packs will land here soon. Want to make one?{" "}
+          <Link
+            to="/packs/new"
+            className="font-medium text-[var(--sea-ink)] underline decoration-dotted underline-offset-2"
+          >
+            Start building
+          </Link>
+          .
+        </p>
+      </section>
     </main>
   );
 }
@@ -250,66 +220,132 @@ function SectionHeading({
 }
 
 // ---------------------------------------------------------------------------
-// Community packs placeholder
+// PackCarousel
 //
-// Dashed-tile horizontal scroller standing in for the future
-// "user-made packs" feed. Tile silhouette matches the carousel pack
-// proportions (2:3) so the section reads as the same kind of object,
-// just empty. No interactivity — users can't tap into a placeholder
-// because there's nothing on the other side yet. When the server fn
-// for listing public user packs ships, the array below is replaced
-// with the loader result and tiles get wrapped in <Link>s.
+// Reusable swipeable carousel: peek-in framing, dot pagination,
+// optional metadata strip below the active tile. Both the editorial
+// and community sections render through this so swipe physics and
+// visual language stay identical across the hub.
+//
+// Each instance owns its own activeIndex; sections are independent
+// and don't share the swipe pointer. `onActivate` fires when the
+// user taps the *centered* tile — neighbours just shift focus to
+// themselves and never trigger activation. That keeps the gesture
+// vocabulary simple: tap-to-select for off-center, tap-to-open for
+// center.
 
-const COMMUNITY_PLACEHOLDER_COUNT = 4;
+interface PackCarouselProps {
+  slots: Slot[];
+  /**
+   * Called when the centered slot is tapped. Receives the slot so the
+   * parent can branch on `kind` — placeholder taps are surfaced too,
+   * but the editorial section ignores them (and community has no
+   * activation target yet). If unset, taps on the centered tile are
+   * a no-op.
+   */
+  onActivate?: (slot: Slot) => void;
+  /**
+   * Optional metadata block rendered below the carousel + dots.
+   * Receives the currently centered slot so the consumer can branch
+   * on real-pack vs placeholder. Editorial uses this for the
+   * name/description/CTA; community omits it.
+   */
+  renderMetadata?: (slot: Slot) => React.ReactNode;
+  /** CSS height for the carousel stage. Defaults to the editorial size. */
+  stageHeight?: string;
+  /** Per-tile width passed through to PackCarouselItem. */
+  tileWidth?: string;
+}
 
-function CommunityPacksPlaceholder() {
+function PackCarousel({
+  slots,
+  onActivate,
+  renderMetadata,
+  stageHeight = "clamp(380px, 56vh, 480px)",
+  tileWidth = "min(60vw, 220px)",
+}: PackCarouselProps) {
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  function gotoDelta(delta: number) {
+    const next = Math.max(0, Math.min(slots.length - 1, activeIndex + delta));
+    setActiveIndex(next);
+  }
+
+  function handlePanEnd(_: unknown, info: PanInfo) {
+    // Threshold-gated swipe navigation. Matches the feel of the
+    // post-rip card reveal (same module uses the same thresholds) so
+    // users get a consistent gesture vocabulary across the flow.
+    const distance = Math.abs(info.offset.x) > 60;
+    const velocity = Math.abs(info.velocity.x) > 400;
+    if (distance || velocity) {
+      gotoDelta(info.offset.x < 0 ? 1 : -1);
+    }
+  }
+
+  const activeSlot = slots[activeIndex];
+
   return (
-    <section aria-labelledby="rip-community-heading">
-      <SectionHeading id="rip-community-heading" kicker="Coming soon">
-        Recently shared by community
-      </SectionHeading>
-
-      {/* Edge-to-edge horizontal strip with a small left/right gutter
-          via padding-inline. `overflow-x-auto` + `snap-x` gives a
-          native swipe feel; `-mx-4 px-4` lets the row run flush to
-          the page edges while keeping the page-wrap padding intact
-          for sibling sections. */}
-      <div className="-mx-4 overflow-x-auto px-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <ul className="flex snap-x snap-mandatory gap-3">
-          {Array.from({ length: COMMUNITY_PLACEHOLDER_COUNT }).map((_, i) => (
-            <li
-              key={i}
-              className="snap-start shrink-0"
-              style={{ width: "min(42vw, 160px)" }}
-            >
-              <div
-                className="flex flex-col items-center justify-end overflow-hidden rounded-2xl border-2 border-dashed p-3 text-center text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]"
-                style={{
-                  aspectRatio: "2 / 3",
-                  borderColor:
-                    "color-mix(in oklab, var(--sea-ink-soft) 50%, transparent)",
-                  background:
-                    "color-mix(in oklab, var(--surface) 40%, transparent)",
-                }}
-              >
-                <span aria-hidden>—</span>
-              </div>
-            </li>
+    <>
+      {/* Stage. Fixed-height so the carousel composes with the rest
+          of the page rather than swallowing the viewport. clamp keeps
+          it readable on short phones without sprawling on tablets.
+          `onPanEnd` handles swipe nav; motion's tap-vs-pan heuristic
+          (~3px) lets small taps reach child buttons. Animation
+          transforms live on `motion.div` (not `motion.button`) so
+          `disabled` flipping mid-tap can't kill in-flight clicks. */}
+      <motion.div
+        className="relative flex items-center justify-center touch-none select-none"
+        style={{ height: stageHeight }}
+        onPanEnd={handlePanEnd}
+      >
+        <div className="relative h-full w-full">
+          {slots.map((slot, idx) => (
+            <PackCarouselItem
+              key={slot.kind === "pack" ? slot.pack.id : slot.id}
+              slot={slot}
+              offset={idx - activeIndex}
+              tileWidth={tileWidth}
+              onClick={() => {
+                if (idx === activeIndex) onActivate?.(slot);
+                else setActiveIndex(idx);
+              }}
+            />
           ))}
-        </ul>
-      </div>
+        </div>
+      </motion.div>
 
-      <p className="mt-3 text-center text-xs text-[var(--sea-ink-soft)] sm:text-left">
-        User-built packs will land here soon. Want to make one?{" "}
-        <Link
-          to="/packs/new"
-          className="font-medium text-[var(--sea-ink)] underline decoration-dotted underline-offset-2"
-        >
-          Start building
-        </Link>
-        .
-      </p>
-    </section>
+      {/* Pagination dots. Cheap orientation cue; rendered for any
+          carousel with multiple slots — placeholders count too, since
+          they're real swipeable destinations within the section. */}
+      {slots.length > 1 && (
+        <div className="mt-2 flex items-center justify-center gap-1.5">
+          {slots.map((slot, idx) => (
+            <button
+              key={slot.kind === "pack" ? slot.pack.id : slot.id}
+              type="button"
+              aria-label={
+                slot.kind === "pack"
+                  ? `Go to ${slot.pack.name}`
+                  : `Upcoming pack ${idx + 1}`
+              }
+              onClick={() => setActiveIndex(idx)}
+              className={`h-1.5 rounded-full transition-all ${
+                idx === activeIndex
+                  ? "w-6 bg-[var(--sea-ink)]"
+                  : "w-1.5 bg-[var(--sea-ink-soft)]/50"
+              }`}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Optional metadata block — editorial uses it for name/CTA;
+          community omits it. Rendered only when both a renderer and a
+          slot exist so we don't paint an empty centered div. */}
+      {renderMetadata && activeSlot && (
+        <div className="mt-4 text-center">{renderMetadata(activeSlot)}</div>
+      )}
+    </>
   );
 }
 
@@ -320,6 +356,9 @@ interface PackCarouselItemProps {
   slot: Slot;
   /** Position relative to active: 0 = center, -1 = one slot left, etc. */
   offset: number;
+  /** CSS width for the tile. Driven by parent so different carousels
+   *  can scale tiles independently while sharing all other physics. */
+  tileWidth: string;
   onClick: () => void;
 }
 
@@ -337,7 +376,7 @@ interface PackCarouselItemProps {
  * elements avoids that race and also sidesteps the `disabled`-
  * attribute-flipping-mid-click issue on far-off slots.
  */
-function PackCarouselItem({ slot, offset, onClick }: PackCarouselItemProps) {
+function PackCarouselItem({ slot, offset, tileWidth, onClick }: PackCarouselItemProps) {
   // Neighboring packs sit ~55% of their own width away from center,
   // with aggressive scale falloff so 2+ steps away fade almost to
   // nothing. Keeps the composition readable at small screen widths
@@ -370,8 +409,9 @@ function PackCarouselItem({ slot, offset, onClick }: PackCarouselItemProps) {
         // Viewport-based width, not container-query units — the stage
         // isn't a container-query context so `cqw` collapses to 0 and
         // the pack renders at zero width (invisible tap target). This
-        // was the "click does nothing" bug.
-        width: "min(60vw, 220px)",
+        // was the "click does nothing" bug. Width is parent-supplied
+        // so editorial and community can scale tiles independently.
+        width: tileWidth,
         aspectRatio: "2 / 3",
         pointerEvents: interactive ? "auto" : "none",
       }}
