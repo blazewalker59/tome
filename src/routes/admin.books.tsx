@@ -498,7 +498,13 @@ function BookRow({
           <button
             type="button"
             onClick={onAssignClick}
-            className="btn-secondary rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]"
+            // Visually identical to the pack chips above so the row
+            // reads as a single chip cluster — Edit just opens the
+            // assignment dialog. Keep it as a <button> for keyboard
+            // affordance; hover swaps to the lagoon accent so it
+            // still reads as interactive without breaking the chip
+            // rhythm.
+            className="rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[var(--sea-ink)] transition-colors hover:border-[color:var(--lagoon)]/40 hover:text-[color:var(--lagoon)]"
           >
             Edit
           </button>
