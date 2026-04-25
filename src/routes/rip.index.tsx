@@ -94,7 +94,7 @@ function RipPickerPage() {
     // scrolling internally guarantees the nav stays anchored to the
     // device edge while the carousels remain reachable.
     <main className="viewport-stage">
-      <div className="flex-1 overflow-y-auto overscroll-contain">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div className="page-wrap space-y-8 px-4 pb-10 pt-6 sm:space-y-10 sm:pt-10">
           <header className="text-center">
         {/* Single h1 — dropped the "Rip a pack" kicker because it just
@@ -307,9 +307,13 @@ function PackCarousel({
           full-viewport layout but broke page scroll once /rip became
           a multi-section hub — vertical drags starting on the stage
           got eaten by motion's pan handler instead of scrolling the
-          page, leaving the bottom-tab-overlapped content unreachable. */}
+          page, leaving the bottom-tab-overlapped content unreachable.
+          `overflow-hidden` clips the absolutely-positioned off-center
+          tiles whose `left: 50%` + negative-x transforms otherwise
+          push past the viewport edge, letting the user pan the
+          document horizontally. */}
       <motion.div
-        className="relative flex items-center justify-center touch-pan-y select-none"
+        className="relative flex items-center justify-center overflow-hidden touch-pan-y select-none"
         style={{ height: stageHeight }}
         onPanEnd={handlePanEnd}
       >
