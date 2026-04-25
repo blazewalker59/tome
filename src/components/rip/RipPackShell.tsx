@@ -198,30 +198,33 @@ export function RipPackShell({
         </button>
 
         <p className="island-kicker">{pack.name}</p>
-        {/* Header stats strip. Cost is shown so the user always knows
-            the price of a rip; the shard count goes red-tinted when
-            they can't afford the current pack so the reason for the
-            gate below is obvious at a glance. */}
+        {/* Header stats strip. Shows the two numbers the user needs to
+            decide whether to rip: what this pack costs, and how many
+            shards they currently have. Dropped the "Owned" book count
+            — it's not part of the decision here and clutters the
+            header. Balance turns red when they can't afford the pack
+            so the reason for the gate below is obvious at a glance. */}
         <div className="mt-1 flex items-center justify-center gap-3 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
-          <span>
-            Owned <span className="text-[var(--sea-ink)]">{collection.ownedBookIds.length}</span>
-          </span>
-          <span aria-hidden>·</span>
-          <span>
-            Shards{" "}
-            <span
-              className={
-                canAfford
-                  ? "text-[var(--sea-ink)]"
-                  : "text-[color:var(--rarity-legendary)]"
-              }
-            >
-              {collection.shardBalance}
+          <span className="inline-flex items-center gap-1.5">
+            Cost
+            <span className="inline-flex items-center gap-1 text-[var(--sea-ink)]">
+              {economy.packCost}
+              <Gem aria-hidden className="h-3.5 w-3.5" />
             </span>
           </span>
           <span aria-hidden>·</span>
-          <span>
-            Cost <span className="text-[var(--sea-ink)]">{economy.packCost}</span>
+          <span className="inline-flex items-center gap-1.5">
+            Balance
+            <span
+              className={`inline-flex items-center gap-1 ${
+                canAfford
+                  ? "text-[var(--sea-ink)]"
+                  : "text-[color:var(--rarity-legendary)]"
+              }`}
+            >
+              {collection.shardBalance}
+              <Gem aria-hidden className="h-3.5 w-3.5" />
+            </span>
           </span>
         </div>
       </header>
