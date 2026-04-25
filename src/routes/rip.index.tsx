@@ -89,13 +89,16 @@ function RipPickerPage() {
           Choose your pack
         </h1>
         {shards !== null && (
-          // Balance chip uses the same Sparkles/lagoon glyph the
-          // profile dropdown and /rip/$slug header use for shards, so
-          // "that sparkly thing is the currency" reads the same way
-          // everywhere.
-          <p className="mt-1 inline-flex items-center justify-center gap-1 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
-            <span className="tabular-nums text-[var(--sea-ink)]">{shards}</span>
-            <Sparkles aria-hidden className="h-3.5 w-3.5 text-[var(--lagoon)]" />
+          // "Available to spend" labels the number as a budget, not a
+          // passive stat — the whole page is about spending these, so
+          // priming the user with the affordance matters. Icon matches
+          // the profile dropdown + /rip/$slug header.
+          <p className="mt-1 inline-flex items-center justify-center gap-1.5 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+            Available to spend
+            <span className="inline-flex items-center gap-1 tabular-nums text-[var(--sea-ink)]">
+              {shards}
+              <Sparkles aria-hidden className="h-3.5 w-3.5 text-[var(--lagoon)]" />
+            </span>
           </p>
         )}
       </header>

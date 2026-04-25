@@ -198,15 +198,16 @@ export function RipPackShell({
         </button>
 
         <p className="island-kicker">{pack.name}</p>
-        {/* Header stats strip. Shows the two numbers the user needs to
-            decide whether to rip: what this pack costs, and how many
-            shards they currently have. Dropped the "Owned" book count
-            — it's not part of the decision here and clutters the
-            header. Balance turns red when they can't afford the pack
-            so the reason for the gate below is obvious at a glance.
-            Icon is `Sparkles` tinted lagoon — same glyph the profile
-            dropdown uses for the shard balance, so the visual language
-            for "shards" stays consistent across the app. */}
+        {/* Header stats strip. Shows the two numbers the user needs
+            to decide whether to rip: the pack's price and how many
+            shards they have available to spend. "Available" rather
+            than "Balance" — this is a spending decision, not a
+            statement of net worth. Balance turns red when they can't
+            afford the pack so the reason for the gate below is
+            obvious at a glance. Icon is `Sparkles` tinted lagoon —
+            same glyph the profile dropdown uses for the shard
+            balance, so the visual language for "shards" stays
+            consistent across the app. */}
         <div className="mt-1 flex items-center justify-center gap-3 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
           <span className="inline-flex items-center gap-1.5">
             Cost
@@ -217,7 +218,7 @@ export function RipPackShell({
           </span>
           <span aria-hidden>·</span>
           <span className="inline-flex items-center gap-1.5">
-            Balance
+            You have
             <span
               className={`inline-flex items-center gap-1 ${
                 canAfford
