@@ -447,7 +447,7 @@ function StarterPacksCard({ packs }: { packs: ReadonlyArray<PackSummary> }) {
  * a kicker.
  */
 function StarterPackTile({ pack }: { pack: PackSummary }) {
-  const gradient = packGradient(pack.slug);
+  const gradient = packGradient(pack.slug, pack.genreTags);
   // Every starter gradient is saturated/dark enough that the label
   // needs light parchment text — NOT the theme-reactive --on-accent,
   // which flips to a dark sea-ink on the light theme and turns the

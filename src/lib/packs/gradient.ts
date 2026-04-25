@@ -3,13 +3,21 @@
  *
  * Editorial packs get bespoke, genre-coded palettes so the rip
  * carousel at /rip reads as a spectrum rather than five identical
- * teal wrappers. The mapping is keyed by pack slug — the same slug
- * is stable across seed runs, is what the router uses, and is what
- * the admin already types into the pack builder.
+ * teal wrappers. The mapping is keyed by the pack's primary genre
+ * tag (the first entry in `packs.genre_tags`), which is admin-editable
+ * via /admin/packs/$slug. This keeps the gradient tied to *what the
+ * pack is about* rather than *what its slug happens to be*, so renaming
+ * a starter pack doesn't lose its art and a user-built pack tagged
+ * `fantasy` automatically inherits the dusk-magic palette.
  *
- * Any slug we don't know about (user-authored packs, future editorial
- * packs the code doesn't yet mention) falls through to the original
- * lagoon→palm token blend so the on-brand default remains the baseline.
+ * Slug-keyed palettes are kept as a back-compat fallback for the five
+ * original starter packs — their genre tags already match the genre
+ * map, but the slug map costs nothing and protects against a future
+ * editor accidentally clearing the tags.
+ *
+ * Any pack whose tags + slug we don't recognize falls through to the
+ * original lagoon→palm token blend so the on-brand default remains
+ * the baseline for user-authored packs.
  *
  * Shape:
  *   - `background` — the full CSS `linear-gradient(...)` string.
@@ -42,44 +50,45 @@ const DEFAULT_PACK_GRADIENT: PackGradient = {
 };
 
 /**
- * Per-slug palette overrides for the five "Modern <Genre> Starter"
- * editorial packs. Palettes picked so each pack reads as its genre
- * at a glance:
+ * Per-genre palette overrides — the primary mapping. Keys match the
+ * normalized kebab-case genre tags admins type into the pack form
+ * (`normalizePackGenreTags` in src/server/catalog.ts). Any pack with
+ * one of these as its first tag inherits the palette.
  *
- *   - fantasy          → deep plum → rose → warm magenta (dusk-magic)
- *   - sci-fi           → midnight indigo → cyan → pale aqua (night-sky + chrome)
- *   - nonfiction       → charcoal → slate → warm amber (print + lamp-light)
- *   - romance          → deep rose → coral → peach (warm candlelight)
- *   - realist fiction  → forest sage → moss → ochre (earthbound, quiet)
+ * Palettes:
+ *   - fantasy      → deep plum → rose → warm magenta (dusk-magic)
+ *   - sci-fi       → midnight indigo → cyan → pale aqua (night-sky + chrome)
+ *   - nonfiction   → charcoal → slate → warm amber (print + lamp-light)
+ *   - romance      → deep rose → coral → peach (warm candlelight)
+ *   - literary     → forest sage → moss → ochre (earthbound, quiet)
  *
- * Stops match the default (0/55/100%) and 135° so downstream animations
- * need no per-pack tuning. Colors are literal hex (not tokens) because
- * these palettes aren't meant to theme-shift — they're editorial art.
- * The white foil text we print on top clears AA contrast against the
- * middle stop of every gradient (verified against #ffffff).
+ * `literary` matches the seeded "Modern Realist Fiction Starter" tag
+ * (see scripts/seed-editor-packs.ts:240). The slug-keyed fallback
+ * below covers the case where someone clears that tag from the admin
+ * form.
  */
-const PACK_GRADIENTS_BY_SLUG: Readonly<Record<string, PackGradient>> = {
-  "modern-fantasy-starter": {
+const PACK_GRADIENTS_BY_GENRE: Readonly<Record<string, PackGradient>> = {
+  fantasy: {
     background:
       "linear-gradient(135deg, #2b0b3f 0%, #8a2b6b 55%, #d94a8c 100%)",
     glowColor: "color-mix(in oklab, #8a2b6b 55%, transparent)",
   },
-  "modern-sci-fi-starter": {
+  "sci-fi": {
     background:
       "linear-gradient(135deg, #0a1a3f 0%, #1f6fb8 55%, #6ad3e0 100%)",
     glowColor: "color-mix(in oklab, #1f6fb8 55%, transparent)",
   },
-  "modern-nonfiction-starter": {
+  nonfiction: {
     background:
       "linear-gradient(135deg, #1d2430 0%, #4a5668 55%, #d6a45c 100%)",
     glowColor: "color-mix(in oklab, #4a5668 55%, transparent)",
   },
-  "modern-romance-starter": {
+  romance: {
     background:
       "linear-gradient(135deg, #7a1f3d 0%, #c8436a 55%, #f7b29b 100%)",
     glowColor: "color-mix(in oklab, #c8436a 55%, transparent)",
   },
-  "modern-realist-fiction-starter": {
+  literary: {
     background:
       "linear-gradient(135deg, #1f3b2d 0%, #5a7a4c 55%, #c89a4d 100%)",
     glowColor: "color-mix(in oklab, #5a7a4c 55%, transparent)",
@@ -87,17 +96,43 @@ const PACK_GRADIENTS_BY_SLUG: Readonly<Record<string, PackGradient>> = {
 };
 
 /**
- * Resolve a pack's wrapper gradient. Always returns a valid
- * `PackGradient`: known slugs get their bespoke palette; everything
- * else gets the default lagoon→palm.
- *
- * `slug` is permissive (`string | null | undefined`) so callers can
- * pass whatever they have without defensively branching; nullish
- * values return the default.
+ * Slug-keyed fallback for the five original starter packs. Kept so
+ * that even if an editor empties the `genre_tags` array on one of
+ * these flagship packs the wrapper still renders with its bespoke
+ * palette. New editorial packs should rely on the genre map above
+ * (just tag them; no code change needed).
  */
-export function packGradient(slug: string | null | undefined): PackGradient {
-  if (!slug) return DEFAULT_PACK_GRADIENT;
-  return PACK_GRADIENTS_BY_SLUG[slug] ?? DEFAULT_PACK_GRADIENT;
+const PACK_GRADIENTS_BY_SLUG: Readonly<Record<string, PackGradient>> = {
+  "modern-fantasy-starter": PACK_GRADIENTS_BY_GENRE.fantasy!,
+  "modern-sci-fi-starter": PACK_GRADIENTS_BY_GENRE["sci-fi"]!,
+  "modern-nonfiction-starter": PACK_GRADIENTS_BY_GENRE.nonfiction!,
+  "modern-romance-starter": PACK_GRADIENTS_BY_GENRE.romance!,
+  "modern-realist-fiction-starter": PACK_GRADIENTS_BY_GENRE.literary!,
+};
+
+/**
+ * Resolve a pack's wrapper gradient. Always returns a valid
+ * `PackGradient`. Lookup order:
+ *
+ *   1. `genreTags[0]` against the genre palette map
+ *   2. `slug` against the back-compat slug map
+ *   3. default lagoon→palm
+ *
+ * Both inputs are permissive (`null | undefined` allowed) so callers
+ * can pass whatever they have without defensive branching.
+ */
+export function packGradient(
+  slug: string | null | undefined,
+  genreTags?: ReadonlyArray<string> | null,
+): PackGradient {
+  const primaryGenre = genreTags?.[0];
+  if (primaryGenre && PACK_GRADIENTS_BY_GENRE[primaryGenre]) {
+    return PACK_GRADIENTS_BY_GENRE[primaryGenre];
+  }
+  if (slug && PACK_GRADIENTS_BY_SLUG[slug]) {
+    return PACK_GRADIENTS_BY_SLUG[slug];
+  }
+  return DEFAULT_PACK_GRADIENT;
 }
 
 /**

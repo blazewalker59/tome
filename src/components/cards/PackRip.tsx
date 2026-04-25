@@ -8,12 +8,19 @@ export interface PackRipProps {
   cards: ReadonlyArray<CardData>;
   packName: string;
   /**
-   * Pack slug. Used to resolve the per-pack gradient for the seal,
-   * the opening flash, and the tear glow. Optional so callers that
-   * don't have a slug in scope (tests, scratch mounts) still work
-   * against the default lagoon→palm palette.
+   * Pack slug. Used as the back-compat fallback for the gradient
+   * helper when `packGenreTags` is missing or unrecognized. Optional
+   * so callers that don't have a slug in scope (tests, scratch
+   * mounts) still work against the default lagoon→palm palette.
    */
   packSlug?: string | null;
+  /**
+   * Pack's editorial genre tags (kebab-case). The first entry drives
+   * the wrapper gradient. Optional for the same reasons as `packSlug`;
+   * the gradient helper falls back to slug-keyed art and then the
+   * default if neither is provided.
+   */
+  packGenreTags?: ReadonlyArray<string> | null;
   /** Called once every card has been revealed. */
   onComplete?: () => void;
   /** Called when the user taps "Rip another" on the done screen. */
@@ -41,7 +48,7 @@ const SWIPE_VELOCITY = 500;
  * Motion's drag-vs-tap heuristic handles the distinction natively: small
  * pointer movements pass through as clicks, larger ones become drags.
  */
-export function PackRip({ cards, packName, packSlug, onComplete, onRipAnother, summary }: PackRipProps) {
+export function PackRip({ cards, packName, packSlug, packGenreTags, onComplete, onRipAnother, summary }: PackRipProps) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [revealedCount, setRevealedCount] = useState(0);
   // Direction the current card should fly off-screen: -1 left, 1 right, 0 up.
@@ -49,7 +56,7 @@ export function PackRip({ cards, packName, packSlug, onComplete, onRipAnother, s
 
   // Resolve once; every sub-phase paints the same wrapper colors so the
   // seal, opening flash, and revealed cards stay visually continuous.
-  const gradient = packGradient(packSlug);
+  const gradient = packGradient(packSlug, packGenreTags);
 
   // Warm the browser cache with every cover the moment the pack mounts so the
   // user never sees an image fade in mid-reveal.

@@ -290,7 +290,7 @@ function PackCarouselItem({ slot, offset, onClick }: PackCarouselItemProps) {
  * No tear interaction here; tapping just selects/navigates.
  */
 function PackPreview({ pack, active }: { pack: PackSummary; active: boolean }) {
-  const gradient = packGradient(pack.slug);
+  const gradient = packGradient(pack.slug, pack.genreTags);
   return (
     <div
       className="relative h-full w-full overflow-hidden rounded-2xl shadow-2xl"

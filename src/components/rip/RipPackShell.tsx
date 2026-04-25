@@ -232,6 +232,7 @@ export function RipPackShell({
           cards={ripState.pulledCards}
           packName={pack.name}
           packSlug={pack.slug}
+          packGenreTags={pack.genreTags}
           onComplete={handleRipComplete}
           onRipAnother={handleRipAnother}
           summary={
