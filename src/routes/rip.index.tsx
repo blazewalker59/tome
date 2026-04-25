@@ -82,8 +82,10 @@ function RipPickerPage() {
   return (
     <main className="viewport-stage">
       <header className="px-4 pt-3 pb-2 text-center sm:pt-5 sm:pb-3">
-        <p className="island-kicker">Rip a pack</p>
-        <h1 className="mt-1 display-title text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
+        {/* Single h1 — dropped the "Rip a pack" kicker because it just
+            restated what the h1 already says. "Choose your pack" is
+            the action, that's all the framing the page needs. */}
+        <h1 className="display-title text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
           Choose your pack
         </h1>
         {shards !== null && (
