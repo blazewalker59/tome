@@ -260,11 +260,16 @@ function BooksWorkspace() {
           `min-w-[980px]` on the table guarantees every column keeps enough
           room for its content (cover thumb, longest author name, wide mood
           input, pack chips) no matter how narrow the viewport — the table
-          just scrolls horizontally on phones. Column widths are explicit
-          so content doesn't redistribute into cramped, uneven columns. */}
+          just scrolls horizontally on phones. `table-fixed` is load-bearing:
+          without it browsers run `table-layout: auto`, which treats the
+          `<colgroup>` widths as advisory and redistributes width based on
+          intrinsic content (long titles balloon, narrow columns get
+          squeezed). Fixed layout pins each column to exactly its `<col>`
+          width, so on mobile the table really does become 980px and the
+          parent's `overflow-x-auto` scrolls instead of cramping. */}
       <div className="island-shell overflow-hidden rounded-3xl">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-sm">
+          <table className="w-full min-w-[980px] table-fixed text-sm">
             <colgroup>
               <col className="w-[260px]" />
               <col className="w-[180px]" />
