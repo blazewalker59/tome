@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
+import { CoverImage } from "@/components/CoverImage";
 import {
   LOCAL_SPARSE_THRESHOLD,
   searchBooksForBuilderFn,
@@ -246,16 +247,14 @@ export function BookSearchPanel({
                 // ellipsize when the row is intact.
                 className="flex min-w-0 flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
               >
-                {b.coverUrl ? (
-                  <img
-                    src={b.coverUrl}
-                    alt=""
-                    className="h-14 w-10 shrink-0 rounded-md object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-                )}
+                <CoverImage
+                  src={b.coverUrl}
+                  alt=""
+                  className="h-14 w-10 shrink-0 rounded-md object-cover"
+                  fallback={
+                    <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                  }
+                />
                 <div className="min-w-0 flex-1">
                   <p
                     title={b.title}
@@ -331,16 +330,14 @@ export function BookSearchPanel({
                       // to a new line rather than overflowing the row.
                       className="flex min-w-0 flex-wrap items-center gap-3 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-3"
                     >
-                      {h.coverUrl ? (
-                        <img
-                          src={h.coverUrl}
-                          alt=""
-                          className="h-14 w-10 shrink-0 rounded-md object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-                      )}
+                      <CoverImage
+                        src={h.coverUrl}
+                        alt=""
+                        className="h-14 w-10 shrink-0 rounded-md object-cover"
+                        fallback={
+                          <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                        }
+                      />
                       <div className="min-w-0 flex-1">
                         <p
                           title={h.title}

@@ -3,6 +3,7 @@ import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, X } from "lucide-react";
 
 import { AdminForbidden } from "@/components/AdminForbidden";
+import { CoverImage } from "@/components/CoverImage";
 import type { Rarity } from "@/lib/cards/rarity";
 import { checkAdminFn } from "@/server/admin";
 import {
@@ -462,16 +463,14 @@ function BookRow({
     <tr className="border-b border-[var(--line)] last:border-0 align-top">
       <td className="px-4 py-3">
         <div className="flex gap-3">
-          {book.coverUrl ? (
-            <img
-              src={book.coverUrl}
-              alt=""
-              className="h-16 w-11 shrink-0 rounded-md object-cover"
-              referrerPolicy="no-referrer"
-            />
-          ) : (
-            <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-          )}
+          <CoverImage
+            src={book.coverUrl}
+            alt=""
+            className="h-16 w-11 shrink-0 rounded-md object-cover"
+            fallback={
+              <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+            }
+          />
           <div className="min-w-0">
             <p className="truncate font-semibold text-[var(--sea-ink)]">
               {book.title}

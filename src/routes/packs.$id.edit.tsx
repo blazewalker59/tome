@@ -15,6 +15,7 @@ import {
   type MyPackDetail,
 } from "@/server/user-packs";
 import { BookSearchPanel } from "@/components/builder/BookSearchPanel";
+import { CoverImage } from "@/components/CoverImage";
 import { checkPackComposition } from "@/lib/packs/composition";
 import { DEFAULTS } from "@/lib/economy/defaults";
 
@@ -345,16 +346,14 @@ function CurrentBooksPanel({
               key={b.id}
               className="flex min-w-0 flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
             >
-              {b.coverUrl ? (
-                <img
-                  src={b.coverUrl}
-                  alt=""
-                  className="h-14 w-10 shrink-0 rounded-md object-cover"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-              )}
+              <CoverImage
+                src={b.coverUrl}
+                alt=""
+                className="h-14 w-10 shrink-0 rounded-md object-cover"
+                fallback={
+                  <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                }
+              />
               <div className="min-w-0 flex-1">
                 <p
                   title={b.title}

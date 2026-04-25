@@ -1,5 +1,6 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { BookOpen, Layers, Library, Sparkles } from "lucide-react";
+import { CoverImage } from "@/components/CoverImage";
 import {
   getCollectionFn,
   getRipPacksFn,
@@ -274,23 +275,22 @@ function ReadingStrip({
                   title={e.book.title}
                   className="flex h-full w-20 flex-col rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md"
                 >
-                  {e.book.coverUrl ? (
-                    <img
-                      src={e.book.coverUrl}
-                      alt=""
-                      loading="lazy"
-                      className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
-                    />
-                  ) : (
-                    // Covers the "no cover art" case. The title
-                    // initial keeps the tile from reading as broken
-                    // now that the explicit title bar is gone; the
-                    // full title is still available via the link's
-                    // title/aria-label for hover + assistive tech.
-                    <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
-                      {e.book.title.slice(0, 1)}
-                    </div>
-                  )}
+                  <CoverImage
+                    src={e.book.coverUrl}
+                    alt=""
+                    loading="lazy"
+                    className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
+                    fallback={
+                      // Covers the "no cover art" case. The title
+                      // initial keeps the tile from reading as broken
+                      // now that the explicit title bar is gone; the
+                      // full title is still available via the link's
+                      // title/aria-label for hover + assistive tech.
+                      <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
+                        {e.book.title.slice(0, 1)}
+                      </div>
+                    }
+                  />
                 </Link>
               </li>
             ))}
@@ -342,23 +342,22 @@ function RecentPulls({
                   title={p.title}
                   className={`flex h-full w-20 flex-col rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md ${style?.ring ?? ""}`}
                 >
-                  {p.coverUrl ? (
-                    <img
-                      src={p.coverUrl}
-                      alt=""
-                      loading="lazy"
-                      className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
-                    />
-                  ) : (
-                    // No cover → keep the footprint so the row stays
-                    // aligned. A muted initial is quieter than an
-                    // empty box and hints at the title; the full
-                    // title is still available via hover + a11y
-                    // label on the link itself.
-                    <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
-                      {p.title.slice(0, 1)}
-                    </div>
-                  )}
+                  <CoverImage
+                    src={p.coverUrl}
+                    alt=""
+                    loading="lazy"
+                    className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
+                    fallback={
+                      // No cover → keep the footprint so the row stays
+                      // aligned. A muted initial is quieter than an
+                      // empty box and hints at the title; the full
+                      // title is still available via hover + a11y
+                      // label on the link itself.
+                      <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
+                        {p.title.slice(0, 1)}
+                      </div>
+                    }
+                  />
                 </Link>
               </li>
             );

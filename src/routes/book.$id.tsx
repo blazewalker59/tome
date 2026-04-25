@@ -8,6 +8,7 @@ import {
 import { BookOpen, Check, Star, Trash2 } from "lucide-react";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import { Card } from "@/components/cards/Card";
+import { CoverImage } from "@/components/CoverImage";
 import { useToast } from "@/components/Toast";
 import { RARITY_STYLES, formatGenre } from "@/lib/cards/style";
 import {
@@ -121,21 +122,19 @@ function BookHero({ detail }: { detail: BookDetailPayload }) {
           <div
             className={`relative aspect-[2/3] overflow-hidden rounded-2xl border bg-[var(--sand)] ${rarity.ring}`}
           >
-            {book.coverUrl ? (
-              <img
-                src={book.coverUrl}
-                alt=""
-                className="h-full w-full object-cover"
-                loading="eager"
-                decoding="async"
-                referrerPolicy="no-referrer"
-                fetchPriority="high"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-[var(--sea-ink-soft)]">
-                <BookOpen aria-hidden className="h-10 w-10" />
-              </div>
-            )}
+            <CoverImage
+              src={book.coverUrl}
+              alt=""
+              className="h-full w-full object-cover"
+              loading="eager"
+              decoding="async"
+              fetchPriority="high"
+              fallback={
+                <div className="flex h-full w-full items-center justify-center text-[var(--sea-ink-soft)]">
+                  <BookOpen aria-hidden className="h-10 w-10" />
+                </div>
+              }
+            />
           </div>
         </div>
 

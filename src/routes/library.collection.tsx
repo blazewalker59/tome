@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { ChevronDown, Info } from "lucide-react";
 import { Card } from "@/components/cards/Card";
+import { CoverImage } from "@/components/CoverImage";
 import { PackContentsSheet } from "@/components/PackContentsSheet";
 import { RarityGemRow } from "@/components/RarityGemRow";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
@@ -509,17 +510,28 @@ function CollapsibleGroup({
           {!expanded && preview.length > 0 && (
             <div aria-hidden className="hidden shrink-0 items-center sm:flex">
               {preview.map((c, i) => (
-                <img
+                <CoverImage
                   key={c.id}
                   src={c.coverUrl}
                   alt=""
                   loading="lazy"
-                  referrerPolicy="no-referrer"
                   className="h-10 w-7 rounded-sm border border-[var(--line)] object-cover shadow-sm"
                   style={{
                     marginLeft: i === 0 ? 0 : "-0.5rem",
                     zIndex: preview.length - i,
                   }}
+                  // Keep the slot occupied if a preview cover fails so
+                  // the stacked-card visual doesn't collapse with a
+                  // gap. Same dimensions, neutral fill.
+                  fallback={
+                    <div
+                      className="h-10 w-7 rounded-sm border border-[var(--line)] bg-[var(--surface-muted)] shadow-sm"
+                      style={{
+                        marginLeft: i === 0 ? 0 : "-0.5rem",
+                        zIndex: preview.length - i,
+                      }}
+                    />
+                  }
                 />
               ))}
             </div>

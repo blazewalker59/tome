@@ -3,6 +3,7 @@ import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 
 import { AdminForbidden } from "@/components/AdminForbidden";
 import { BookSearchPanel } from "@/components/builder/BookSearchPanel";
+import { CoverImage } from "@/components/CoverImage";
 import type { Rarity } from "@/lib/cards/rarity";
 import { checkAdminFn } from "@/server/admin";
 import {
@@ -486,16 +487,14 @@ function MembersColumn({
               // can't fit image + title + select horizontally.
               className="flex min-w-0 flex-wrap gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
             >
-              {book.coverUrl ? (
-                <img
-                  src={book.coverUrl}
-                  alt=""
-                  className="h-16 w-11 shrink-0 rounded-md object-cover"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-              )}
+              <CoverImage
+                src={book.coverUrl}
+                alt=""
+                className="h-16 w-11 shrink-0 rounded-md object-cover"
+                fallback={
+                  <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                }
+              />
               <div className="min-w-0 flex-1">
                 <p
                   title={book.title}
