@@ -3,26 +3,56 @@ import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, X } from "lucide-react";
 
 import { AdminForbidden } from "@/components/AdminForbidden";
+import type { Rarity } from "@/lib/cards/rarity";
 import { checkAdminFn } from "@/server/admin";
 import {
   listBooksFn,
   listPacksFn,
   setBookPacksFn,
   updateBookCurationFn,
+  updateBookRarityFn,
   type AdminBookRow,
   type AdminBooksSortKey,
   type AdminPackSummary,
   type SortDir,
 } from "@/server/catalog";
 
+// Mirror of `RARITY_VALUES` in src/server/catalog.ts. Local constant
+// avoids importing from the server module (server fns drag node deps
+// into the client bundle).
+const RARITY_OPTIONS: ReadonlyArray<Rarity> = [
+  "common",
+  "uncommon",
+  "rare",
+  "foil",
+  "legendary",
+];
+
+// Tailwind class map shared across rarity chips in this file. Tokens
+// come from the rarity palette in styles.css; `common` falls through
+// to the neutral chip theme so the table doesn't get screamy on the
+// most common rows.
+const RARITY_CHIP_CLASSES: Record<string, string> = {
+  common:
+    "border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)]",
+  uncommon:
+    "border border-[color:var(--rarity-uncommon)]/40 bg-[color:var(--rarity-uncommon-soft)] text-[color:var(--rarity-uncommon)]",
+  rare: "border border-[color:var(--rarity-rare)]/40 bg-[color:var(--rarity-rare-soft)] text-[color:var(--rarity-rare)]",
+  foil: "border border-[color:var(--rarity-foil)]/40 bg-[color:var(--rarity-foil-soft)] text-[color:var(--rarity-foil)]",
+  legendary:
+    "border border-[color:var(--rarity-legendary)]/40 bg-[color:var(--rarity-legendary-soft)] text-[color:var(--rarity-legendary)]",
+};
+
 /**
  * Admin catalog browser.
  *
  * Layout is a wide table: cover, title+authors, genre, rarity, ratings,
- * pack memberships (as chips), assign button. Genre and mood tags are
- * editable in-place and persist on blur — no explicit save button, which
- * matches the low-friction curation feel. Rarity is display-only (owned
- * by `pnpm db:rebucket`).
+ * pack memberships (as chips), assign button. Genre, mood tags, and
+ * rarity are editable in-place and persist on change — no explicit save
+ * button, which matches the low-friction curation feel. Rarity edits
+ * write to the global `books.rarity` column and may be overwritten by
+ * the next `pnpm db:rebucket` run, which recomputes rarity from
+ * ratings_count × average_rating across the whole catalog.
  *
  * Pack assignment is deliberately modal-per-row rather than inline — a
  * book can belong to many packs, and a typeahead+checklist UI doesn't
@@ -149,6 +179,33 @@ function BooksWorkspace() {
     [],
   );
 
+  const handleRarityUpdate = useCallback(
+    async (bookId: string, rarity: Rarity): Promise<void> => {
+      // Optimistic: flip the local row immediately so the table feels
+      // responsive, then reconcile from the server response. On error
+      // we surface via alert and don't touch state — the row keeps
+      // its old value so a retry is one click away. Same UX shape as
+      // `handleCurationUpdate` above.
+      setBooks((prev) =>
+        prev.map((b) => (b.id === bookId ? { ...b, rarity } : b)),
+      );
+      try {
+        const result = await updateBookRarityFn({ data: { bookId, rarity } });
+        setBooks((prev) =>
+          prev.map((b) =>
+            b.id === bookId ? { ...b, rarity: result.rarity } : b,
+          ),
+        );
+      } catch (err) {
+        // eslint-disable-next-line no-alert
+        alert(
+          `Failed to save rarity: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    [],
+  );
+
   const handleAssignSubmit = useCallback(
     async (bookId: string, packIds: string[]) => {
       try {
@@ -189,8 +246,10 @@ function BooksWorkspace() {
             Browse catalog
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[var(--sea-ink-soft)]">
-            Edit genre + mood tags in place (saves on blur). Click a row&rsquo;s
-            <em> Packs</em> to manage memberships. Rarity is owned by{" "}
+            Edit genre, mood tags, and rarity in place (saves on
+            change). Click a row&rsquo;s <em>Packs</em> to manage
+            memberships. Rarity edits are global and may be overwritten
+            by{" "}
             <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">
               pnpm db:rebucket
             </code>
@@ -330,6 +389,7 @@ function BooksWorkspace() {
                     key={book.id}
                     book={book}
                     onUpdate={handleCurationUpdate}
+                    onRarityChange={handleRarityUpdate}
                     onAssignClick={() => setAssignTarget(book)}
                   />
                 ))
@@ -358,6 +418,7 @@ function BooksWorkspace() {
 function BookRow({
   book,
   onUpdate,
+  onRarityChange,
   onAssignClick,
 }: {
   book: AdminBookRow;
@@ -365,6 +426,7 @@ function BookRow({
     bookId: string,
     patch: { genre?: string; moodTags?: string[] },
   ) => Promise<void>;
+  onRarityChange: (bookId: string, rarity: Rarity) => Promise<void>;
   onAssignClick: () => void;
 }) {
   // Local drafts so typing doesn't trigger a save per keystroke. Commit
@@ -478,7 +540,28 @@ function BookRow({
         />
       </td>
       <td className="px-3 py-3 whitespace-nowrap">
-        <RarityBadge rarity={book.rarity} />
+        {/* Rarity is editable in place. We render a native <select> so
+            keyboard + screen-reader behaviour is free, but strip its
+            chrome via `appearance-none` and tint it with the same
+            chip-color tokens used elsewhere so the at-a-glance rarity
+            scan from before the cell became editable still works.
+            Saves on change (no commit-on-blur dance — the dropdown's
+            value IS the commit). Optimistic update happens in the
+            parent's handleRarityUpdate. */}
+        <select
+          value={book.rarity}
+          onChange={(e) => void onRarityChange(book.id, e.target.value as Rarity)}
+          aria-label={`Rarity for ${book.title}`}
+          className={`cursor-pointer appearance-none rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] outline-none transition-shadow hover:shadow-sm focus-visible:ring-2 focus-visible:ring-[color:var(--lagoon)]/40 ${
+            RARITY_CHIP_CLASSES[book.rarity] ?? RARITY_CHIP_CLASSES.common
+          }`}
+        >
+          {RARITY_OPTIONS.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
       </td>
       <td className="px-3 py-3">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -511,29 +594,6 @@ function BookRow({
         </div>
       </td>
     </tr>
-  );
-}
-
-function RarityBadge({ rarity }: { rarity: string }) {
-  // Colour tokens follow the rarity palette defined in the theme CSS.
-  const map: Record<string, string> = {
-    common:
-      "border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)]",
-    uncommon:
-      "border border-[color:var(--rarity-uncommon)]/40 bg-[color:var(--rarity-uncommon-soft)] text-[color:var(--rarity-uncommon)]",
-    rare: "border border-[color:var(--rarity-rare)]/40 bg-[color:var(--rarity-rare-soft)] text-[color:var(--rarity-rare)]",
-    foil: "border border-[color:var(--rarity-foil)]/40 bg-[color:var(--rarity-foil-soft)] text-[color:var(--rarity-foil)]",
-    legendary:
-      "border border-[color:var(--rarity-legendary)]/40 bg-[color:var(--rarity-legendary-soft)] text-[color:var(--rarity-legendary)]",
-  };
-  return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${
-        map[rarity] ?? map.common
-      }`}
-    >
-      {rarity}
-    </span>
   );
 }
 
