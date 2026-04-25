@@ -213,7 +213,12 @@ export function BookSearchPanel({
   };
 
   return (
-    <section className="island-shell rounded-3xl p-5">
+    // `min-w-0` on the panel root: when this section is a grid or
+    // flex item in its parent layout, default `min-width: auto` lets
+    // it grow to fit intrinsic content (the row `truncate` lines do
+    // exactly that). Pinning it to 0 here makes the panel a good
+    // citizen regardless of how the parent lays it out.
+    <section className="island-shell min-w-0 rounded-3xl p-5">
       <h2 className="island-kicker mb-3">Add books</h2>
       <input
         type="search"

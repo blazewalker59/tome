@@ -454,7 +454,13 @@ function MembersColumn({
   onRarityChange: (bookId: string, rarity: Rarity) => void;
 }) {
   return (
-    <section>
+    // `min-w-0` on the section root prevents the column from growing
+    // past its grid/flex track when child rows have `truncate` lines.
+    // CSS grid items default to `min-width: auto` (intrinsic content),
+    // so without this the parent track's `minmax(0,1fr)` is overridden
+    // by the section's intrinsic min and the panel busts out on
+    // mobile. Mirror of the same guard on BookSearchPanel.
+    <section className="min-w-0">
       <h2 className="island-kicker mb-3">Current members · {books.length}</h2>
       {/* Rarity edits write to the global `books` row, not a per-pack
           override — surface that explicitly so editors don't think
