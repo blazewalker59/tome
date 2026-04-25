@@ -292,9 +292,16 @@ function PackCarousel({
           `onPanEnd` handles swipe nav; motion's tap-vs-pan heuristic
           (~3px) lets small taps reach child buttons. Animation
           transforms live on `motion.div` (not `motion.button`) so
-          `disabled` flipping mid-tap can't kill in-flight clicks. */}
+          `disabled` flipping mid-tap can't kill in-flight clicks.
+          `touch-pan-y` (not `touch-none`) leaves vertical scrolling
+          to the browser so users can scroll past the carousel to the
+          next section. `touch-none` was correct on the old
+          full-viewport layout but broke page scroll once /rip became
+          a multi-section hub — vertical drags starting on the stage
+          got eaten by motion's pan handler instead of scrolling the
+          page, leaving the bottom-tab-overlapped content unreachable. */}
       <motion.div
-        className="relative flex items-center justify-center touch-none select-none"
+        className="relative flex items-center justify-center touch-pan-y select-none"
         style={{ height: stageHeight }}
         onPanEnd={handlePanEnd}
       >
