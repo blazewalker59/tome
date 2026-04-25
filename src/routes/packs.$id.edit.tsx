@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate, useRouter } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
 
 import { getMeFn } from "@/server/admin";
 import {
   addBookToPackDraftFn,
+  deletePackDraftFn,
   getMyPackFn,
   getMyPublishUnlockFn,
   ingestHardcoverBookForBuilderFn,
@@ -754,6 +755,7 @@ function PublishControls({
   pack: MyPackDetail;
   onChange: () => Promise<void>;
 }) {
+  const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -791,27 +793,73 @@ function PublishControls({
     }
   };
 
+  // Native confirm() is sufficient for now — discard is rare, and a
+  // bespoke modal is more weight than this action warrants. The
+  // server is the source of truth on "is this a draft?", but we
+  // gate the button at render time too so a published pack never
+  // shows it.
+  const onDiscard = async () => {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Discard "${pack.name}"? This permanently deletes the draft and its book list.`,
+      );
+      if (!confirmed) return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      await deletePackDraftFn({ data: { packId: pack.id } });
+      // Bounce to the user's pack list — the edit URL is now invalid
+      // and there's nothing useful to render here.
+      await navigate({ to: "/packs" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Discard failed";
+      if (msg.startsWith("DELETE_PUBLISHED:")) {
+        setError("Unpublish first, then discard.");
+      } else {
+        setError(msg);
+      }
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="flex flex-col items-end gap-2">
-      {pack.isPublic ? (
-        <button
-          type="button"
-          onClick={() => void onUnpublish()}
-          disabled={busy}
-          className="rounded-full border border-[var(--line)] px-4 py-2 text-xs uppercase tracking-[0.16em] text-[var(--sea-ink)] hover:bg-[var(--surface-muted)] disabled:opacity-60"
-        >
-          {busy ? "Working…" : "Unpublish"}
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={() => void onPublish()}
-          disabled={busy}
-          className="btn-primary rounded-full px-4 py-2 text-xs uppercase tracking-[0.16em] disabled:opacity-60"
-        >
-          {busy ? "Publishing…" : "Publish"}
-        </button>
-      )}
+      <div className="flex items-center gap-2">
+        {/* Discard sits left of the primary action and is only
+            offered on drafts. The legendary-tinted border keeps the
+            destructive intent visible without making it red-on-red
+            against the page background. */}
+        {!pack.isPublic && (
+          <button
+            type="button"
+            onClick={() => void onDiscard()}
+            disabled={busy}
+            className="rounded-full border border-[color:var(--rarity-legendary)]/40 px-4 py-2 text-xs uppercase tracking-[0.16em] text-[color:var(--rarity-legendary)] hover:bg-[color:var(--rarity-legendary-soft)] disabled:opacity-60"
+          >
+            Discard
+          </button>
+        )}
+        {pack.isPublic ? (
+          <button
+            type="button"
+            onClick={() => void onUnpublish()}
+            disabled={busy}
+            className="rounded-full border border-[var(--line)] px-4 py-2 text-xs uppercase tracking-[0.16em] text-[var(--sea-ink)] hover:bg-[var(--surface-muted)] disabled:opacity-60"
+          >
+            {busy ? "Working…" : "Unpublish"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void onPublish()}
+            disabled={busy}
+            className="btn-primary rounded-full px-4 py-2 text-xs uppercase tracking-[0.16em] disabled:opacity-60"
+          >
+            {busy ? "Publishing…" : "Publish"}
+          </button>
+        )}
+      </div>
       {error && (
         <p className="max-w-xs text-right text-[11px] text-[color:var(--rarity-legendary)]">
           {error}

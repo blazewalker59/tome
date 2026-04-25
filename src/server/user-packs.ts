@@ -31,7 +31,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { and, asc, desc, eq, gt, ilike, inArray, or, sql } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
-import { books, packBooks, packs, users } from "@/db/schema";
+import { books, packBooks, packRips, packs, users } from "@/db/schema";
 import { requireSessionUser } from "@/lib/auth/session";
 import { getEconomy } from "@/lib/economy/config";
 import type { Rarity } from "@/lib/packs/composition";
@@ -476,6 +476,59 @@ export const unpublishPackFn = createServerFn({ method: "POST" })
         .where(eq(packs.id, data.packId));
       return { ok: true };
     }),
+  );
+
+/**
+ * Permanently delete a draft pack the user owns.
+ *
+ * Drafts only — published packs must be unpublished first. The
+ * asymmetry is intentional: a published pack may have been ripped by
+ * other users and we don't want a one-click "discard" wiping the
+ * acquisition history of strangers. Forcing the unpublish step makes
+ * the destructive action explicit and gives the owner a moment to
+ * reconsider.
+ *
+ * Why bother clearing `pack_rips` if drafts can't be ripped? The
+ * `pack_rips → packs` FK is `ON DELETE RESTRICT`, so even a
+ * theoretically-empty audit table blocks the row delete. Clearing
+ * defensively is cheap and means we don't have to maintain the
+ * "drafts never have rips" invariant elsewhere. `pack_books` is
+ * `ON DELETE CASCADE`, so the membership rows go away with the pack.
+ *
+ * Returns `{ ok: true }` so the client can switch to a navigation
+ * action without parsing a payload.
+ */
+export const deletePackDraftFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): { packId: string } => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("deletePackDraftFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    const packId = String(r.packId ?? "");
+    if (packId.length === 0) throw new Error("packId is required");
+    return { packId };
+  })
+  .handler(
+    withErrorLogging(
+      "deletePackDraftFn",
+      async ({ data }): Promise<{ ok: true }> => {
+        const user = await requireSessionUser();
+        const database = await getDb();
+        const pack = await assertPackOwnedBy(database, data.packId, user.id);
+        if (pack.isPublic) {
+          // Surface a structured prefix so the UI can map this to a
+          // friendly "unpublish first" message rather than echoing
+          // back a raw error string.
+          throw new Error(
+            "DELETE_PUBLISHED: unpublish before discarding a published pack",
+          );
+        }
+        // Defensive cleanup of the rip-audit table — see fn doc.
+        await database.delete(packRips).where(eq(packRips.packId, data.packId));
+        await database.delete(packs).where(eq(packs.id, data.packId));
+        return { ok: true };
+      },
+    ),
   );
 
 // ─────────────────────────────────────────────────────────────────────────────
