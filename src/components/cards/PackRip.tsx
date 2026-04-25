@@ -451,7 +451,7 @@ function PackSealDrag({ packName, gradient, coverImageUrl, onRip }: PackSealDrag
         <div>
           <h2 className="display-title text-2xl font-bold leading-tight">{packName}</h2>
           <p className="mt-2 text-xs uppercase tracking-[0.18em] text-[var(--on-accent)]/70">
-            5 books · sealed
+            5 books
           </p>
         </div>
         <div className="mt-6 text-[10px] uppercase tracking-[0.2em] text-[var(--on-accent)]/60">
