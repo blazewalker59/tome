@@ -355,6 +355,7 @@ function BookRowItem({
             alt=""
             className={`h-full w-full object-cover ${dim ? "grayscale" : ""}`}
             loading="lazy"
+            referrerPolicy="no-referrer"
           />
         ) : null}
       </div>

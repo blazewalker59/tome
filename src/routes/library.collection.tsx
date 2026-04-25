@@ -514,6 +514,7 @@ function CollapsibleGroup({
                   src={c.coverUrl}
                   alt=""
                   loading="lazy"
+                  referrerPolicy="no-referrer"
                   className="h-10 w-7 rounded-sm border border-[var(--line)] object-cover shadow-sm"
                   style={{
                     marginLeft: i === 0 ? 0 : "-0.5rem",

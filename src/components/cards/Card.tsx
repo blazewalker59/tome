@@ -79,6 +79,11 @@ export function Card({ card, startFlipped = false, detailHref, coverLoading = "e
               loading={coverLoading}
               decoding="async"
               fetchPriority={coverLoading === "eager" ? "high" : "low"}
+              // Hardcover's CDN serves cover images with hotlink
+              // protection that 403s when a Referer header is sent.
+              // Stripping the referrer is what lets covers actually
+              // load in production.
+              referrerPolicy="no-referrer"
               className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
             />
             {card.rarity === "foil" && (

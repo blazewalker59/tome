@@ -128,6 +128,7 @@ function BookHero({ detail }: { detail: BookDetailPayload }) {
                 className="h-full w-full object-cover"
                 loading="eager"
                 decoding="async"
+                referrerPolicy="no-referrer"
                 fetchPriority="high"
               />
             ) : (
