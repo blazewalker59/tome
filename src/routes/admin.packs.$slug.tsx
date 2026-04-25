@@ -211,7 +211,15 @@ function PackWorkspace({ slug }: { slug: string }) {
         }
       />
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-2">
+      {/* `minmax(0,1fr)` on each track is load-bearing: without it CSS
+          grid defaults to `minmax(auto,1fr)`, which lets each column
+          grow to fit its content. The book rows use `truncate` (which
+          implies `white-space: nowrap`) on the author byline; that
+          forces the row's intrinsic min-width up, which expands the
+          grid track, which busts the panel out of the viewport on
+          mobile. Pinning the min track size to 0 lets the rows
+          actually clip with ellipsis as intended. */}
+      <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <MembersColumn
           books={pack.books}
           onRemove={handleRemove}
@@ -463,7 +471,14 @@ function MembersColumn({
           {books.map((book) => (
             <li
               key={book.id}
-              className="flex gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
+              // `min-w-0` + `flex-wrap` mirror the BookSearchPanel row
+              // layout. Both are load-bearing on narrow viewports: the
+              // first lets the inner text column actually shrink under
+              // the row's intrinsic content width (otherwise truncate
+              // has nothing to clip against), the second drops the
+              // rarity control to a new line when the row genuinely
+              // can't fit image + title + select horizontally.
+              className="flex min-w-0 flex-wrap gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
             >
               {book.coverUrl ? (
                 <img
@@ -476,7 +491,10 @@ function MembersColumn({
                 <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
               )}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
+                <p
+                  title={book.title}
+                  className="line-clamp-2 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
+                >
                   {book.title}
                 </p>
                 <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
