@@ -2,16 +2,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 
 import { AdminForbidden } from "@/components/AdminForbidden";
+import type { Rarity } from "@/lib/cards/rarity";
 import { checkAdminFn } from "@/server/admin";
 import {
   addBookToPackFn,
   getPackFn,
   listBooksFn,
   removeBookFromPackFn,
+  updateBookRarityFn,
   updatePackFn,
   type AdminBookRow,
   type AdminPackDetail,
 } from "@/server/catalog";
+
+// Mirror of `RARITY_VALUES` in src/server/catalog.ts. Kept as a local
+// constant so the dropdown can render options without importing from
+// the server module (server fns drag `node:*` deps into the bundle).
+const RARITY_OPTIONS: ReadonlyArray<Rarity> = [
+  "common",
+  "uncommon",
+  "rare",
+  "foil",
+  "legendary",
+];
 
 /**
  * Pack membership editor.
@@ -97,6 +110,47 @@ function PackWorkspace({ slug }: { slug: string }) {
     [pack, reload],
   );
 
+  const handleRarityChange = useCallback(
+    async (bookId: string, rarity: Rarity) => {
+      if (!pack) return;
+      // Snapshot the prior value so we can revert on failure without a
+      // round-trip to the server. Optimistic updates keep the UI
+      // responsive (the dropdown commits instantly) while still
+      // surfacing genuine errors.
+      const prior = pack.books.find((b) => b.id === bookId)?.rarity;
+      setPack((prev) =>
+        prev
+          ? {
+              ...prev,
+              books: prev.books.map((b) =>
+                b.id === bookId ? { ...b, rarity } : b,
+              ),
+            }
+          : prev,
+      );
+      try {
+        await updateBookRarityFn({ data: { bookId, rarity } });
+      } catch (err) {
+        // eslint-disable-next-line no-alert
+        alert(err instanceof Error ? err.message : "Failed to update rarity");
+        // Revert the optimistic patch.
+        if (prior !== undefined) {
+          setPack((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  books: prev.books.map((b) =>
+                    b.id === bookId ? { ...b, rarity: prior } : b,
+                  ),
+                }
+              : prev,
+          );
+        }
+      }
+    },
+    [pack],
+  );
+
   if (!pack && !error) {
     return (
       <main className="page-wrap py-12">
@@ -172,7 +226,11 @@ function PackWorkspace({ slug }: { slug: string }) {
       />
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
-        <MembersColumn books={pack.books} onRemove={handleRemove} />
+        <MembersColumn
+          books={pack.books}
+          onRemove={handleRemove}
+          onRarityChange={handleRarityChange}
+        />
         <AddColumn memberIds={memberIds} onAdd={handleAdd} />
       </div>
     </main>
@@ -379,13 +437,21 @@ function PackDetailsForm({
 function MembersColumn({
   books,
   onRemove,
+  onRarityChange,
 }: {
   books: AdminPackDetail["books"];
   onRemove: (bookId: string) => void;
+  onRarityChange: (bookId: string, rarity: Rarity) => void;
 }) {
   return (
     <section>
       <h2 className="island-kicker mb-3">Current members · {books.length}</h2>
+      {/* Rarity edits write to the global `books` row, not a per-pack
+          override — surface that explicitly so editors don't think
+          they're scoping the change to this pack only. */}
+      <p className="mb-3 rounded-2xl border border-[color:var(--rarity-foil)]/40 bg-[color:var(--rarity-foil-soft)] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[color:var(--rarity-foil)]">
+        Rarity changes apply globally to the book in every pack.
+      </p>
       {books.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--sea-ink-soft)]">
           No books yet. Add from the right.
@@ -412,8 +478,25 @@ function MembersColumn({
                   {book.title}
                 </p>
                 <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
-                  {book.authors.join(", ") || "Unknown"} · {book.genre} · {book.rarity}
+                  {book.authors.join(", ") || "Unknown"} · {book.genre}
                 </p>
+                <label className="mt-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+                  Rarity
+                  <select
+                    value={book.rarity}
+                    onChange={(e) =>
+                      onRarityChange(book.id, e.target.value as Rarity)
+                    }
+                    className="input-field rounded-full px-2 py-1 text-[11px] normal-case tracking-normal"
+                    aria-label={`Rarity for ${book.title}`}
+                  >
+                    {RARITY_OPTIONS.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
               <button
                 type="button"

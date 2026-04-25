@@ -24,6 +24,7 @@ import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm
 import { getDb } from "@/db/client";
 import { books, packBooks, packs } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth/session";
+import type { Rarity } from "@/lib/cards/rarity";
 import { withErrorLogging } from "./_shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -369,6 +370,81 @@ export const updateBookCurationFn = createServerFn({ method: "POST" })
           genre: updated.genre,
           moodTags: updated.moodTags,
         };
+      },
+    ),
+  );
+
+const RARITY_VALUES: ReadonlyArray<Rarity> = [
+  "common",
+  "uncommon",
+  "rare",
+  "foil",
+  "legendary",
+];
+
+export interface UpdateBookRarityInput {
+  bookId: string;
+  rarity: Rarity;
+}
+
+export interface UpdateBookRarityResult {
+  bookId: string;
+  rarity: Rarity;
+}
+
+/**
+ * Manual rarity override on a single book.
+ *
+ * Rarity is normally owned by the rebucket script (`pnpm db:rebucket`,
+ * see `scripts/rebucket.ts`) which derives buckets from a global
+ * score distribution. This fn lets an admin pin a specific book's
+ * rarity for editorial reasons — e.g. "this title is a flagship for
+ * the Modern Fantasy Starter pack, force it to legendary regardless
+ * of its Hardcover ratings count".
+ *
+ * Important caveat: rarity lives on `books`, not `pack_books`. A
+ * change here is global — the book gets the new rarity in every pack
+ * it appears in, in the user's existing collection cards, and in
+ * future rolls. The admin UI surfaces this via a warning chip; this
+ * fn doesn't try to scope the change.
+ *
+ * Re-running rebucket will overwrite manual overrides. That's
+ * intentional for now (rebucket is the source of truth); if we need
+ * sticky overrides we can add a `rarity_overridden` boolean column
+ * later.
+ */
+export const updateBookRarityFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): UpdateBookRarityInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("updateBookRarityFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    const bookId = requireUuid(r.bookId, "bookId");
+    const rarity = String(r.rarity ?? "");
+    if (!RARITY_VALUES.includes(rarity as Rarity)) {
+      throw new Error(
+        `rarity must be one of ${RARITY_VALUES.join(", ")}; got "${rarity}"`,
+      );
+    }
+    return { bookId, rarity: rarity as Rarity };
+  })
+  .handler(
+    withErrorLogging(
+      "updateBookRarityFn",
+      async ({ data }): Promise<UpdateBookRarityResult> => {
+        await requireAdmin();
+        const database = await getDb();
+
+        const [updated] = await database
+          .update(books)
+          .set({ rarity: data.rarity, updatedAt: sql`now()` })
+          .where(eq(books.id, data.bookId))
+          .returning({ id: books.id, rarity: books.rarity });
+
+        if (!updated) {
+          throw new Error(`Book ${data.bookId} not found`);
+        }
+        return { bookId: updated.id, rarity: updated.rarity as Rarity };
       },
     ),
   );
