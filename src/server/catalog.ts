@@ -79,6 +79,37 @@ export function normalizeMoodTags(raw: ReadonlyArray<unknown>): string[] {
   return out;
 }
 
+/**
+ * Same shape as `normalizeMoodTags` but for `packs.genre_tags`. Mirrors
+ * the validator in `src/server/user-packs.ts` so the editorial admin
+ * surface and the user pack-builder enforce the exact same rules
+ * (kebab-case, ≤3 tags, dedupe). Inlined rather than imported across
+ * server modules to keep `catalog.ts` independent of user-pack code
+ * paths — both validators are tiny and unlikely to drift.
+ */
+export function normalizePackGenreTags(raw: ReadonlyArray<unknown>): string[] {
+  const tags = raw
+    .map((t) => String(t ?? "").trim().toLowerCase())
+    .filter((t) => t.length > 0);
+  for (const t of tags) {
+    if (!KEBAB.test(t)) {
+      throw new Error(`Genre tag must be kebab-case; got "${t}"`);
+    }
+  }
+  if (tags.length > 3) {
+    throw new Error(`At most 3 genre tags allowed; got ${tags.length}`);
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of tags) {
+    if (!seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
 export function requireUuid(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} must be a non-empty string`);
@@ -392,8 +423,133 @@ export const listPacksFn = createServerFn({ method: "GET" }).handler(
       ...r,
       createdAt: r.createdAt.getTime(),
     }));
-  }),
-);
+    }),
+  );
+
+export interface UpdatePackInput {
+  packId: string;
+  name?: string;
+  /** Empty string clears the description; `undefined` leaves it
+   *  unchanged. The two need to be distinguishable so the form can
+   *  patch a single field without erasing siblings. */
+  description?: string | null;
+  /** Same null/undefined contract as `description`. */
+  coverImageUrl?: string | null;
+  /** Full replacement (validator dedupes + caps at 3). Pass an empty
+   *  array to clear every tag. `undefined` leaves the column alone. */
+  genreTags?: ReadonlyArray<string>;
+}
+
+export interface UpdatePackResult {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  coverImageUrl: string | null;
+  genreTags: ReadonlyArray<string>;
+}
+
+/**
+ * Edit an editorial pack's metadata in place. Slug is intentionally
+ * NOT editable — it's part of public URLs (e.g. `/rip/$slug`),
+ * referenced by the gradient lookup, and embedded in users' rip
+ * history; a rename would invalidate every shared link without any
+ * meaningful upside. If renaming becomes necessary, do it as a
+ * deliberate one-off script with a redirect, not a per-request
+ * mutation.
+ *
+ * Membership and rarity are owned by separate fns
+ * (`addBookToPackFn` / `removeBookFromPackFn` / `updateBookRarityFn`)
+ * so this surface stays focused on pack-level fields.
+ */
+export const updatePackFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): UpdatePackInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("updatePackFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    const out: UpdatePackInput = { packId: requireUuid(r.packId, "packId") };
+
+    if ("name" in r) {
+      const name = String(r.name ?? "").trim();
+      if (name.length === 0) throw new Error("Pack name cannot be empty");
+      if (name.length > 120) throw new Error("Pack name must be ≤120 characters");
+      out.name = name;
+    }
+    // Treat present-but-empty as an explicit clear (null), mirroring how
+    // the user-pack edit flow handles optional text fields.
+    if ("description" in r) {
+      const v = typeof r.description === "string" ? r.description.trim() : "";
+      out.description = v.length > 0 ? v : null;
+    }
+    if ("coverImageUrl" in r) {
+      const v = typeof r.coverImageUrl === "string" ? r.coverImageUrl.trim() : "";
+      out.coverImageUrl = v.length > 0 ? v : null;
+    }
+    if ("genreTags" in r) {
+      out.genreTags = normalizePackGenreTags(
+        Array.isArray(r.genreTags) ? (r.genreTags as unknown[]) : [],
+      );
+    }
+    return out;
+  })
+  .handler(
+    withErrorLogging("updatePackFn", async ({ data }): Promise<UpdatePackResult> => {
+      await requireAdmin();
+      const database = await getDb();
+
+      // Build the patch incrementally so absent fields stay untouched.
+      // `updatedAt` isn't a column on `packs` (the schema only tracks
+      // `createdAt` + `publishedAt`), so we don't bump anything beyond
+      // the user-visible fields.
+      const patch: Record<string, unknown> = {};
+      if (data.name !== undefined) patch.name = data.name;
+      if (data.description !== undefined) patch.description = data.description;
+      if (data.coverImageUrl !== undefined) patch.coverImageUrl = data.coverImageUrl;
+      if (data.genreTags !== undefined) patch.genreTags = [...data.genreTags];
+
+      if (Object.keys(patch).length === 0) {
+        // Nothing to write — re-fetch and return current state so the UI
+        // sees a stable shape regardless of whether anything changed.
+        const [row] = await database
+          .select({
+            id: packs.id,
+            slug: packs.slug,
+            name: packs.name,
+            description: packs.description,
+            coverImageUrl: packs.coverImageUrl,
+            genreTags: packs.genreTags,
+          })
+          .from(packs)
+          .where(and(eq(packs.id, data.packId), isNull(packs.creatorId)))
+          .limit(1);
+        if (!row) throw new Error(`Editorial pack ${data.packId} not found`);
+        return row;
+      }
+
+      // Scope the update to the editorial namespace — admin must not be
+      // able to mutate user-built packs through this fn even if a
+      // packId leaks across surfaces.
+      const [updated] = await database
+        .update(packs)
+        .set(patch)
+        .where(and(eq(packs.id, data.packId), isNull(packs.creatorId)))
+        .returning({
+          id: packs.id,
+          slug: packs.slug,
+          name: packs.name,
+          description: packs.description,
+          coverImageUrl: packs.coverImageUrl,
+          genreTags: packs.genreTags,
+        });
+
+      if (!updated) {
+        throw new Error(`Editorial pack ${data.packId} not found`);
+      }
+      return updated;
+    }),
+  );
+
 
 export interface CreatePackInput {
   slug: string;
@@ -486,6 +642,10 @@ export interface AdminPackDetail {
   creatorId: string | null;
   isPublic: boolean;
   coverImageUrl: string | null;
+  /** Curated genre tags (1–3, kebab-case). Drives the gradient lookup
+   *  on the rip surface and powers discovery filters; admin can edit
+   *  via `updatePackFn`. */
+  genreTags: ReadonlyArray<string>;
   createdAt: number;
   books: ReadonlyArray<{
     id: string;
@@ -521,6 +681,7 @@ export const getPackFn = createServerFn({ method: "GET" })
           creatorId: packs.creatorId,
           isPublic: packs.isPublic,
           coverImageUrl: packs.coverImageUrl,
+          genreTags: packs.genreTags,
           createdAt: packs.createdAt,
         })
         .from(packs)
@@ -550,6 +711,7 @@ export const getPackFn = createServerFn({ method: "GET" })
         creatorId: pack.creatorId,
         isPublic: pack.isPublic,
         coverImageUrl: pack.coverImageUrl,
+        genreTags: pack.genreTags,
         createdAt: pack.createdAt.getTime(),
         books: rows,
       };

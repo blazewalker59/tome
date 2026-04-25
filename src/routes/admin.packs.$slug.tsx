@@ -8,6 +8,7 @@ import {
   getPackFn,
   listBooksFn,
   removeBookFromPackFn,
+  updatePackFn,
   type AdminBookRow,
   type AdminPackDetail,
 } from "@/server/catalog";
@@ -140,21 +141,234 @@ function PackWorkspace({ slug }: { slug: string }) {
         <h1 className="display-title mt-2 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
           {pack.name}
         </h1>
-        {pack.description && (
-          <p className="mt-2 max-w-2xl text-sm text-[var(--sea-ink-soft)]">
-            {pack.description}
-          </p>
-        )}
         <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
           {pack.creatorId === null ? "editorial" : "user"} · {pack.books.length} books
+          {pack.genreTags.length > 0 && <> · {pack.genreTags.join(", ")}</>}
         </p>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      {/* Pack details editor — name, description, cover, genre tags.
+          Slug is intentionally read-only (it's part of public URLs and
+          rip-history attribution; renames would invalidate shared
+          links). Sits above the books area because edits here are less
+          frequent than the membership churn below, but when an editor
+          DOES want to fix the name or palette they shouldn't have to
+          scroll past the entire member list to do it. */}
+      <PackDetailsForm
+        pack={pack}
+        onSaved={(next) =>
+          setPack((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  name: next.name,
+                  description: next.description,
+                  coverImageUrl: next.coverImageUrl,
+                  genreTags: next.genreTags,
+                }
+              : prev,
+          )
+        }
+      />
+
+      <div className="mt-8 grid gap-6 lg:grid-cols-2">
         <MembersColumn books={pack.books} onRemove={handleRemove} />
         <AddColumn memberIds={memberIds} onAdd={handleAdd} />
       </div>
     </main>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pack details form (name / description / cover / genre tags)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Inline edit form for the pack-level fields. Slug is shown read-only
+ * (intentionally non-editable — see `updatePackFn` rationale).
+ *
+ * Save button stays disabled until at least one field has changed
+ * relative to the current `pack` snapshot, so accidental clicks on a
+ * pristine form are no-ops without round-tripping the server.
+ */
+function PackDetailsForm({
+  pack,
+  onSaved,
+}: {
+  pack: AdminPackDetail;
+  onSaved: (next: {
+    name: string;
+    description: string | null;
+    coverImageUrl: string | null;
+    genreTags: ReadonlyArray<string>;
+  }) => void;
+}) {
+  const [name, setName] = useState(pack.name);
+  const [description, setDescription] = useState(pack.description ?? "");
+  const [coverImageUrl, setCoverImageUrl] = useState(pack.coverImageUrl ?? "");
+  // Render genre tags as a comma-separated string in the input — same
+  // affordance the user-pack edit form uses (`packs.$id.edit.tsx`),
+  // which keeps muscle memory consistent for editors who toggle
+  // between editorial and user packs.
+  const [genreTagsRaw, setGenreTagsRaw] = useState(pack.genreTags.join(", "));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  // Re-sync local state if the parent loads a fresh pack (e.g. after a
+  // membership change triggers a full reload). Without this the form
+  // would drift from the canonical row on background refetches.
+  useEffect(() => {
+    setName(pack.name);
+    setDescription(pack.description ?? "");
+    setCoverImageUrl(pack.coverImageUrl ?? "");
+    setGenreTagsRaw(pack.genreTags.join(", "));
+  }, [pack.id, pack.name, pack.description, pack.coverImageUrl, pack.genreTags]);
+
+  // Parse the comma-separated tag input into a normalized array. We do
+  // this on every render (cheap; ≤3 tags) so the dirty-check has the
+  // same shape the server will see. Validation errors surface from the
+  // server on submit rather than blocking the button.
+  const parsedTags = useMemo(
+    () =>
+      genreTagsRaw
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length > 0),
+    [genreTagsRaw],
+  );
+
+  const tagsEqual = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
+    a.length === b.length && a.every((v, i) => v === b[i]);
+
+  const dirty =
+    name.trim() !== pack.name ||
+    description.trim() !== (pack.description ?? "") ||
+    coverImageUrl.trim() !== (pack.coverImageUrl ?? "") ||
+    !tagsEqual(parsedTags, pack.genreTags);
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting || !dirty) return;
+    setSubmitting(true);
+    setError(null);
+    setSuccess(false);
+    try {
+      const result = await updatePackFn({
+        data: {
+          packId: pack.id,
+          // Only send fields that actually changed — the server
+          // distinguishes `undefined` (leave alone) from explicit
+          // values, so a no-touch field shouldn't be in the payload.
+          ...(name.trim() !== pack.name ? { name: name.trim() } : {}),
+          ...(description.trim() !== (pack.description ?? "")
+            ? { description: description.trim() }
+            : {}),
+          ...(coverImageUrl.trim() !== (pack.coverImageUrl ?? "")
+            ? { coverImageUrl: coverImageUrl.trim() }
+            : {}),
+          ...(!tagsEqual(parsedTags, pack.genreTags)
+            ? { genreTags: parsedTags }
+            : {}),
+        },
+      });
+      onSaved({
+        name: result.name,
+        description: result.description,
+        coverImageUrl: result.coverImageUrl,
+        genreTags: result.genreTags,
+      });
+      setSuccess(true);
+      // Hide the success chip after a couple seconds — keeping it up
+      // forever competes for attention against the next edit.
+      window.setTimeout(() => setSuccess(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section>
+      <h2 className="island-kicker mb-3">Pack details</h2>
+      <form
+        onSubmit={onSubmit}
+        className="island-shell grid gap-4 rounded-3xl p-5 lg:grid-cols-2"
+      >
+        <Field label="Slug" hint="Read-only. Slugs anchor public URLs and rip history.">
+          <input
+            type="text"
+            value={pack.slug}
+            readOnly
+            disabled
+            className="input-field min-h-[40px] w-full cursor-not-allowed rounded-full px-4 text-sm opacity-60"
+          />
+        </Field>
+        <Field label="Name" required>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            maxLength={120}
+            className="input-field min-h-[40px] w-full rounded-full px-4 text-sm"
+          />
+        </Field>
+        <Field
+          label="Genre tags"
+          hint="Comma-separated, kebab-case, max 3. The first tag drives the rip wrapper gradient."
+        >
+          <input
+            type="text"
+            value={genreTagsRaw}
+            onChange={(e) => setGenreTagsRaw(e.target.value)}
+            className="input-field min-h-[40px] w-full rounded-full px-4 text-sm"
+            placeholder="fantasy, starter"
+          />
+        </Field>
+        <Field label="Cover image URL" hint="Optional. Empty clears it.">
+          <input
+            type="url"
+            value={coverImageUrl}
+            onChange={(e) => setCoverImageUrl(e.target.value)}
+            className="input-field min-h-[40px] w-full rounded-full px-4 text-sm"
+            placeholder="https://…"
+          />
+        </Field>
+        <Field label="Description" hint="Optional. Empty clears it.">
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            className="input-field w-full rounded-2xl px-4 py-3 text-sm lg:col-span-2"
+          />
+        </Field>
+
+        <div className="flex items-center gap-3 lg:col-span-2">
+          <button
+            type="submit"
+            disabled={submitting || !dirty || !name.trim()}
+            className="btn-primary rounded-full px-4 py-2 text-xs uppercase tracking-[0.16em] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {submitting ? "Saving…" : "Save changes"}
+          </button>
+          {success && (
+            <span className="rounded-full border border-[color:var(--rarity-rare)]/40 bg-[color:var(--rarity-rare-soft)] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[color:var(--rarity-rare)]">
+              Saved
+            </span>
+          )}
+          {error && (
+            <span
+              role="alert"
+              className="rounded-xl border border-[color:var(--rarity-legendary)]/40 bg-[color:var(--rarity-legendary-soft)] px-3 py-1 text-[10px] text-[color:var(--rarity-legendary)]"
+            >
+              {error}
+            </span>
+          )}
+        </div>
+      </form>
+    </section>
   );
 }
 
@@ -329,5 +543,42 @@ function AddColumn({
         </ul>
       )}
     </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Field — small label/input wrapper used by the details form
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Mirror of the `Field` helper in `admin.packs.index.tsx`. Inlined here
+ * (rather than promoted to a shared module) because both copies are
+ * tiny and the admin surface doesn't yet warrant a `components/admin/`
+ * directory; if a third copy lands, lift it then.
+ */
+function Field({
+  label,
+  hint,
+  required,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+        {label}
+        {required && <span className="ml-1 text-[color:var(--rarity-legendary)]">*</span>}
+      </span>
+      {children}
+      {hint && (
+        <span className="mt-1.5 block text-[11px] text-[var(--sea-ink-soft)]">
+          {hint}
+        </span>
+      )}
+    </label>
   );
 }
