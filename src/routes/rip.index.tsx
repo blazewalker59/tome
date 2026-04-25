@@ -84,13 +84,19 @@ function RipPickerPage() {
   );
 
   return (
-    // Hub layout: scrollable page with discrete sections instead of a
-    // single full-viewport stage. Both carousels live on the same
-    // scroll surface; the page itself owns vertical rhythm via
-    // page-wrap + space-y. Dropped `viewport-stage` for `page-wrap` —
-    // matches /index, /library/* layouts.
-    <main className="page-wrap space-y-8 px-4 pb-10 pt-6 sm:space-y-10 sm:pt-10">
-      <header className="text-center">
+    // Hub layout: pinned to the viewport between header and bottom
+    // nav (via `viewport-stage`) with an inner scroll container for
+    // section content. Document-level scrolling was the original
+    // approach but broke the mobile PWA layout — the fixed-position
+    // bottom nav bar sat at body bottom rather than visible-viewport
+    // bottom because the page exceeded the visible area, so users
+    // had to scroll past content *and* nav. Pinning the page and
+    // scrolling internally guarantees the nav stays anchored to the
+    // device edge while the carousels remain reachable.
+    <main className="viewport-stage">
+      <div className="flex-1 overflow-y-auto overscroll-contain">
+        <div className="page-wrap space-y-8 px-4 pb-10 pt-6 sm:space-y-10 sm:pt-10">
+          <header className="text-center">
         {/* Single h1 — dropped the "Rip a pack" kicker because it just
             restated what the h1 already says. "Choose your pack" is
             the action, that's all the framing the page needs. */}
@@ -183,7 +189,9 @@ function RipPickerPage() {
           </Link>
           .
         </p>
-      </section>
+        </section>
+        </div>
+      </div>
     </main>
   );
 }
