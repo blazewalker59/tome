@@ -218,7 +218,7 @@ export function RipPackShell({
           </span>
           <span aria-hidden>·</span>
           <span className="inline-flex items-center gap-1.5">
-            You have
+            Balance
             <span
               className={`inline-flex items-center gap-1 ${
                 canAfford

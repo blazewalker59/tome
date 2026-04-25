@@ -89,12 +89,11 @@ function RipPickerPage() {
           Choose your pack
         </h1>
         {shards !== null && (
-          // "Available to spend" labels the number as a budget, not a
-          // passive stat — the whole page is about spending these, so
-          // priming the user with the affordance matters. Icon matches
-          // the profile dropdown + /rip/$slug header.
+          // "Balance" reads as a spendable currency amount without
+          // needing a verb. Icon matches the profile dropdown +
+          // /rip/$slug header so the glyph consistently means shards.
           <p className="mt-1 inline-flex items-center justify-center gap-1.5 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
-            Available to spend
+            Balance
             <span className="inline-flex items-center gap-1 tabular-nums text-[var(--sea-ink)]">
               {shards}
               <Sparkles aria-hidden className="h-3.5 w-3.5 text-[var(--lagoon)]" />
