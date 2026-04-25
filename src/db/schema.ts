@@ -231,6 +231,21 @@ export const books = pgTable(
     ingestedAt: timestamp("ingested_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Soft-delete tombstone. Null = live; non-null = removed from
+     * curation surfaces (admin search defaults, builder local search,
+     * new-pack-membership writes) while preserving every existing
+     * reference (`pack_books`, `collections`, `reading_log`,
+     * `shard_events`). Existing user state therefore keeps rendering
+     * — a deleted catalog row doesn't ghost a pull or a TBR — but
+     * the book can no longer be picked into anything new. Restoring
+     * is a single UPDATE setting this back to NULL.
+     *
+     * Hardcover ingest dedup intentionally does NOT filter on this:
+     * re-ingesting a soft-deleted hardcover_id revives the row in
+     * place rather than colliding on the unique constraint.
+     */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [
     index("books_rarity_idx").on(t.rarity),
@@ -238,6 +253,13 @@ export const books = pgTable(
     // Covers the per-user throttle query: "how many books has this user
     // ingested in the last hour?" → scans by (ingested_by, ingested_at).
     index("books_ingested_by_at_idx").on(t.ingestedByUserId, t.ingestedAt),
+    // Partial index over live rows. Every catalog-facing query
+    // (admin list, builder search, addBookToPack guards) filters on
+    // `deleted_at IS NULL`; making that the index predicate keeps
+    // the index small and lets Postgres skip the tombstone scan.
+    index("books_live_created_idx")
+      .on(t.createdAt)
+      .where(sql`${t.deletedAt} IS NULL`),
   ],
 );
 

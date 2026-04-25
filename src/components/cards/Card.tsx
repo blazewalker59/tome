@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { BookOpen, ArrowUpRight } from "lucide-react";
 import { Link } from "@tanstack/react-router";
+import { CoverImage } from "@/components/CoverImage";
 import type { CardData } from "@/lib/cards/types";
 import { RARITY_STYLES, formatGenre } from "@/lib/cards/style";
 
@@ -73,7 +74,7 @@ export function Card({ card, startFlipped = false, detailHref, coverLoading = "e
           className={`absolute inset-0 overflow-hidden rounded-2xl bg-[var(--foam)] [backface-visibility:hidden] ${rarity.ring}`}
         >
           <div className="relative h-full w-full overflow-hidden bg-[var(--sand)]">
-            <img
+            <CoverImage
               src={card.coverUrl}
               alt=""
               loading={coverLoading}

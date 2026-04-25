@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, useMotionValue, animate } from "motion/react";
 import { Check, Gem, X } from "lucide-react";
+import { CoverImage } from "@/components/CoverImage";
 import { RARITY_STYLES } from "@/lib/cards/style";
 import type { BookRow } from "@/lib/cards/book-to-card";
 import type { Rarity } from "@/lib/cards/types";
@@ -349,14 +350,12 @@ function BookRowItem({
       }`}
     >
       <div className="h-12 w-9 shrink-0 overflow-hidden rounded-md bg-[var(--track-bg)]">
-        {book.coverUrl ? (
-          <img
-            src={book.coverUrl}
-            alt=""
-            className={`h-full w-full object-cover ${dim ? "grayscale" : ""}`}
-            loading="lazy"
-          />
-        ) : null}
+        <CoverImage
+          src={book.coverUrl}
+          alt=""
+          className={`h-full w-full object-cover ${dim ? "grayscale" : ""}`}
+          loading="lazy"
+        />
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold leading-tight text-[var(--sea-ink)]">

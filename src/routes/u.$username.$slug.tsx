@@ -1,5 +1,6 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 
+import { CoverImage } from "@/components/CoverImage";
 import { getMeFn } from "@/server/admin";
 import {
   getPublicPackFn,
@@ -99,16 +100,14 @@ function PublicPackPage() {
               key={b.id}
               className="flex items-start gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
             >
-              {b.coverUrl ? (
-                <img
-                  src={b.coverUrl}
-                  alt=""
-                  className="h-20 w-14 shrink-0 rounded-md object-cover"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <div className="h-20 w-14 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-              )}
+              <CoverImage
+                src={b.coverUrl}
+                alt=""
+                className="h-20 w-14 shrink-0 rounded-md object-cover"
+                fallback={
+                  <div className="h-20 w-14 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                }
+              />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
                   {b.title}

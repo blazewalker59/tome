@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { CoverImage } from "@/components/CoverImage";
 import {
   checkAdminFn,
   ingestBookFn,
@@ -392,16 +393,14 @@ function SearchPane({
                   key={hit.id}
                   className="flex gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
                 >
-                  {hit.coverUrl ? (
-                    <img
-                      src={hit.coverUrl}
-                      alt=""
-                      className="h-20 w-14 shrink-0 rounded-md object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div className="h-20 w-14 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-                  )}
+                  <CoverImage
+                    src={hit.coverUrl}
+                    alt=""
+                    className="h-20 w-14 shrink-0 rounded-md object-cover"
+                    fallback={
+                      <div className="h-20 w-14 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                    }
+                  />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
                       {hit.title}
@@ -541,16 +540,14 @@ function QueueRow({
   return (
     <li className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4">
       <div className="flex items-start gap-3">
-        {entry.hit.coverUrl ? (
-          <img
-            src={entry.hit.coverUrl}
-            alt=""
-            className="h-16 w-11 shrink-0 rounded-md object-cover"
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-        )}
+        <CoverImage
+          src={entry.hit.coverUrl}
+          alt=""
+          className="h-16 w-11 shrink-0 rounded-md object-cover"
+          fallback={
+            <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+          }
+        />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
             {entry.hit.title}

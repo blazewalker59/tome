@@ -8,12 +8,27 @@ export interface PackRipProps {
   cards: ReadonlyArray<CardData>;
   packName: string;
   /**
-   * Pack slug. Used to resolve the per-pack gradient for the seal,
-   * the opening flash, and the tear glow. Optional so callers that
-   * don't have a slug in scope (tests, scratch mounts) still work
-   * against the default lagoon→palm palette.
+   * Pack slug. Used as the back-compat fallback for the gradient
+   * helper when `packGenreTags` is missing or unrecognized. Optional
+   * so callers that don't have a slug in scope (tests, scratch
+   * mounts) still work against the default lagoon→palm palette.
    */
   packSlug?: string | null;
+  /**
+   * Pack's editorial genre tags (kebab-case). The first entry drives
+   * the wrapper gradient. Optional for the same reasons as `packSlug`;
+   * the gradient helper falls back to slug-keyed art and then the
+   * default if neither is provided.
+   */
+  packGenreTags?: ReadonlyArray<string> | null;
+  /**
+   * Optional pack cover art. When set, the sealed seal renders the
+   * cover image instead of the genre gradient — the cover *is* the
+   * pack's art direction, and we shouldn't paint a gradient over it.
+   * The opening-flash and revealed-card tray still use the gradient
+   * because they're transitions/states, not the seal itself.
+   */
+  packCoverImageUrl?: string | null;
   /** Called once every card has been revealed. */
   onComplete?: () => void;
   /** Called when the user taps "Rip another" on the done screen. */
@@ -41,7 +56,7 @@ const SWIPE_VELOCITY = 500;
  * Motion's drag-vs-tap heuristic handles the distinction natively: small
  * pointer movements pass through as clicks, larger ones become drags.
  */
-export function PackRip({ cards, packName, packSlug, onComplete, onRipAnother, summary }: PackRipProps) {
+export function PackRip({ cards, packName, packSlug, packGenreTags, packCoverImageUrl, onComplete, onRipAnother, summary }: PackRipProps) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [revealedCount, setRevealedCount] = useState(0);
   // Direction the current card should fly off-screen: -1 left, 1 right, 0 up.
@@ -49,7 +64,13 @@ export function PackRip({ cards, packName, packSlug, onComplete, onRipAnother, s
 
   // Resolve once; every sub-phase paints the same wrapper colors so the
   // seal, opening flash, and revealed cards stay visually continuous.
-  const gradient = packGradient(packSlug);
+  const gradient = packGradient(packSlug, packGenreTags);
+  // `packCoverImageUrl` is forwarded to `PackSealDrag` so the idle
+  // seal can render the cover as the seal face. Sub-phases (opening
+  // flash, card tray) still use the gradient because they're
+  // transition states, not the seal itself — keeping color
+  // continuity through the rip matters more there than fidelity to
+  // the cover.
 
   // Warm the browser cache with every cover the moment the pack mounts so the
   // user never sees an image fade in mid-reveal.
@@ -102,7 +123,7 @@ export function PackRip({ cards, packName, packSlug, onComplete, onRipAnother, s
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center gap-4 px-4 pb-4">
         <div className="card-stage">
-          <PackSealDrag packName={packName} gradient={gradient} onRip={startRip} />
+          <PackSealDrag packName={packName} gradient={gradient} coverImageUrl={packCoverImageUrl} onRip={startRip} />
         </div>
         <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
           Drag across the perforation to rip
@@ -228,6 +249,9 @@ const TEAR_COMMIT_THRESHOLD = 0.85;
 interface PackSealDragProps {
   packName: string;
   gradient: ReturnType<typeof packGradient>;
+  /** Optional bespoke cover art. When provided, the seal face renders
+   *  this image in place of the genre gradient. */
+  coverImageUrl?: string | null;
   onRip: () => void;
 }
 
@@ -249,8 +273,9 @@ interface PackSealDragProps {
  *     the tear back to 0 so the user can try again.
  *   - Haptic pulses at the commit boundary on supporting devices.
  */
-function PackSealDrag({ packName, gradient, onRip }: PackSealDragProps) {
+function PackSealDrag({ packName, gradient, coverImageUrl, onRip }: PackSealDragProps) {
   const packRef = useRef<HTMLDivElement | null>(null);
+  const hasCover = Boolean(coverImageUrl);
   // 0 = sealed, 1 = fully torn. Drives the visual via useTransform below
   // so we never re-render React during the drag — the tear updates
   // every frame on the GPU.
@@ -382,16 +407,42 @@ function PackSealDrag({ packName, gradient, onRip }: PackSealDragProps) {
       }
       className="card-fit relative touch-none select-none overflow-hidden rounded-2xl shadow-2xl outline-none focus-visible:ring-2 focus-visible:ring-[var(--lagoon)]"
       style={{
-        background: gradient.background,
+        // Cover art replaces the gradient when present; without art,
+        // the genre gradient owns the seal as before.
+        background: hasCover ? undefined : gradient.background,
+        // Box-shadow halo stays genre-tinted in both cases — the
+        // ambient light around the pack should still feel like its
+        // genre, even if the seal face is a photograph.
         boxShadow: packBoxShadow(gradient),
         // `touch-none` disables native scrolling so the pointer events
         // reach us cleanly on touch devices; `select-none` prevents
         // text-selection flicker on long drags.
       }}
     >
+      {/* Cover art layer. Rendered as the bottom-most paint so the
+          tear strip, sparkle field, and label scrim all stack on top. */}
+      {hasCover && (
+        <img
+          src={coverImageUrl ?? undefined}
+          alt=""
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+          referrerPolicy="no-referrer"
+          draggable={false}
+        />
+      )}
+
       {/* Dotted sparkle gradient — pure decoration, unchanged from
-          the previous seal design. */}
-      <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(circle_at_30%_20%,white,transparent_45%),radial-gradient(circle_at_70%_80%,white,transparent_45%)]" />
+          the previous seal design. Suppressed when a cover image is
+          owning the seal so the photo isn't speckled. */}
+      {!hasCover && (
+        <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(circle_at_30%_20%,white,transparent_45%),radial-gradient(circle_at_70%_80%,white,transparent_45%)]" />
+      )}
+
+      {/* Bottom-up scrim under the title — only over cover art, to
+          keep the title + "drag to rip" hint readable on any photo. */}
+      {hasCover && (
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_top,rgba(0,0,0,0.7)_0%,rgba(0,0,0,0.3)_50%,rgba(0,0,0,0.15)_100%)]" />
+      )}
 
       {/* Pack content (under the tear strip). Laid out the same way as
           the old static seal so the pack "feels" unchanged until the
@@ -400,7 +451,7 @@ function PackSealDrag({ packName, gradient, onRip }: PackSealDragProps) {
         <div>
           <h2 className="display-title text-2xl font-bold leading-tight">{packName}</h2>
           <p className="mt-2 text-xs uppercase tracking-[0.18em] text-[var(--on-accent)]/70">
-            5 books · sealed
+            5 books
           </p>
         </div>
         <div className="mt-6 text-[10px] uppercase tracking-[0.2em] text-[var(--on-accent)]/60">

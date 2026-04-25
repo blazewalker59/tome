@@ -1,5 +1,6 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { BookOpen, Layers, Library, Sparkles } from "lucide-react";
+import { CoverImage } from "@/components/CoverImage";
 import {
   getCollectionFn,
   getRipPacksFn,
@@ -274,23 +275,22 @@ function ReadingStrip({
                   title={e.book.title}
                   className="flex h-full w-20 flex-col rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md"
                 >
-                  {e.book.coverUrl ? (
-                    <img
-                      src={e.book.coverUrl}
-                      alt=""
-                      loading="lazy"
-                      className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
-                    />
-                  ) : (
-                    // Covers the "no cover art" case. The title
-                    // initial keeps the tile from reading as broken
-                    // now that the explicit title bar is gone; the
-                    // full title is still available via the link's
-                    // title/aria-label for hover + assistive tech.
-                    <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
-                      {e.book.title.slice(0, 1)}
-                    </div>
-                  )}
+                  <CoverImage
+                    src={e.book.coverUrl}
+                    alt=""
+                    loading="lazy"
+                    className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
+                    fallback={
+                      // Covers the "no cover art" case. The title
+                      // initial keeps the tile from reading as broken
+                      // now that the explicit title bar is gone; the
+                      // full title is still available via the link's
+                      // title/aria-label for hover + assistive tech.
+                      <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
+                        {e.book.title.slice(0, 1)}
+                      </div>
+                    }
+                  />
                 </Link>
               </li>
             ))}
@@ -342,23 +342,22 @@ function RecentPulls({
                   title={p.title}
                   className={`flex h-full w-20 flex-col rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 transition hover:-translate-y-0.5 hover:shadow-md ${style?.ring ?? ""}`}
                 >
-                  {p.coverUrl ? (
-                    <img
-                      src={p.coverUrl}
-                      alt=""
-                      loading="lazy"
-                      className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
-                    />
-                  ) : (
-                    // No cover → keep the footprint so the row stays
-                    // aligned. A muted initial is quieter than an
-                    // empty box and hints at the title; the full
-                    // title is still available via hover + a11y
-                    // label on the link itself.
-                    <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
-                      {p.title.slice(0, 1)}
-                    </div>
-                  )}
+                  <CoverImage
+                    src={p.coverUrl}
+                    alt=""
+                    loading="lazy"
+                    className="h-24 w-full rounded-sm border border-[var(--line)] object-cover"
+                    fallback={
+                      // No cover → keep the footprint so the row stays
+                      // aligned. A muted initial is quieter than an
+                      // empty box and hints at the title; the full
+                      // title is still available via hover + a11y
+                      // label on the link itself.
+                      <div className="flex h-24 w-full items-center justify-center rounded-sm border border-[var(--line)] bg-[var(--track-bg)] text-sm font-bold text-[var(--sea-ink-soft)]">
+                        {p.title.slice(0, 1)}
+                      </div>
+                    }
+                  />
                 </Link>
               </li>
             );
@@ -447,33 +446,63 @@ function StarterPacksCard({ packs }: { packs: ReadonlyArray<PackSummary> }) {
  * a kicker.
  */
 function StarterPackTile({ pack }: { pack: PackSummary }) {
-  const gradient = packGradient(pack.slug);
+  const gradient = packGradient(pack.slug, pack.genreTags);
+  // When the pack has bespoke cover art, that art owns the tile —
+  // the genre gradient is a fallback for un-art-directed packs, not
+  // a frame to overlay on top of someone's cover. We still print the
+  // pack name on top, so we lay a dark scrim under the label to keep
+  // the type readable on any cover.
+  const hasCover = Boolean(pack.coverImageUrl);
   // Every starter gradient is saturated/dark enough that the label
   // needs light parchment text — NOT the theme-reactive --on-accent,
   // which flips to a dark sea-ink on the light theme and turns the
   // pack name invisible against the plum/indigo/forest gradients.
   // Using the dark-theme on-accent hex directly pins readability.
+  // Cover-art tiles use the same light text so the look stays
+  // consistent across the row.
   const labelColor = "#f8f2e2";
   const labelColorSoft = "color-mix(in oklab, #f8f2e2 70%, transparent)";
   return (
     <Link
       to="/rip/$slug"
       params={{ slug: pack.slug }}
-      className="group block aspect-[2/3] w-full overflow-hidden rounded-2xl shadow-lg outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--lagoon)]"
+      className="group relative block aspect-[2/3] w-full overflow-hidden rounded-2xl shadow-lg outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--lagoon)]"
       style={{
-        background: gradient.background,
+        // Cover art replaces the gradient entirely; the gradient is
+        // only laid down when there's no cover so user/editor packs
+        // without art still get a genre-coded backdrop.
+        background: hasCover ? undefined : gradient.background,
         color: labelColor,
         // Subtle glow that echoes the larger pack seals. Softer than
         // the rip carousel's so the home page doesn't look busy.
+        // Reuse the genre glow even with cover art so the tile still
+        // has a tinted halo on the page.
         boxShadow: `0 0 40px -16px ${gradient.glowColor}, 0 18px 32px -22px rgba(0, 0, 0, 0.45)`,
       }}
       aria-label={`Rip ${pack.name}`}
     >
+      {hasCover && (
+        <img
+          src={pack.coverImageUrl ?? undefined}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          referrerPolicy="no-referrer"
+        />
+      )}
       <div className="relative flex h-full flex-col justify-between p-3">
         {/* Sparkle overlay — same dotted gradient as the full seal
             but lower opacity so the mini doesn't fight with its
-            neighbours in a row of five. */}
-        <div className="pointer-events-none absolute inset-0 opacity-15 [background-image:radial-gradient(circle_at_30%_20%,white,transparent_45%),radial-gradient(circle_at_70%_80%,white,transparent_45%)]" />
+            neighbours in a row of five. Skipped on cover-art tiles
+            so the photograph isn't speckled. */}
+        {!hasCover && (
+          <div className="pointer-events-none absolute inset-0 opacity-15 [background-image:radial-gradient(circle_at_30%_20%,white,transparent_45%),radial-gradient(circle_at_70%_80%,white,transparent_45%)]" />
+        )}
+        {/* Bottom-up scrim under the label, only over cover art —
+            keeps the kicker + title readable against any photo
+            without dimming the whole image. */}
+        {hasCover && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-[linear-gradient(to_top,rgba(0,0,0,0.7),transparent)]" />
+        )}
         <div
           className="relative text-[9px] font-semibold uppercase tracking-[0.16em]"
           style={{ color: labelColorSoft }}

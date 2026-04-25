@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion, type PanInfo } from "motion/react";
+import { Sparkles } from "lucide-react";
 import { getRipPacksFn, getShardBalanceFn, type PackSummary } from "@/server/collection";
 import { packGradient, packBoxShadow } from "@/lib/packs/gradient";
 
@@ -81,13 +82,22 @@ function RipPickerPage() {
   return (
     <main className="viewport-stage">
       <header className="px-4 pt-3 pb-2 text-center sm:pt-5 sm:pb-3">
-        <p className="island-kicker">Rip a pack</p>
-        <h1 className="mt-1 display-title text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
+        {/* Single h1 — dropped the "Rip a pack" kicker because it just
+            restated what the h1 already says. "Choose your pack" is
+            the action, that's all the framing the page needs. */}
+        <h1 className="display-title text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
           Choose your pack
         </h1>
         {shards !== null && (
-          <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
-            Shards <span className="text-[var(--sea-ink)]">{shards}</span>
+          // "Balance" reads as a spendable currency amount without
+          // needing a verb. Icon matches the profile dropdown +
+          // /rip/$slug header so the glyph consistently means shards.
+          <p className="mt-1 inline-flex items-center justify-center gap-1.5 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+            Balance
+            <span className="inline-flex items-center gap-1 tabular-nums text-[var(--sea-ink)]">
+              {shards}
+              <Sparkles aria-hidden className="h-3.5 w-3.5 text-[var(--lagoon)]" />
+            </span>
           </p>
         )}
       </header>
@@ -290,25 +300,31 @@ function PackCarouselItem({ slot, offset, onClick }: PackCarouselItemProps) {
  * No tear interaction here; tapping just selects/navigates.
  */
 function PackPreview({ pack, active }: { pack: PackSummary; active: boolean }) {
-  const gradient = packGradient(pack.slug);
+  const gradient = packGradient(pack.slug, pack.genreTags);
+  // Cover art, when present, owns the seal — we skip the gradient,
+  // sparkle field, and shimmer sweep so the photograph reads as the
+  // intended hero image. Packs without art still get the full
+  // genre-coded treatment as before.
+  const hasCover = Boolean(pack.coverImageUrl);
   return (
     <div
       className="relative h-full w-full overflow-hidden rounded-2xl shadow-2xl"
       style={{
-        background: gradient.background,
+        background: hasCover ? undefined : gradient.background,
+        // Keep the genre-tinted halo even with cover art so the seal
+        // still feels lit by its palette on the carousel stage.
         boxShadow: packBoxShadow(gradient),
       }}
     >
-      <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(circle_at_30%_20%,white,transparent_45%),radial-gradient(circle_at_70%_80%,white,transparent_45%)]" />
-      {/* Pack cover art (when set) sits above the gradient at reduced
-          opacity to preserve the brand feel; the name is printed over
-          it regardless. */}
-      {pack.coverImageUrl && (
+      {hasCover ? (
         <img
-          src={pack.coverImageUrl}
+          src={pack.coverImageUrl ?? undefined}
           alt=""
-          className="absolute inset-0 h-full w-full object-cover opacity-40 mix-blend-overlay"
+          className="absolute inset-0 h-full w-full object-cover"
+          referrerPolicy="no-referrer"
         />
+      ) : (
+        <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(circle_at_30%_20%,white,transparent_45%),radial-gradient(circle_at_70%_80%,white,transparent_45%)]" />
       )}
 
       {/* Shimmer sweep. A narrow diagonal highlight band travels
@@ -319,8 +335,10 @@ function PackPreview({ pack, active }: { pack: PackSummary; active: boolean }) {
           silhouette. Tuned to read as light grazing a real foil
           surface — narrow band, low peak opacity, soft falloff,
           and `soft-light` blending so it tints the underlying
-          gradient instead of painting a white stripe on top. */}
-      {active && (
+          gradient instead of painting a white stripe on top.
+          Skipped on cover-art packs because the shimmer is part of
+          the genre-foil treatment; cover packs are art, not foil. */}
+      {active && !hasCover && (
         <motion.div
           aria-hidden
           className="pointer-events-none absolute inset-0"
@@ -347,7 +365,15 @@ function PackPreview({ pack, active }: { pack: PackSummary; active: boolean }) {
         />
       )}
 
-      <div className="relative flex h-full flex-col items-center justify-center p-5 text-center text-[var(--on-accent)]">
+      {/* Bottom-up scrim under the title — only shown when the pack
+          has cover art, since the foil-on-gradient case is already
+          high-contrast. Keeps the title legible against any photo
+          without darkening the whole image. */}
+      {hasCover && (
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_top,rgba(0,0,0,0.65)_0%,rgba(0,0,0,0.25)_45%,transparent_70%)]" />
+      )}
+
+      <div className="relative flex h-full flex-col items-center justify-end p-5 text-center text-[var(--on-accent)]">
         <div>
           <h3 className="display-title text-lg font-bold leading-tight">{pack.name}</h3>
           <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-[var(--on-accent)]/70">

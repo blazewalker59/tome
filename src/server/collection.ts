@@ -44,6 +44,15 @@ export interface PackPayload {
   slug: string
   name: string
   description: string | null
+  /** Optional bespoke cover art. When set, the rip seal renders this
+   *  as the seal face instead of the genre gradient. */
+  coverImageUrl: string | null
+  /** Editorial genre tags (kebab-case, max 3). The first entry drives
+   *  the rip wrapper gradient — see `packGradient` in
+   *  src/lib/packs/gradient.ts. Empty array for legacy packs that
+   *  haven't been tagged yet; the gradient helper falls back to the
+   *  slug map and then the default. */
+  genreTags: ReadonlyArray<string>
   books: ReadonlyArray<BookRow>
 }
 
@@ -59,6 +68,9 @@ export interface PackSummary {
   name: string
   description: string | null
   coverImageUrl: string | null
+  /** Editorial genre tags (kebab-case, max 3). First entry drives the
+   *  pack-tile gradient on /rip and the home grid. */
+  genreTags: ReadonlyArray<string>
   bookCount: number
 }
 
@@ -164,6 +176,8 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
       slug: packs.slug,
       name: packs.name,
       description: packs.description,
+      coverImageUrl: packs.coverImageUrl,
+      genreTags: packs.genreTags,
     })
     .from(packs)
     // Editorial namespace only: creator_id IS NULL.
@@ -196,6 +210,8 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
     slug: pack.slug,
     name: pack.name,
     description: pack.description,
+    coverImageUrl: pack.coverImageUrl,
+    genreTags: pack.genreTags ?? [],
     books: rows,
   }
 }
@@ -217,6 +233,8 @@ async function loadUserPack(username: string, slug: string): Promise<PackPayload
       slug: packs.slug,
       name: packs.name,
       description: packs.description,
+      coverImageUrl: packs.coverImageUrl,
+      genreTags: packs.genreTags,
     })
     .from(packs)
     .innerJoin(users, eq(packs.creatorId, users.id))
@@ -257,6 +275,8 @@ async function loadUserPack(username: string, slug: string): Promise<PackPayload
     slug: pack.slug,
     name: pack.name,
     description: pack.description,
+    coverImageUrl: pack.coverImageUrl,
+    genreTags: pack.genreTags ?? [],
     books: rows,
   }
 }
@@ -443,6 +463,7 @@ export const getRipPacksFn = createServerFn({ method: 'GET' }).handler(
         name: packs.name,
         description: packs.description,
         coverImageUrl: packs.coverImageUrl,
+        genreTags: packs.genreTags,
         // Per-pack book count via a correlated aggregate. Avoids a
         // separate N+1 pass and keeps the payload compact for the
         // carousel.
@@ -459,7 +480,7 @@ export const getRipPacksFn = createServerFn({ method: 'GET' }).handler(
       .where(and(isNull(packs.creatorId), eq(packs.isPublic, true)))
       .orderBy(desc(packs.createdAt))
 
-    return rows
+    return rows.map((r) => ({ ...r, genreTags: r.genreTags ?? [] }))
   }),
 )
 

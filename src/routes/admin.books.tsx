@@ -1,28 +1,62 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, X } from "lucide-react";
+import { ArrowDown, ArrowUp, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 
 import { AdminForbidden } from "@/components/AdminForbidden";
+import { CoverImage } from "@/components/CoverImage";
+import type { Rarity } from "@/lib/cards/rarity";
 import { checkAdminFn } from "@/server/admin";
 import {
   listBooksFn,
   listPacksFn,
+  refreshBookFromHardcoverFn,
+  restoreBookFn,
   setBookPacksFn,
+  softDeleteBookFn,
   updateBookCurationFn,
+  updateBookRarityFn,
   type AdminBookRow,
   type AdminBooksSortKey,
   type AdminPackSummary,
   type SortDir,
 } from "@/server/catalog";
 
+// Mirror of `RARITY_VALUES` in src/server/catalog.ts. Local constant
+// avoids importing from the server module (server fns drag node deps
+// into the client bundle).
+const RARITY_OPTIONS: ReadonlyArray<Rarity> = [
+  "common",
+  "uncommon",
+  "rare",
+  "foil",
+  "legendary",
+];
+
+// Tailwind class map shared across rarity chips in this file. Tokens
+// come from the rarity palette in styles.css; `common` falls through
+// to the neutral chip theme so the table doesn't get screamy on the
+// most common rows.
+const RARITY_CHIP_CLASSES: Record<string, string> = {
+  common:
+    "border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)]",
+  uncommon:
+    "border border-[color:var(--rarity-uncommon)]/40 bg-[color:var(--rarity-uncommon-soft)] text-[color:var(--rarity-uncommon)]",
+  rare: "border border-[color:var(--rarity-rare)]/40 bg-[color:var(--rarity-rare-soft)] text-[color:var(--rarity-rare)]",
+  foil: "border border-[color:var(--rarity-foil)]/40 bg-[color:var(--rarity-foil-soft)] text-[color:var(--rarity-foil)]",
+  legendary:
+    "border border-[color:var(--rarity-legendary)]/40 bg-[color:var(--rarity-legendary-soft)] text-[color:var(--rarity-legendary)]",
+};
+
 /**
  * Admin catalog browser.
  *
  * Layout is a wide table: cover, title+authors, genre, rarity, ratings,
- * pack memberships (as chips), assign button. Genre and mood tags are
- * editable in-place and persist on blur — no explicit save button, which
- * matches the low-friction curation feel. Rarity is display-only (owned
- * by `pnpm db:rebucket`).
+ * pack memberships (as chips), assign button. Genre, mood tags, and
+ * rarity are editable in-place and persist on change — no explicit save
+ * button, which matches the low-friction curation feel. Rarity edits
+ * write to the global `books.rarity` column and may be overwritten by
+ * the next `pnpm db:rebucket` run, which recomputes rarity from
+ * ratings_count × average_rating across the whole catalog.
  *
  * Pack assignment is deliberately modal-per-row rather than inline — a
  * book can belong to many packs, and a typeahead+checklist UI doesn't
@@ -61,6 +95,10 @@ function BooksWorkspace() {
   const [searchInput, setSearchInput] = useState("");
   const [sort, setSort] = useState<AdminBooksSortKey>("ingested");
   const [dir, setDir] = useState<SortDir>("desc");
+  // When false (default) tombstoned rows are filtered out server-side.
+  // Toggling this on lets the admin audit and restore soft-deleted
+  // catalog rows without a SQL detour.
+  const [includeDeleted, setIncludeDeleted] = useState(false);
   const [allPacks, setAllPacks] = useState<AdminPackSummary[]>([]);
   const [assignTarget, setAssignTarget] = useState<AdminBookRow | null>(null);
 
@@ -72,7 +110,7 @@ function BooksWorkspace() {
     const timer = setTimeout(() => {
       setLoadState({ kind: "loading" });
       listBooksFn({
-        data: { search: q || undefined, limit: 200, sort, dir },
+        data: { search: q || undefined, limit: 200, sort, dir, includeDeleted },
       })
         .then((result) => {
           if (mySeq !== reqSeqRef.current) return;
@@ -89,7 +127,7 @@ function BooksWorkspace() {
         });
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchInput, sort, dir]);
+  }, [searchInput, sort, dir, includeDeleted]);
 
   /**
    * Clicking a sortable header either flips direction (if it was already
@@ -149,6 +187,123 @@ function BooksWorkspace() {
     [],
   );
 
+  const handleRarityUpdate = useCallback(
+    async (bookId: string, rarity: Rarity): Promise<void> => {
+      // Optimistic: flip the local row immediately so the table feels
+      // responsive, then reconcile from the server response. On error
+      // we surface via alert and don't touch state — the row keeps
+      // its old value so a retry is one click away. Same UX shape as
+      // `handleCurationUpdate` above.
+      setBooks((prev) =>
+        prev.map((b) => (b.id === bookId ? { ...b, rarity } : b)),
+      );
+      try {
+        const result = await updateBookRarityFn({ data: { bookId, rarity } });
+        setBooks((prev) =>
+          prev.map((b) =>
+            b.id === bookId ? { ...b, rarity: result.rarity } : b,
+          ),
+        );
+      } catch (err) {
+        // eslint-disable-next-line no-alert
+        alert(
+          `Failed to save rarity: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    [],
+  );
+
+  // Re-fetches the book from Hardcover and overwrites only the
+  // API-derived fields server-side; we splice the returned values into
+  // local state so the row updates without a full table reload.
+  // Curated fields (genre, mood tags, rarity) and pack memberships are
+  // preserved by the server fn and so don't appear in the splice.
+  const handleRefresh = useCallback(async (bookId: string): Promise<void> => {
+    try {
+      const result = await refreshBookFromHardcoverFn({ data: { bookId } });
+      setBooks((prev) =>
+        prev.map((b) =>
+          b.id === bookId
+            ? {
+                ...b,
+                title: result.title,
+                authors: result.authors,
+                coverUrl: result.coverUrl,
+                publishedYear: result.publishedYear,
+                ratingsCount: result.ratingsCount,
+                averageRating: result.averageRating,
+              }
+            : b,
+        ),
+      );
+      // Light-touch feedback. Most refreshes either silently fix a
+      // broken cover or return changed=false; an alert would be too
+      // noisy for the common case, so we only surface the no-op path
+      // (which is what an admin needs to know to escalate).
+      if (!result.changed) {
+        // eslint-disable-next-line no-alert
+        alert(
+          "Refreshed from Hardcover, but no visible fields changed. " +
+            "If the cover is still broken the upstream URL itself is dead — " +
+            "the row may need to be unlinked or re-ingested against a different edition.",
+        );
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(
+        `Refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, []);
+
+  // Soft-delete a book. Tombstones the row so it stops appearing in
+  // admin search defaults, builder local search, and addBookToPack
+  // guards — but keeps every existing reference (pack memberships,
+  // user collections, reading-log entries) intact. Reversible via
+  // handleRestore. We splice the new deletedAt into local state so
+  // the row updates without a refetch; if the toggle hides
+  // tombstones, the row will disappear on the next search-driven
+  // reload, which is the right UX.
+  const handleSoftDelete = useCallback(async (bookId: string): Promise<void> => {
+    // eslint-disable-next-line no-alert
+    const confirmed = window.confirm(
+      "Soft-delete this book?\n\n" +
+        "It will be hidden from the admin browse, builder search, and " +
+        "future pack additions. Existing user collections, reading " +
+        "logs, and pack memberships are preserved. You can restore it " +
+        "from this page with 'Show deleted' toggled on.",
+    );
+    if (!confirmed) return;
+    try {
+      const result = await softDeleteBookFn({ data: { bookId } });
+      setBooks((prev) =>
+        prev.map((b) =>
+          b.id === bookId ? { ...b, deletedAt: result.deletedAt } : b,
+        ),
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(
+        `Delete failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, []);
+
+  const handleRestore = useCallback(async (bookId: string): Promise<void> => {
+    try {
+      await restoreBookFn({ data: { bookId } });
+      setBooks((prev) =>
+        prev.map((b) => (b.id === bookId ? { ...b, deletedAt: null } : b)),
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(
+        `Restore failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, []);
+
   const handleAssignSubmit = useCallback(
     async (bookId: string, packIds: string[]) => {
       try {
@@ -189,8 +344,17 @@ function BooksWorkspace() {
             Browse catalog
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[var(--sea-ink-soft)]">
-            Edit genre + mood tags in place (saves on blur). Click a row&rsquo;s
-            <em> Packs</em> to manage memberships. Rarity is owned by{" "}
+            Edit genre, mood tags, and rarity in place (saves on
+            change). Click a row&rsquo;s <em>Packs</em> to manage
+            memberships. Use the <RefreshCw aria-hidden className="inline h-3 w-3 align-text-bottom" />{" "}
+            icon next to <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">hc#</code>{" "}
+            to re-pull title, authors, and cover from Hardcover when a
+            cover URL has gone stale. The <Trash2 aria-hidden className="inline h-3 w-3 align-text-bottom" />{" "}
+            soft-deletes a book — it&rsquo;s hidden from search, builder
+            results, and new pack additions, but existing user
+            collections, reading logs, and pack memberships are
+            preserved. Toggle <em>Show deleted</em> to audit or restore.
+            Rarity edits are global and may be overwritten by{" "}
             <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">
               pnpm db:rebucket
             </code>
@@ -211,6 +375,19 @@ function BooksWorkspace() {
               ? "Loading…"
               : `${books.length} shown · ${total} total`}
           </p>
+          {/* Soft-deleted books are filtered out by default to keep
+              the working set focused on live curation. Toggle on to
+              audit / restore tombstoned rows; the listBooksFn call
+              re-runs with includeDeleted=true and the same search. */}
+          <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px] text-[var(--sea-ink-soft)]">
+            <input
+              type="checkbox"
+              checked={includeDeleted}
+              onChange={(e) => setIncludeDeleted(e.target.checked)}
+              className="h-3.5 w-3.5 cursor-pointer accent-[color:var(--lagoon)]"
+            />
+            Show deleted
+          </label>
         </div>
       </header>
 
@@ -260,11 +437,16 @@ function BooksWorkspace() {
           `min-w-[980px]` on the table guarantees every column keeps enough
           room for its content (cover thumb, longest author name, wide mood
           input, pack chips) no matter how narrow the viewport — the table
-          just scrolls horizontally on phones. Column widths are explicit
-          so content doesn't redistribute into cramped, uneven columns. */}
+          just scrolls horizontally on phones. `table-fixed` is load-bearing:
+          without it browsers run `table-layout: auto`, which treats the
+          `<colgroup>` widths as advisory and redistributes width based on
+          intrinsic content (long titles balloon, narrow columns get
+          squeezed). Fixed layout pins each column to exactly its `<col>`
+          width, so on mobile the table really does become 980px and the
+          parent's `overflow-x-auto` scrolls instead of cramping. */}
       <div className="island-shell overflow-hidden rounded-3xl">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-sm">
+          <table className="w-full min-w-[980px] table-fixed text-sm">
             <colgroup>
               <col className="w-[260px]" />
               <col className="w-[180px]" />
@@ -325,6 +507,10 @@ function BooksWorkspace() {
                     key={book.id}
                     book={book}
                     onUpdate={handleCurationUpdate}
+                    onRarityChange={handleRarityUpdate}
+                    onRefresh={handleRefresh}
+                    onSoftDelete={handleSoftDelete}
+                    onRestore={handleRestore}
                     onAssignClick={() => setAssignTarget(book)}
                   />
                 ))
@@ -353,6 +539,10 @@ function BooksWorkspace() {
 function BookRow({
   book,
   onUpdate,
+  onRarityChange,
+  onRefresh,
+  onSoftDelete,
+  onRestore,
   onAssignClick,
 }: {
   book: AdminBookRow;
@@ -360,12 +550,21 @@ function BookRow({
     bookId: string,
     patch: { genre?: string; moodTags?: string[] },
   ) => Promise<void>;
+  onRarityChange: (bookId: string, rarity: Rarity) => Promise<void>;
+  onRefresh: (bookId: string) => Promise<void>;
+  onSoftDelete: (bookId: string) => Promise<void>;
+  onRestore: (bookId: string) => Promise<void>;
   onAssignClick: () => void;
 }) {
   // Local drafts so typing doesn't trigger a save per keystroke. Commit
   // happens on blur, iff the normalized value actually changed.
   const [genreDraft, setGenreDraft] = useState(book.genre);
   const [moodDraft, setMoodDraft] = useState(book.moodTags.join(", "));
+  // Local-only spinner state for the per-row Hardcover refresh. Kept on
+  // the row (not in the parent) so multiple refreshes can run in
+  // parallel without one blocking another's UI; the server's 1.1s
+  // request spacing is what actually serializes them.
+  const [refreshing, setRefreshing] = useState(false);
 
   // Sync drafts when the row is reloaded from the server (e.g. after a
   // search refresh that picks up another admin's edits).
@@ -391,35 +590,109 @@ function BookRow({
     void onUpdate(book.id, { moodTags: next });
   };
 
+  const isDeleted = book.deletedAt != null;
+
   return (
-    <tr className="border-b border-[var(--line)] last:border-0 align-top">
+    <tr
+      className={`border-b border-[var(--line)] last:border-0 align-top ${
+        // Visual dim + saturate when tombstoned. The row stays
+        // interactive (admin can still edit metadata or restore) but
+        // reads as "removed from curation" at a glance. We avoid
+        // strikethrough on the title since some text (year, hc#) is
+        // legitimately struck-through-looking already.
+        isDeleted ? "opacity-60" : ""
+      }`}
+    >
       <td className="px-4 py-3">
         <div className="flex gap-3">
-          {book.coverUrl ? (
-            <img
-              src={book.coverUrl}
-              alt=""
-              className="h-16 w-11 shrink-0 rounded-md object-cover"
-              referrerPolicy="no-referrer"
-            />
-          ) : (
-            <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-          )}
+          <CoverImage
+            src={book.coverUrl}
+            alt=""
+            className={`h-16 w-11 shrink-0 rounded-md object-cover ${
+              isDeleted ? "grayscale" : ""
+            }`}
+            fallback={
+              <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+            }
+          />
           <div className="min-w-0">
-            <p className="truncate font-semibold text-[var(--sea-ink)]">
-              {book.title}
-              {book.publishedYear && (
-                <span className="ml-1 text-xs font-normal text-[var(--sea-ink-soft)]">
-                  ({book.publishedYear})
+            <p className="flex items-center gap-2 truncate font-semibold text-[var(--sea-ink)]">
+              <span className="truncate">
+                {book.title}
+                {book.publishedYear && (
+                  <span className="ml-1 text-xs font-normal text-[var(--sea-ink-soft)]">
+                    ({book.publishedYear})
+                  </span>
+                )}
+              </span>
+              {isDeleted && (
+                <span
+                  className="shrink-0 rounded-full border border-[color:var(--lagoon)]/30 bg-[color:var(--lagoon)]/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[color:var(--lagoon)]"
+                  title="This book is soft-deleted; restore it to put it back in circulation."
+                >
+                  Deleted
                 </span>
               )}
             </p>
-            <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-              hc#{book.hardcoverId}
-              {book.averageRating != null &&
-                ` · ★ ${Number(book.averageRating).toFixed(2)}`}
-              {book.ratingsCount > 0 &&
-                ` · ${book.ratingsCount.toLocaleString()} ratings`}
+            <p className="mt-1 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+              <span>
+                hc#{book.hardcoverId}
+                {book.averageRating != null &&
+                  ` · ★ ${Number(book.averageRating).toFixed(2)}`}
+                {book.ratingsCount > 0 &&
+                  ` · ${book.ratingsCount.toLocaleString()} ratings`}
+              </span>
+              {/* Re-fetch this book from Hardcover. Useful when the
+                  cover URL has gone stale (most common failure mode)
+                  or the title/authors have drifted upstream. Curated
+                  fields (genre, mood tags, rarity) and pack memberships
+                  are preserved server-side. */}
+              <button
+                type="button"
+                onClick={async () => {
+                  setRefreshing(true);
+                  try {
+                    await onRefresh(book.id);
+                  } finally {
+                    setRefreshing(false);
+                  }
+                }}
+                disabled={refreshing}
+                title="Refresh title, authors, and cover from Hardcover"
+                aria-label={`Refresh ${book.title} from Hardcover`}
+                className="inline-flex shrink-0 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] p-1 text-[var(--sea-ink-soft)] transition hover:text-[var(--lagoon)] disabled:cursor-progress disabled:opacity-60"
+              >
+                <RefreshCw
+                  aria-hidden
+                  className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+                />
+              </button>
+              {/* Delete / Restore. Soft-delete is the only destructive
+                  action exposed in the admin table; hard delete would
+                  fail the FK RESTRICT on pack_books / collections /
+                  reading_log anyway. Confirmation prompt is in the
+                  parent's handleSoftDelete so this button stays simple. */}
+              {isDeleted ? (
+                <button
+                  type="button"
+                  onClick={() => void onRestore(book.id)}
+                  title="Restore this book to the live catalog"
+                  aria-label={`Restore ${book.title}`}
+                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] p-1 text-[var(--sea-ink-soft)] transition hover:text-[color:var(--lagoon)]"
+                >
+                  <RotateCcw aria-hidden className="h-3.5 w-3.5" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void onSoftDelete(book.id)}
+                  title="Soft-delete this book (reversible)"
+                  aria-label={`Delete ${book.title}`}
+                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] p-1 text-[var(--sea-ink-soft)] transition hover:border-red-500/40 hover:text-red-600"
+                >
+                  <Trash2 aria-hidden className="h-3.5 w-3.5" />
+                </button>
+              )}
             </p>
           </div>
         </div>
@@ -473,7 +746,28 @@ function BookRow({
         />
       </td>
       <td className="px-3 py-3 whitespace-nowrap">
-        <RarityBadge rarity={book.rarity} />
+        {/* Rarity is editable in place. We render a native <select> so
+            keyboard + screen-reader behaviour is free, but strip its
+            chrome via `appearance-none` and tint it with the same
+            chip-color tokens used elsewhere so the at-a-glance rarity
+            scan from before the cell became editable still works.
+            Saves on change (no commit-on-blur dance — the dropdown's
+            value IS the commit). Optimistic update happens in the
+            parent's handleRarityUpdate. */}
+        <select
+          value={book.rarity}
+          onChange={(e) => void onRarityChange(book.id, e.target.value as Rarity)}
+          aria-label={`Rarity for ${book.title}`}
+          className={`cursor-pointer appearance-none rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] outline-none transition-shadow hover:shadow-sm focus-visible:ring-2 focus-visible:ring-[color:var(--lagoon)]/40 ${
+            RARITY_CHIP_CLASSES[book.rarity] ?? RARITY_CHIP_CLASSES.common
+          }`}
+        >
+          {RARITY_OPTIONS.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
       </td>
       <td className="px-3 py-3">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -493,36 +787,19 @@ function BookRow({
           <button
             type="button"
             onClick={onAssignClick}
-            className="btn-secondary rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]"
+            // Visually identical to the pack chips above so the row
+            // reads as a single chip cluster — Edit just opens the
+            // assignment dialog. Keep it as a <button> for keyboard
+            // affordance; hover swaps to the lagoon accent so it
+            // still reads as interactive without breaking the chip
+            // rhythm.
+            className="rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[var(--sea-ink)] transition-colors hover:border-[color:var(--lagoon)]/40 hover:text-[color:var(--lagoon)]"
           >
             Edit
           </button>
         </div>
       </td>
     </tr>
-  );
-}
-
-function RarityBadge({ rarity }: { rarity: string }) {
-  // Colour tokens follow the rarity palette defined in the theme CSS.
-  const map: Record<string, string> = {
-    common:
-      "border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)]",
-    uncommon:
-      "border border-[color:var(--rarity-uncommon)]/40 bg-[color:var(--rarity-uncommon-soft)] text-[color:var(--rarity-uncommon)]",
-    rare: "border border-[color:var(--rarity-rare)]/40 bg-[color:var(--rarity-rare-soft)] text-[color:var(--rarity-rare)]",
-    foil: "border border-[color:var(--rarity-foil)]/40 bg-[color:var(--rarity-foil-soft)] text-[color:var(--rarity-foil)]",
-    legendary:
-      "border border-[color:var(--rarity-legendary)]/40 bg-[color:var(--rarity-legendary-soft)] text-[color:var(--rarity-legendary)]",
-  };
-  return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${
-        map[rarity] ?? map.common
-      }`}
-    >
-      {rarity}
-    </span>
   );
 }
 

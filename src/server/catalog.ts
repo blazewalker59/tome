@@ -24,6 +24,9 @@ import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm
 import { getDb } from "@/db/client";
 import { books, packBooks, packs } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth/session";
+import { bookResponseToRow } from "@/lib/cards/hardcover";
+import type { Rarity } from "@/lib/cards/rarity";
+import { fetchBookById } from "./hardcover";
 import { withErrorLogging } from "./_shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,6 +82,37 @@ export function normalizeMoodTags(raw: ReadonlyArray<unknown>): string[] {
   return out;
 }
 
+/**
+ * Same shape as `normalizeMoodTags` but for `packs.genre_tags`. Mirrors
+ * the validator in `src/server/user-packs.ts` so the editorial admin
+ * surface and the user pack-builder enforce the exact same rules
+ * (kebab-case, ≤3 tags, dedupe). Inlined rather than imported across
+ * server modules to keep `catalog.ts` independent of user-pack code
+ * paths — both validators are tiny and unlikely to drift.
+ */
+export function normalizePackGenreTags(raw: ReadonlyArray<unknown>): string[] {
+  const tags = raw
+    .map((t) => String(t ?? "").trim().toLowerCase())
+    .filter((t) => t.length > 0);
+  for (const t of tags) {
+    if (!KEBAB.test(t)) {
+      throw new Error(`Genre tag must be kebab-case; got "${t}"`);
+    }
+  }
+  if (tags.length > 3) {
+    throw new Error(`At most 3 genre tags allowed; got ${tags.length}`);
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of tags) {
+    if (!seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
 export function requireUuid(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} must be a non-empty string`);
@@ -110,6 +144,9 @@ export interface AdminBookRow {
   /** Epoch ms when the row was first inserted. Drives the default
    * "most recently ingested" sort in the admin table. */
   createdAt: number;
+  /** Epoch ms of soft-delete, or null for live rows. The admin table
+   * dims tombstoned rows and swaps Delete → Restore based on this. */
+  deletedAt: number | null;
   /** Packs this book belongs to, slug-keyed for display. */
   packs: ReadonlyArray<{ id: string; slug: string; name: string }>;
 }
@@ -126,6 +163,13 @@ export interface ListBooksInput {
   sort?: AdminBooksSortKey;
   /** Sort direction. Default: `desc` for ingested, `asc` for author/title. */
   dir?: SortDir;
+  /** When true, soft-deleted (`deleted_at IS NOT NULL`) books are
+   * included. Default false: the admin browse hides tombstones to
+   * keep the working set focused on live curation, the same way
+   * builder search and addBookToPack guards exclude them. The /admin
+   * /books "Show deleted" toggle flips this on so an admin can audit
+   * or restore a tombstoned row. */
+  includeDeleted?: boolean;
 }
 
 export interface ListBooksResult {
@@ -159,6 +203,7 @@ export const listBooksFn = createServerFn({ method: "GET" })
       offset: r.offset === undefined ? undefined : Number(r.offset),
       sort,
       dir,
+      includeDeleted: r.includeDeleted === true,
     };
   })
   .handler(
@@ -184,6 +229,17 @@ export const listBooksFn = createServerFn({ method: "GET" })
             sql`array_to_string(${books.authors}, ' ') ilike ${"%" + search + "%"}`,
           )
         : undefined;
+
+      // Soft-delete filter. The default (live-only) hits the partial
+      // index `books_live_created_idx` declared in the schema. Toggling
+      // `includeDeleted` drops the predicate so the admin can audit
+      // tombstoned rows and restore them.
+      const liveClause = data.includeDeleted ? undefined : isNull(books.deletedAt);
+
+      const whereClause =
+        searchClause && liveClause
+          ? and(searchClause, liveClause)
+          : (searchClause ?? liveClause);
 
       // Sorting.
       //
@@ -226,19 +282,20 @@ export const listBooksFn = createServerFn({ method: "GET" })
           averageRating: books.averageRating,
           publishedYear: books.publishedYear,
           createdAt: books.createdAt,
+          deletedAt: books.deletedAt,
         })
         .from(books);
 
-      const rows = await (searchClause ? baseQuery.where(searchClause) : baseQuery)
+      const rows = await (whereClause ? baseQuery.where(whereClause) : baseQuery)
         .orderBy(orderExpr)
         .limit(limit)
         .offset(offset);
 
-      const [{ total }] = search
+      const [{ total }] = whereClause
         ? await database
             .select({ total: sql<number>`count(*)::int` })
             .from(books)
-            .where(searchClause!)
+            .where(whereClause)
         : await database.select({ total: sql<number>`count(*)::int` }).from(books);
 
       // Pack memberships for the returned page only.
@@ -268,6 +325,7 @@ export const listBooksFn = createServerFn({ method: "GET" })
         items: rows.map((r) => ({
           ...r,
           createdAt: r.createdAt.getTime(),
+          deletedAt: r.deletedAt ? r.deletedAt.getTime() : null,
           packs: packsByBook.get(r.id) ?? [],
         })),
         total,
@@ -342,6 +400,81 @@ export const updateBookCurationFn = createServerFn({ method: "POST" })
     ),
   );
 
+const RARITY_VALUES: ReadonlyArray<Rarity> = [
+  "common",
+  "uncommon",
+  "rare",
+  "foil",
+  "legendary",
+];
+
+export interface UpdateBookRarityInput {
+  bookId: string;
+  rarity: Rarity;
+}
+
+export interface UpdateBookRarityResult {
+  bookId: string;
+  rarity: Rarity;
+}
+
+/**
+ * Manual rarity override on a single book.
+ *
+ * Rarity is normally owned by the rebucket script (`pnpm db:rebucket`,
+ * see `scripts/rebucket.ts`) which derives buckets from a global
+ * score distribution. This fn lets an admin pin a specific book's
+ * rarity for editorial reasons — e.g. "this title is a flagship for
+ * the Modern Fantasy Starter pack, force it to legendary regardless
+ * of its Hardcover ratings count".
+ *
+ * Important caveat: rarity lives on `books`, not `pack_books`. A
+ * change here is global — the book gets the new rarity in every pack
+ * it appears in, in the user's existing collection cards, and in
+ * future rolls. The admin UI surfaces this via a warning chip; this
+ * fn doesn't try to scope the change.
+ *
+ * Re-running rebucket will overwrite manual overrides. That's
+ * intentional for now (rebucket is the source of truth); if we need
+ * sticky overrides we can add a `rarity_overridden` boolean column
+ * later.
+ */
+export const updateBookRarityFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): UpdateBookRarityInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("updateBookRarityFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    const bookId = requireUuid(r.bookId, "bookId");
+    const rarity = String(r.rarity ?? "");
+    if (!RARITY_VALUES.includes(rarity as Rarity)) {
+      throw new Error(
+        `rarity must be one of ${RARITY_VALUES.join(", ")}; got "${rarity}"`,
+      );
+    }
+    return { bookId, rarity: rarity as Rarity };
+  })
+  .handler(
+    withErrorLogging(
+      "updateBookRarityFn",
+      async ({ data }): Promise<UpdateBookRarityResult> => {
+        await requireAdmin();
+        const database = await getDb();
+
+        const [updated] = await database
+          .update(books)
+          .set({ rarity: data.rarity, updatedAt: sql`now()` })
+          .where(eq(books.id, data.bookId))
+          .returning({ id: books.id, rarity: books.rarity });
+
+        if (!updated) {
+          throw new Error(`Book ${data.bookId} not found`);
+        }
+        return { bookId: updated.id, rarity: updated.rarity as Rarity };
+      },
+    ),
+  );
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Packs — list, create, read one
 // ─────────────────────────────────────────────────────────────────────────────
@@ -392,8 +525,133 @@ export const listPacksFn = createServerFn({ method: "GET" }).handler(
       ...r,
       createdAt: r.createdAt.getTime(),
     }));
-  }),
-);
+    }),
+  );
+
+export interface UpdatePackInput {
+  packId: string;
+  name?: string;
+  /** Empty string clears the description; `undefined` leaves it
+   *  unchanged. The two need to be distinguishable so the form can
+   *  patch a single field without erasing siblings. */
+  description?: string | null;
+  /** Same null/undefined contract as `description`. */
+  coverImageUrl?: string | null;
+  /** Full replacement (validator dedupes + caps at 3). Pass an empty
+   *  array to clear every tag. `undefined` leaves the column alone. */
+  genreTags?: ReadonlyArray<string>;
+}
+
+export interface UpdatePackResult {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  coverImageUrl: string | null;
+  genreTags: ReadonlyArray<string>;
+}
+
+/**
+ * Edit an editorial pack's metadata in place. Slug is intentionally
+ * NOT editable — it's part of public URLs (e.g. `/rip/$slug`),
+ * referenced by the gradient lookup, and embedded in users' rip
+ * history; a rename would invalidate every shared link without any
+ * meaningful upside. If renaming becomes necessary, do it as a
+ * deliberate one-off script with a redirect, not a per-request
+ * mutation.
+ *
+ * Membership and rarity are owned by separate fns
+ * (`addBookToPackFn` / `removeBookFromPackFn` / `updateBookRarityFn`)
+ * so this surface stays focused on pack-level fields.
+ */
+export const updatePackFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): UpdatePackInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("updatePackFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    const out: UpdatePackInput = { packId: requireUuid(r.packId, "packId") };
+
+    if ("name" in r) {
+      const name = String(r.name ?? "").trim();
+      if (name.length === 0) throw new Error("Pack name cannot be empty");
+      if (name.length > 120) throw new Error("Pack name must be ≤120 characters");
+      out.name = name;
+    }
+    // Treat present-but-empty as an explicit clear (null), mirroring how
+    // the user-pack edit flow handles optional text fields.
+    if ("description" in r) {
+      const v = typeof r.description === "string" ? r.description.trim() : "";
+      out.description = v.length > 0 ? v : null;
+    }
+    if ("coverImageUrl" in r) {
+      const v = typeof r.coverImageUrl === "string" ? r.coverImageUrl.trim() : "";
+      out.coverImageUrl = v.length > 0 ? v : null;
+    }
+    if ("genreTags" in r) {
+      out.genreTags = normalizePackGenreTags(
+        Array.isArray(r.genreTags) ? (r.genreTags as unknown[]) : [],
+      );
+    }
+    return out;
+  })
+  .handler(
+    withErrorLogging("updatePackFn", async ({ data }): Promise<UpdatePackResult> => {
+      await requireAdmin();
+      const database = await getDb();
+
+      // Build the patch incrementally so absent fields stay untouched.
+      // `updatedAt` isn't a column on `packs` (the schema only tracks
+      // `createdAt` + `publishedAt`), so we don't bump anything beyond
+      // the user-visible fields.
+      const patch: Record<string, unknown> = {};
+      if (data.name !== undefined) patch.name = data.name;
+      if (data.description !== undefined) patch.description = data.description;
+      if (data.coverImageUrl !== undefined) patch.coverImageUrl = data.coverImageUrl;
+      if (data.genreTags !== undefined) patch.genreTags = [...data.genreTags];
+
+      if (Object.keys(patch).length === 0) {
+        // Nothing to write — re-fetch and return current state so the UI
+        // sees a stable shape regardless of whether anything changed.
+        const [row] = await database
+          .select({
+            id: packs.id,
+            slug: packs.slug,
+            name: packs.name,
+            description: packs.description,
+            coverImageUrl: packs.coverImageUrl,
+            genreTags: packs.genreTags,
+          })
+          .from(packs)
+          .where(and(eq(packs.id, data.packId), isNull(packs.creatorId)))
+          .limit(1);
+        if (!row) throw new Error(`Editorial pack ${data.packId} not found`);
+        return row;
+      }
+
+      // Scope the update to the editorial namespace — admin must not be
+      // able to mutate user-built packs through this fn even if a
+      // packId leaks across surfaces.
+      const [updated] = await database
+        .update(packs)
+        .set(patch)
+        .where(and(eq(packs.id, data.packId), isNull(packs.creatorId)))
+        .returning({
+          id: packs.id,
+          slug: packs.slug,
+          name: packs.name,
+          description: packs.description,
+          coverImageUrl: packs.coverImageUrl,
+          genreTags: packs.genreTags,
+        });
+
+      if (!updated) {
+        throw new Error(`Editorial pack ${data.packId} not found`);
+      }
+      return updated;
+    }),
+  );
+
 
 export interface CreatePackInput {
   slug: string;
@@ -486,6 +744,10 @@ export interface AdminPackDetail {
   creatorId: string | null;
   isPublic: boolean;
   coverImageUrl: string | null;
+  /** Curated genre tags (1–3, kebab-case). Drives the gradient lookup
+   *  on the rip surface and powers discovery filters; admin can edit
+   *  via `updatePackFn`. */
+  genreTags: ReadonlyArray<string>;
   createdAt: number;
   books: ReadonlyArray<{
     id: string;
@@ -521,6 +783,7 @@ export const getPackFn = createServerFn({ method: "GET" })
           creatorId: packs.creatorId,
           isPublic: packs.isPublic,
           coverImageUrl: packs.coverImageUrl,
+          genreTags: packs.genreTags,
           createdAt: packs.createdAt,
         })
         .from(packs)
@@ -550,6 +813,7 @@ export const getPackFn = createServerFn({ method: "GET" })
         creatorId: pack.creatorId,
         isPublic: pack.isPublic,
         coverImageUrl: pack.coverImageUrl,
+        genreTags: pack.genreTags,
         createdAt: pack.createdAt.getTime(),
         books: rows,
       };
@@ -585,6 +849,25 @@ export const addBookToPackFn = createServerFn({ method: "POST" })
     withErrorLogging("addBookToPackFn", async ({ data }): Promise<{ ok: true }> => {
       await requireAdmin();
       const database = await getDb();
+
+      // Guard against adding a tombstoned book to a new pack. The FK
+      // doesn't catch this (the row still exists), and silently
+      // letting it through would resurface deleted books in editorial
+      // packs. setBookPacksFn intentionally does NOT have this guard
+      // — admins still need to be able to unlink existing memberships
+      // on a soft-deleted book during cleanup.
+      const [book] = await database
+        .select({ id: books.id, deletedAt: books.deletedAt })
+        .from(books)
+        .where(eq(books.id, data.bookId))
+        .limit(1);
+      if (!book) throw new Error(`Book ${data.bookId} not found`);
+      if (book.deletedAt) {
+        throw new Error(
+          `Book ${data.bookId} has been soft-deleted; restore it before adding to a pack`,
+        );
+      }
+
       await database
         .insert(packBooks)
         .values({ packId: data.packId, bookId: data.bookId })
@@ -678,6 +961,407 @@ export const setBookPacksFn = createServerFn({ method: "POST" })
         }
 
         return { added: toAdd.length, removed: toRemove.length };
+      },
+    ),
+  );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin Hardcover ingest (for editorial pack curation)
+//
+// Mirror of `ingestHardcoverBookForBuilderFn` in `src/server/user-packs.ts`,
+// but scoped to editorial packs (`creator_id IS NULL`) and gated on
+// `requireAdmin()`. Two intentional differences:
+//
+//   1. No per-user hourly throttle. The user-side cap exists to prevent
+//      a single account from draining the shared 60 req/min Hardcover
+//      budget; admins are trusted curators of editorial packs and
+//      shouldn't be capped during a curation session.
+//
+//   2. `ingestedByUserId` is left `null` on insert (admin/legacy
+//      convention — see the comment in user-packs.ts at line 974). This
+//      keeps the user-side throttle counter from charging this admin's
+//      personal account, and reflects that the row is editorial-owned,
+//      not user-owned.
+//
+// Dedup behavior matches the user path: if a `books` row already has the
+// requested `hardcover_id`, we skip the Hardcover fetch entirely and just
+// link the existing row to the pack.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface IngestHardcoverForAdminPackResult {
+  bookId: string;
+  /** True when a fresh `books` row was inserted; false when we deduped. */
+  created: boolean;
+}
+
+export const ingestHardcoverBookForAdminPackFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): { packId: string; hardcoverId: number } => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("ingestHardcoverBookForAdminPackFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    const packId = requireUuid(r.packId, "packId");
+    const hardcoverId = Number(r.hardcoverId);
+    if (!Number.isInteger(hardcoverId) || hardcoverId <= 0) {
+      throw new Error(`Invalid Hardcover id: ${r.hardcoverId}`);
+    }
+    return { packId, hardcoverId };
+  })
+  .handler(
+    withErrorLogging(
+      "ingestHardcoverBookForAdminPackFn",
+      async ({ data }): Promise<IngestHardcoverForAdminPackResult> => {
+        await requireAdmin();
+        const database = await getDb();
+
+        // Confirm the target is an editorial pack. A guessed user-pack id
+        // here would otherwise bypass the user-side ownership check, so
+        // the `isNull(creator_id)` guard is load-bearing.
+        const [pack] = await database
+          .select({ id: packs.id })
+          .from(packs)
+          .where(and(eq(packs.id, data.packId), isNull(packs.creatorId)))
+          .limit(1);
+        if (!pack) {
+          throw new Error(
+            `Editorial pack ${data.packId} not found (or it is a user pack)`,
+          );
+        }
+
+        // Dedup short-circuit: already-ingested books just get linked.
+        const [existing] = await database
+          .select({ id: books.id })
+          .from(books)
+          .where(eq(books.hardcoverId, data.hardcoverId))
+          .limit(1);
+
+        if (existing) {
+          await database
+            .insert(packBooks)
+            .values({ packId: pack.id, bookId: existing.id })
+            .onConflictDoNothing();
+          return { bookId: existing.id, created: false };
+        }
+
+        const hardcoverBook = await fetchBookById(data.hardcoverId);
+        if (!hardcoverBook) {
+          throw new Error(
+            `Hardcover book ${data.hardcoverId} not found. It may have been ` +
+              `removed or the id is wrong.`,
+          );
+        }
+
+        // `genre = "unknown"` matches the user-side convention: admins
+        // sweep these via the curation surface. Mood tags stay empty for
+        // the same reason; rarity defaults to `common` and gets reassigned
+        // by the next `pnpm db:rebucket`.
+        const row = bookResponseToRow(hardcoverBook, {
+          genre: "unknown",
+          moodTags: [],
+        });
+
+        // Same upsert shape as the user path (see user-packs.ts:1019). On
+        // conflict we refresh editorial fields but leave provenance
+        // (`ingestedByUserId`, `ingestedAt`) and curation
+        // (`genre`, `moodTags`, `rarity`) untouched. `xmax = 0` flags
+        // insert vs update so the caller can tell whether a new row was
+        // actually created.
+        const [upserted] = await database
+          .insert(books)
+          .values({
+            ...row,
+            // Admin path: leave provenance null so the row reads as
+            // editorial/legacy rather than charged to the admin's
+            // personal Hardcover quota.
+            ingestedByUserId: null,
+            ingestedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: books.hardcoverId,
+            set: {
+              title: row.title,
+              authors: row.authors,
+              coverUrl: row.coverUrl,
+              description: row.description,
+              pageCount: row.pageCount,
+              publishedYear: row.publishedYear,
+              ratingsCount: row.ratingsCount,
+              averageRating: row.averageRating,
+              rawMetadata: row.rawMetadata,
+              updatedAt: sql`now()`,
+            },
+          })
+          .returning({
+            id: books.id,
+            created: sql<boolean>`(xmax = 0)`,
+          });
+
+        if (!upserted) {
+          throw new Error(
+            `Upsert of hardcoverId=${data.hardcoverId} returned no row`,
+          );
+        }
+
+        await database
+          .insert(packBooks)
+          .values({ packId: pack.id, bookId: upserted.id })
+          .onConflictDoNothing();
+
+        return { bookId: upserted.id, created: Boolean(upserted.created) };
+      },
+    ),
+  );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Refresh a single book's API-derived fields from Hardcover
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Triage tool for the admin /admin/books table. Hardcover occasionally
+// rotates cover URLs (the cached_image CDN moves), updates titles, or
+// republishes editions; rows ingested months ago can drift out of sync
+// with what's authoritative upstream. Rather than re-running the full
+// ingest pipeline, this fn re-fetches the single Hardcover record by id
+// and overwrites only the fields Hardcover owns.
+//
+// Boundary discipline (mirrors the on-conflict set list in
+// ingestHardcoverBookForAdminPackFn above):
+//   API-owned, refreshed → title, authors, coverUrl, description,
+//                           pageCount, publishedYear, ratingsCount,
+//                           averageRating, rawMetadata
+//   Curated, preserved   → genre, moodTags, rarity
+//   Provenance, preserved→ ingestedByUserId, ingestedAt
+//
+// Same 1.1s rate limit as every other Hardcover call (enforced inside
+// fetchBookById). One-at-a-time clicks are fine; future bulk variants
+// would need to serialize through the same gate.
+
+export interface RefreshBookFromHardcoverInput {
+  bookId: string;
+}
+
+export interface RefreshBookFromHardcoverResult {
+  bookId: string;
+  /** True if any of the API-owned fields actually changed. The UI uses
+   * this to surface "Refreshed (no changes)" vs "Refreshed (X updated)"
+   * so admins can tell whether the broken-cover report was real. */
+  changed: boolean;
+  /** The post-refresh values for fields the admin table renders, so
+   * the caller can splice them into local state without a refetch. */
+  title: string;
+  authors: ReadonlyArray<string>;
+  coverUrl: string | null;
+  publishedYear: number | null;
+  ratingsCount: number;
+  averageRating: string | null;
+}
+
+export const refreshBookFromHardcoverFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): RefreshBookFromHardcoverInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("refreshBookFromHardcoverFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    return { bookId: requireUuid(r.bookId, "bookId") };
+  })
+  .handler(
+    withErrorLogging(
+      "refreshBookFromHardcoverFn",
+      async ({ data }): Promise<RefreshBookFromHardcoverResult> => {
+        await requireAdmin();
+        const database = await getDb();
+
+        const [existing] = await database
+          .select({
+            id: books.id,
+            hardcoverId: books.hardcoverId,
+            coverUrl: books.coverUrl,
+            title: books.title,
+            authors: books.authors,
+          })
+          .from(books)
+          .where(eq(books.id, data.bookId))
+          .limit(1);
+
+        if (!existing) {
+          throw new Error(`Book ${data.bookId} not found`);
+        }
+
+        const hardcoverBook = await fetchBookById(existing.hardcoverId);
+        if (!hardcoverBook) {
+          // Either Hardcover removed the record or our stored id is wrong.
+          // Surface the cause distinctly so admins know this isn't a
+          // transient network error and can investigate the row itself.
+          throw new Error(
+            `Hardcover book ${existing.hardcoverId} not found upstream. ` +
+              `It may have been removed; consider unlinking or replacing this row.`,
+          );
+        }
+
+        // `bookResponseToRow` needs genre/moodTags but we deliberately
+        // discard the genre+moodTags it produces — only the API-owned
+        // fields below are written. Passing the existing values keeps
+        // the helper happy without leaking back into the DB.
+        const row = bookResponseToRow(hardcoverBook, {
+          genre: "unknown",
+          moodTags: [],
+        });
+
+        const [updated] = await database
+          .update(books)
+          .set({
+            title: row.title,
+            authors: row.authors,
+            coverUrl: row.coverUrl,
+            description: row.description,
+            pageCount: row.pageCount,
+            publishedYear: row.publishedYear,
+            ratingsCount: row.ratingsCount,
+            averageRating: row.averageRating,
+            rawMetadata: row.rawMetadata,
+            updatedAt: sql`now()`,
+          })
+          .where(eq(books.id, data.bookId))
+          .returning({
+            id: books.id,
+            title: books.title,
+            authors: books.authors,
+            coverUrl: books.coverUrl,
+            publishedYear: books.publishedYear,
+            ratingsCount: books.ratingsCount,
+            averageRating: books.averageRating,
+          });
+
+        if (!updated) {
+          throw new Error(`Refresh of book ${data.bookId} returned no row`);
+        }
+
+        // Cheap shallow diff against the row we read at the top. We
+        // only check the most user-visible fields; if Hardcover changed
+        // only the description or rawMetadata the admin still sees
+        // "no changes" which matches their mental model (they came here
+        // because of a broken *cover*).
+        const changed =
+          updated.coverUrl !== existing.coverUrl ||
+          updated.title !== existing.title ||
+          updated.authors.join("\u0001") !== existing.authors.join("\u0001");
+
+        return {
+          bookId: updated.id,
+          changed,
+          title: updated.title,
+          authors: updated.authors,
+          coverUrl: updated.coverUrl,
+          publishedYear: updated.publishedYear,
+          ratingsCount: updated.ratingsCount,
+          averageRating: updated.averageRating,
+        };
+      },
+    ),
+  );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Soft-delete + restore
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Soft delete is the chosen semantics over hard delete because the
+// `pack_books`, `collections`, and `reading_log` FKs are all `RESTRICT`
+// — a hard delete on a book that any user has ripped, shelved, or
+// logged would be refused by Postgres, or (if we cascaded) silently
+// erase user state. Soft delete preserves every existing reference
+// while removing the row from curation surfaces (admin search default,
+// builder local search, addBookToPack guard).
+//
+// Re-ingesting the same hardcover_id revives the row in place: the
+// ingest paths intentionally do NOT filter by deletedAt for their
+// dedup-by-hardcover-id check, so the unique constraint catches the
+// duplicate and the on-conflict-update branch refreshes the row's
+// API-derived fields. Restore can also be done explicitly via
+// restoreBookFn from /admin/books with `Show deleted` toggled on.
+
+export interface SoftDeleteBookInput {
+  bookId: string;
+}
+
+export interface SoftDeleteBookResult {
+  bookId: string;
+  /** Epoch ms set on the row. Echoed back so the caller can splice
+   * the tombstoned row into local state without a refetch. */
+  deletedAt: number;
+}
+
+export const softDeleteBookFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): SoftDeleteBookInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("softDeleteBookFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    return { bookId: requireUuid(r.bookId, "bookId") };
+  })
+  .handler(
+    withErrorLogging(
+      "softDeleteBookFn",
+      async ({ data }): Promise<SoftDeleteBookResult> => {
+        await requireAdmin();
+        const database = await getDb();
+
+        // Idempotent: if the row is already tombstoned we leave the
+        // existing timestamp and return it. Bumping it on every click
+        // would mislead "deleted N days ago" UIs.
+        const [updated] = await database
+          .update(books)
+          .set({
+            deletedAt: sql`coalesce(${books.deletedAt}, now())`,
+            updatedAt: sql`now()`,
+          })
+          .where(eq(books.id, data.bookId))
+          .returning({ id: books.id, deletedAt: books.deletedAt });
+
+        if (!updated || !updated.deletedAt) {
+          throw new Error(`Book ${data.bookId} not found`);
+        }
+
+        return {
+          bookId: updated.id,
+          deletedAt: updated.deletedAt.getTime(),
+        };
+      },
+    ),
+  );
+
+export interface RestoreBookInput {
+  bookId: string;
+}
+
+export interface RestoreBookResult {
+  bookId: string;
+}
+
+export const restoreBookFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): RestoreBookInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("restoreBookFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    return { bookId: requireUuid(r.bookId, "bookId") };
+  })
+  .handler(
+    withErrorLogging(
+      "restoreBookFn",
+      async ({ data }): Promise<RestoreBookResult> => {
+        await requireAdmin();
+        const database = await getDb();
+
+        const [updated] = await database
+          .update(books)
+          .set({ deletedAt: null, updatedAt: sql`now()` })
+          .where(eq(books.id, data.bookId))
+          .returning({ id: books.id });
+
+        if (!updated) {
+          throw new Error(`Book ${data.bookId} not found`);
+        }
+
+        return { bookId: updated.id };
       },
     ),
   );

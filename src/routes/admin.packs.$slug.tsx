@@ -1,16 +1,31 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 
 import { AdminForbidden } from "@/components/AdminForbidden";
+import { BookSearchPanel } from "@/components/builder/BookSearchPanel";
+import { CoverImage } from "@/components/CoverImage";
+import type { Rarity } from "@/lib/cards/rarity";
 import { checkAdminFn } from "@/server/admin";
 import {
   addBookToPackFn,
   getPackFn,
-  listBooksFn,
+  ingestHardcoverBookForAdminPackFn,
   removeBookFromPackFn,
-  type AdminBookRow,
+  updateBookRarityFn,
+  updatePackFn,
   type AdminPackDetail,
 } from "@/server/catalog";
+
+// Mirror of `RARITY_VALUES` in src/server/catalog.ts. Kept as a local
+// constant so the dropdown can render options without importing from
+// the server module (server fns drag `node:*` deps into the bundle).
+const RARITY_OPTIONS: ReadonlyArray<Rarity> = [
+  "common",
+  "uncommon",
+  "rare",
+  "foil",
+  "legendary",
+];
 
 /**
  * Pack membership editor.
@@ -64,20 +79,6 @@ function PackWorkspace({ slug }: { slug: string }) {
     [pack],
   );
 
-  const handleAdd = useCallback(
-    async (bookId: string) => {
-      if (!pack) return;
-      try {
-        await addBookToPackFn({ data: { packId: pack.id, bookId } });
-        await reload();
-      } catch (err) {
-        // eslint-disable-next-line no-alert
-        alert(err instanceof Error ? err.message : "Failed to add");
-      }
-    },
-    [pack, reload],
-  );
-
   const handleRemove = useCallback(
     async (bookId: string) => {
       if (!pack) return;
@@ -94,6 +95,47 @@ function PackWorkspace({ slug }: { slug: string }) {
       }
     },
     [pack, reload],
+  );
+
+  const handleRarityChange = useCallback(
+    async (bookId: string, rarity: Rarity) => {
+      if (!pack) return;
+      // Snapshot the prior value so we can revert on failure without a
+      // round-trip to the server. Optimistic updates keep the UI
+      // responsive (the dropdown commits instantly) while still
+      // surfacing genuine errors.
+      const prior = pack.books.find((b) => b.id === bookId)?.rarity;
+      setPack((prev) =>
+        prev
+          ? {
+              ...prev,
+              books: prev.books.map((b) =>
+                b.id === bookId ? { ...b, rarity } : b,
+              ),
+            }
+          : prev,
+      );
+      try {
+        await updateBookRarityFn({ data: { bookId, rarity } });
+      } catch (err) {
+        // eslint-disable-next-line no-alert
+        alert(err instanceof Error ? err.message : "Failed to update rarity");
+        // Revert the optimistic patch.
+        if (prior !== undefined) {
+          setPack((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  books: prev.books.map((b) =>
+                    b.id === bookId ? { ...b, rarity: prior } : b,
+                  ),
+                }
+              : prev,
+          );
+        }
+      }
+    },
+    [pack],
   );
 
   if (!pack && !error) {
@@ -140,21 +182,262 @@ function PackWorkspace({ slug }: { slug: string }) {
         <h1 className="display-title mt-2 text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
           {pack.name}
         </h1>
-        {pack.description && (
-          <p className="mt-2 max-w-2xl text-sm text-[var(--sea-ink-soft)]">
-            {pack.description}
-          </p>
-        )}
         <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
           {pack.creatorId === null ? "editorial" : "user"} · {pack.books.length} books
+          {pack.genreTags.length > 0 && <> · {pack.genreTags.join(", ")}</>}
         </p>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <MembersColumn books={pack.books} onRemove={handleRemove} />
-        <AddColumn memberIds={memberIds} onAdd={handleAdd} />
+      {/* Pack details editor — name, description, cover, genre tags.
+          Slug is intentionally read-only (it's part of public URLs and
+          rip-history attribution; renames would invalidate shared
+          links). Sits above the books area because edits here are less
+          frequent than the membership churn below, but when an editor
+          DOES want to fix the name or palette they shouldn't have to
+          scroll past the entire member list to do it. */}
+      <PackDetailsForm
+        pack={pack}
+        onSaved={(next) =>
+          setPack((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  name: next.name,
+                  description: next.description,
+                  coverImageUrl: next.coverImageUrl,
+                  genreTags: next.genreTags,
+                }
+              : prev,
+          )
+        }
+      />
+
+      {/* `minmax(0,1fr)` on each track is load-bearing: without it CSS
+          grid defaults to `minmax(auto,1fr)`, which lets each column
+          grow to fit its content. The book rows use `truncate` (which
+          implies `white-space: nowrap`) on the author byline; that
+          forces the row's intrinsic min-width up, which expands the
+          grid track, which busts the panel out of the viewport on
+          mobile. Pinning the min track size to 0 lets the rows
+          actually clip with ellipsis as intended. */}
+      <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <MembersColumn
+          books={pack.books}
+          onRemove={handleRemove}
+          onRarityChange={handleRarityChange}
+        />
+        <BookSearchPanel
+          packId={pack.id}
+          // Admin path doesn't filter members server-side; we want the
+          // "In pack" badge to show context for already-curated books
+          // rather than hiding them entirely.
+          excludeBookIds={memberIds}
+          onAddLocal={async (bookId) => {
+            await addBookToPackFn({ data: { packId: pack.id, bookId } });
+            await reload();
+          }}
+          onAddHardcover={async (hardcoverId) => {
+            await ingestHardcoverBookForAdminPackFn({
+              data: { packId: pack.id, hardcoverId },
+            });
+            await reload();
+          }}
+        />
       </div>
     </main>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pack details form (name / description / cover / genre tags)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Inline edit form for the pack-level fields. Slug is shown read-only
+ * (intentionally non-editable — see `updatePackFn` rationale).
+ *
+ * Save button stays disabled until at least one field has changed
+ * relative to the current `pack` snapshot, so accidental clicks on a
+ * pristine form are no-ops without round-tripping the server.
+ */
+function PackDetailsForm({
+  pack,
+  onSaved,
+}: {
+  pack: AdminPackDetail;
+  onSaved: (next: {
+    name: string;
+    description: string | null;
+    coverImageUrl: string | null;
+    genreTags: ReadonlyArray<string>;
+  }) => void;
+}) {
+  const [name, setName] = useState(pack.name);
+  const [description, setDescription] = useState(pack.description ?? "");
+  const [coverImageUrl, setCoverImageUrl] = useState(pack.coverImageUrl ?? "");
+  // Render genre tags as a comma-separated string in the input — same
+  // affordance the user-pack edit form uses (`packs.$id.edit.tsx`),
+  // which keeps muscle memory consistent for editors who toggle
+  // between editorial and user packs.
+  const [genreTagsRaw, setGenreTagsRaw] = useState(pack.genreTags.join(", "));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  // Re-sync local state if the parent loads a fresh pack (e.g. after a
+  // membership change triggers a full reload). Without this the form
+  // would drift from the canonical row on background refetches.
+  useEffect(() => {
+    setName(pack.name);
+    setDescription(pack.description ?? "");
+    setCoverImageUrl(pack.coverImageUrl ?? "");
+    setGenreTagsRaw(pack.genreTags.join(", "));
+  }, [pack.id, pack.name, pack.description, pack.coverImageUrl, pack.genreTags]);
+
+  // Parse the comma-separated tag input into a normalized array. We do
+  // this on every render (cheap; ≤3 tags) so the dirty-check has the
+  // same shape the server will see. Validation errors surface from the
+  // server on submit rather than blocking the button.
+  const parsedTags = useMemo(
+    () =>
+      genreTagsRaw
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length > 0),
+    [genreTagsRaw],
+  );
+
+  const tagsEqual = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
+    a.length === b.length && a.every((v, i) => v === b[i]);
+
+  const dirty =
+    name.trim() !== pack.name ||
+    description.trim() !== (pack.description ?? "") ||
+    coverImageUrl.trim() !== (pack.coverImageUrl ?? "") ||
+    !tagsEqual(parsedTags, pack.genreTags);
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting || !dirty) return;
+    setSubmitting(true);
+    setError(null);
+    setSuccess(false);
+    try {
+      const result = await updatePackFn({
+        data: {
+          packId: pack.id,
+          // Only send fields that actually changed — the server
+          // distinguishes `undefined` (leave alone) from explicit
+          // values, so a no-touch field shouldn't be in the payload.
+          ...(name.trim() !== pack.name ? { name: name.trim() } : {}),
+          ...(description.trim() !== (pack.description ?? "")
+            ? { description: description.trim() }
+            : {}),
+          ...(coverImageUrl.trim() !== (pack.coverImageUrl ?? "")
+            ? { coverImageUrl: coverImageUrl.trim() }
+            : {}),
+          ...(!tagsEqual(parsedTags, pack.genreTags)
+            ? { genreTags: parsedTags }
+            : {}),
+        },
+      });
+      onSaved({
+        name: result.name,
+        description: result.description,
+        coverImageUrl: result.coverImageUrl,
+        genreTags: result.genreTags,
+      });
+      setSuccess(true);
+      // Hide the success chip after a couple seconds — keeping it up
+      // forever competes for attention against the next edit.
+      window.setTimeout(() => setSuccess(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section>
+      <h2 className="island-kicker mb-3">Pack details</h2>
+      <form
+        onSubmit={onSubmit}
+        className="island-shell grid gap-4 rounded-3xl p-5 lg:grid-cols-2"
+      >
+        <Field label="Slug" hint="Read-only. Slugs anchor public URLs and rip history.">
+          <input
+            type="text"
+            value={pack.slug}
+            readOnly
+            disabled
+            className="input-field min-h-[40px] w-full cursor-not-allowed rounded-full px-4 text-sm opacity-60"
+          />
+        </Field>
+        <Field label="Name" required>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            maxLength={120}
+            className="input-field min-h-[40px] w-full rounded-full px-4 text-sm"
+          />
+        </Field>
+        <Field
+          label="Genre tags"
+          hint="Comma-separated, kebab-case, max 3. The first tag drives the rip wrapper gradient."
+        >
+          <input
+            type="text"
+            value={genreTagsRaw}
+            onChange={(e) => setGenreTagsRaw(e.target.value)}
+            className="input-field min-h-[40px] w-full rounded-full px-4 text-sm"
+            placeholder="fantasy, starter"
+          />
+        </Field>
+        <Field label="Cover image URL" hint="Optional. Empty clears it.">
+          <input
+            type="url"
+            value={coverImageUrl}
+            onChange={(e) => setCoverImageUrl(e.target.value)}
+            className="input-field min-h-[40px] w-full rounded-full px-4 text-sm"
+            placeholder="https://…"
+          />
+        </Field>
+        <Field label="Description" hint="Optional. Empty clears it.">
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            className="input-field w-full rounded-2xl px-4 py-3 text-sm lg:col-span-2"
+          />
+        </Field>
+
+        <div className="flex items-center gap-3 lg:col-span-2">
+          <button
+            type="submit"
+            disabled={submitting || !dirty || !name.trim()}
+            className="btn-primary rounded-full px-4 py-2 text-xs uppercase tracking-[0.16em] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {submitting ? "Saving…" : "Save changes"}
+          </button>
+          {success && (
+            <span className="rounded-full border border-[color:var(--rarity-rare)]/40 bg-[color:var(--rarity-rare-soft)] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[color:var(--rarity-rare)]">
+              Saved
+            </span>
+          )}
+          {error && (
+            <span
+              role="alert"
+              className="rounded-xl border border-[color:var(--rarity-legendary)]/40 bg-[color:var(--rarity-legendary-soft)] px-3 py-1 text-[10px] text-[color:var(--rarity-legendary)]"
+            >
+              {error}
+            </span>
+          )}
+        </div>
+      </form>
+    </section>
   );
 }
 
@@ -165,13 +448,27 @@ function PackWorkspace({ slug }: { slug: string }) {
 function MembersColumn({
   books,
   onRemove,
+  onRarityChange,
 }: {
   books: AdminPackDetail["books"];
   onRemove: (bookId: string) => void;
+  onRarityChange: (bookId: string, rarity: Rarity) => void;
 }) {
   return (
-    <section>
+    // `min-w-0` on the section root prevents the column from growing
+    // past its grid/flex track when child rows have `truncate` lines.
+    // CSS grid items default to `min-width: auto` (intrinsic content),
+    // so without this the parent track's `minmax(0,1fr)` is overridden
+    // by the section's intrinsic min and the panel busts out on
+    // mobile. Mirror of the same guard on BookSearchPanel.
+    <section className="min-w-0">
       <h2 className="island-kicker mb-3">Current members · {books.length}</h2>
+      {/* Rarity edits write to the global `books` row, not a per-pack
+          override — surface that explicitly so editors don't think
+          they're scoping the change to this pack only. */}
+      <p className="mb-3 rounded-2xl border border-[color:var(--rarity-foil)]/40 bg-[color:var(--rarity-foil-soft)] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[color:var(--rarity-foil)]">
+        Rarity changes apply globally to the book in every pack.
+      </p>
       {books.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--sea-ink-soft)]">
           No books yet. Add from the right.
@@ -181,25 +478,50 @@ function MembersColumn({
           {books.map((book) => (
             <li
               key={book.id}
-              className="flex gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
+              // `min-w-0` + `flex-wrap` mirror the BookSearchPanel row
+              // layout. Both are load-bearing on narrow viewports: the
+              // first lets the inner text column actually shrink under
+              // the row's intrinsic content width (otherwise truncate
+              // has nothing to clip against), the second drops the
+              // rarity control to a new line when the row genuinely
+              // can't fit image + title + select horizontally.
+              className="flex min-w-0 flex-wrap gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
             >
-              {book.coverUrl ? (
-                <img
-                  src={book.coverUrl}
-                  alt=""
-                  className="h-16 w-11 shrink-0 rounded-md object-cover"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-              )}
+              <CoverImage
+                src={book.coverUrl}
+                alt=""
+                className="h-16 w-11 shrink-0 rounded-md object-cover"
+                fallback={
+                  <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                }
+              />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
+                <p
+                  title={book.title}
+                  className="line-clamp-2 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
+                >
                   {book.title}
                 </p>
                 <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
-                  {book.authors.join(", ") || "Unknown"} · {book.genre} · {book.rarity}
+                  {book.authors.join(", ") || "Unknown"} · {book.genre}
                 </p>
+                <label className="mt-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+                  Rarity
+                  <select
+                    value={book.rarity}
+                    onChange={(e) =>
+                      onRarityChange(book.id, e.target.value as Rarity)
+                    }
+                    className="input-field rounded-full px-2 py-1 text-[11px] normal-case tracking-normal"
+                    aria-label={`Rarity for ${book.title}`}
+                  >
+                    {RARITY_OPTIONS.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
               <button
                 type="button"
@@ -217,117 +539,40 @@ function MembersColumn({
   );
 }
 
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Add column (catalog search)
+// Field — small label/input wrapper used by the details form
 // ─────────────────────────────────────────────────────────────────────────────
 
-function AddColumn({
-  memberIds,
-  onAdd,
+/**
+ * Mirror of the `Field` helper in `admin.packs.index.tsx`. Inlined here
+ * (rather than promoted to a shared module) because both copies are
+ * tiny and the admin surface doesn't yet warrant a `components/admin/`
+ * directory; if a third copy lands, lift it then.
+ */
+function Field({
+  label,
+  hint,
+  required,
+  children,
 }: {
-  memberIds: Set<string>;
-  onAdd: (bookId: string) => void;
+  label: string;
+  hint?: string;
+  required?: boolean;
+  children: React.ReactNode;
 }) {
-  const [search, setSearch] = useState("");
-  const [results, setResults] = useState<AdminBookRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const reqSeqRef = useRef(0);
-
-  useEffect(() => {
-    const q = search.trim();
-    const mySeq = ++reqSeqRef.current;
-    // We only search with at least 2 chars — an empty-string browse would
-    // load the full catalog into this panel, which isn't useful vs. the
-    // dedicated /admin/books view.
-    if (q.length < 2) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
-    const timer = setTimeout(() => {
-      setLoading(true);
-      listBooksFn({ data: { search: q, limit: 50 } })
-        .then((res) => {
-          if (mySeq !== reqSeqRef.current) return;
-          setResults([...res.items]);
-          setLoading(false);
-        })
-        .catch(() => {
-          if (mySeq !== reqSeqRef.current) return;
-          setLoading(false);
-        });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
   return (
-    <section>
-      <h2 className="island-kicker mb-3">Add books</h2>
-      <input
-        type="search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search title or author (2+ chars)"
-        className="input-field mb-3 min-h-[40px] w-full rounded-full px-4 text-sm"
-        aria-label="Search catalog"
-      />
-      {loading ? (
-        <p className="text-xs text-[var(--sea-ink-soft)]">Searching…</p>
-      ) : search.trim().length < 2 ? (
-        <p className="rounded-2xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--sea-ink-soft)]">
-          Type at least 2 characters to search the catalog.
-        </p>
-      ) : results.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--sea-ink-soft)]">
-          No matches.
-        </p>
-      ) : (
-        <ul className="space-y-2">
-          {results.map((book) => {
-            const isMember = memberIds.has(book.id);
-            return (
-              <li
-                key={book.id}
-                className="flex gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
-              >
-                {book.coverUrl ? (
-                  <img
-                    src={book.coverUrl}
-                    alt=""
-                    className="h-14 w-10 shrink-0 rounded-md object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
-                    {book.title}
-                  </p>
-                  <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
-                    {book.authors.join(", ") || "Unknown"} · {book.genre}
-                  </p>
-                </div>
-                <div className="shrink-0 self-center">
-                  {isMember ? (
-                    <span className="rounded-full border border-[color:var(--rarity-rare)]/40 bg-[color:var(--rarity-rare-soft)] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[color:var(--rarity-rare)]">
-                      In pack
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => onAdd(book.id)}
-                      className="btn-secondary rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.14em]"
-                    >
-                      + Add
-                    </button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+    <label className="block">
+      <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+        {label}
+        {required && <span className="ml-1 text-[color:var(--rarity-legendary)]">*</span>}
+      </span>
+      {children}
+      {hint && (
+        <span className="mt-1.5 block text-[11px] text-[var(--sea-ink-soft)]">
+          {hint}
+        </span>
       )}
-    </section>
+    </label>
   );
 }

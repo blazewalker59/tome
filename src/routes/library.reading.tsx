@@ -21,6 +21,7 @@ import {
   type ReadingStatus,
 } from "@/server/reading";
 import { useToast } from "@/components/Toast";
+import { CoverImage } from "@/components/CoverImage";
 
 /**
  * Reading list route: `/reading`.
@@ -211,16 +212,14 @@ function EntryRow({ entry }: { entry: ReadingEntry }) {
         params={{ id: entry.bookId }}
         className="flex min-w-0 items-center gap-3"
       >
-        {entry.book.coverUrl ? (
-          <img
-            src={entry.book.coverUrl}
-            alt=""
-            className="h-16 w-12 shrink-0 rounded-md object-cover"
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          <div className="h-16 w-12 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-        )}
+        <CoverImage
+          src={entry.book.coverUrl}
+          alt=""
+          className="h-16 w-12 shrink-0 rounded-md object-cover"
+          fallback={
+            <div className="h-16 w-12 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+          }
+        />
         <div className="min-w-0 flex-1">
           <p
             title={entry.book.title}
@@ -494,16 +493,14 @@ function LogSearchPanel({
                 key={b.id}
                 className="flex min-w-0 flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
               >
-                {b.coverUrl ? (
-                  <img
-                    src={b.coverUrl}
-                    alt=""
-                    className="h-14 w-10 shrink-0 rounded-md object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-                )}
+                <CoverImage
+                  src={b.coverUrl}
+                  alt=""
+                  className="h-14 w-10 shrink-0 rounded-md object-cover"
+                  fallback={
+                    <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                  }
+                />
                 <div className="min-w-0 flex-1">
                   <p
                     title={b.title}
@@ -576,16 +573,14 @@ function LogSearchPanel({
                       key={h.hardcoverId}
                       className="flex min-w-0 flex-wrap items-center gap-3 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-3"
                     >
-                      {h.coverUrl ? (
-                        <img
-                          src={h.coverUrl}
-                          alt=""
-                          className="h-14 w-10 shrink-0 rounded-md object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-                      )}
+                      <CoverImage
+                        src={h.coverUrl}
+                        alt=""
+                        className="h-14 w-10 shrink-0 rounded-md object-cover"
+                        fallback={
+                          <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
+                        }
+                      />
                       <div className="min-w-0 flex-1">
                         <p
                           title={h.title}
