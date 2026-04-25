@@ -44,6 +44,9 @@ export interface PackPayload {
   slug: string
   name: string
   description: string | null
+  /** Optional bespoke cover art. When set, the rip seal renders this
+   *  as the seal face instead of the genre gradient. */
+  coverImageUrl: string | null
   /** Editorial genre tags (kebab-case, max 3). The first entry drives
    *  the rip wrapper gradient — see `packGradient` in
    *  src/lib/packs/gradient.ts. Empty array for legacy packs that
@@ -173,6 +176,7 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
       slug: packs.slug,
       name: packs.name,
       description: packs.description,
+      coverImageUrl: packs.coverImageUrl,
       genreTags: packs.genreTags,
     })
     .from(packs)
@@ -206,6 +210,7 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
     slug: pack.slug,
     name: pack.name,
     description: pack.description,
+    coverImageUrl: pack.coverImageUrl,
     genreTags: pack.genreTags ?? [],
     books: rows,
   }
@@ -228,6 +233,7 @@ async function loadUserPack(username: string, slug: string): Promise<PackPayload
       slug: packs.slug,
       name: packs.name,
       description: packs.description,
+      coverImageUrl: packs.coverImageUrl,
       genreTags: packs.genreTags,
     })
     .from(packs)
@@ -269,6 +275,7 @@ async function loadUserPack(username: string, slug: string): Promise<PackPayload
     slug: pack.slug,
     name: pack.name,
     description: pack.description,
+    coverImageUrl: pack.coverImageUrl,
     genreTags: pack.genreTags ?? [],
     books: rows,
   }

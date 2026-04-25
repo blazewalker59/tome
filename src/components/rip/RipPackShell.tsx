@@ -233,6 +233,7 @@ export function RipPackShell({
           packName={pack.name}
           packSlug={pack.slug}
           packGenreTags={pack.genreTags}
+          packCoverImageUrl={pack.coverImageUrl}
           onComplete={handleRipComplete}
           onRipAnother={handleRipAnother}
           summary={
