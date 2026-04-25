@@ -24,7 +24,9 @@ import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm
 import { getDb } from "@/db/client";
 import { books, packBooks, packs } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth/session";
+import { bookResponseToRow } from "@/lib/cards/hardcover";
 import type { Rarity } from "@/lib/cards/rarity";
+import { fetchBookById } from "./hardcover";
 import { withErrorLogging } from "./_shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -916,6 +918,153 @@ export const setBookPacksFn = createServerFn({ method: "POST" })
         }
 
         return { added: toAdd.length, removed: toRemove.length };
+      },
+    ),
+  );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin Hardcover ingest (for editorial pack curation)
+//
+// Mirror of `ingestHardcoverBookForBuilderFn` in `src/server/user-packs.ts`,
+// but scoped to editorial packs (`creator_id IS NULL`) and gated on
+// `requireAdmin()`. Two intentional differences:
+//
+//   1. No per-user hourly throttle. The user-side cap exists to prevent
+//      a single account from draining the shared 60 req/min Hardcover
+//      budget; admins are trusted curators of editorial packs and
+//      shouldn't be capped during a curation session.
+//
+//   2. `ingestedByUserId` is left `null` on insert (admin/legacy
+//      convention — see the comment in user-packs.ts at line 974). This
+//      keeps the user-side throttle counter from charging this admin's
+//      personal account, and reflects that the row is editorial-owned,
+//      not user-owned.
+//
+// Dedup behavior matches the user path: if a `books` row already has the
+// requested `hardcover_id`, we skip the Hardcover fetch entirely and just
+// link the existing row to the pack.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface IngestHardcoverForAdminPackResult {
+  bookId: string;
+  /** True when a fresh `books` row was inserted; false when we deduped. */
+  created: boolean;
+}
+
+export const ingestHardcoverBookForAdminPackFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): { packId: string; hardcoverId: number } => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("ingestHardcoverBookForAdminPackFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    const packId = requireUuid(r.packId, "packId");
+    const hardcoverId = Number(r.hardcoverId);
+    if (!Number.isInteger(hardcoverId) || hardcoverId <= 0) {
+      throw new Error(`Invalid Hardcover id: ${r.hardcoverId}`);
+    }
+    return { packId, hardcoverId };
+  })
+  .handler(
+    withErrorLogging(
+      "ingestHardcoverBookForAdminPackFn",
+      async ({ data }): Promise<IngestHardcoverForAdminPackResult> => {
+        await requireAdmin();
+        const database = await getDb();
+
+        // Confirm the target is an editorial pack. A guessed user-pack id
+        // here would otherwise bypass the user-side ownership check, so
+        // the `isNull(creator_id)` guard is load-bearing.
+        const [pack] = await database
+          .select({ id: packs.id })
+          .from(packs)
+          .where(and(eq(packs.id, data.packId), isNull(packs.creatorId)))
+          .limit(1);
+        if (!pack) {
+          throw new Error(
+            `Editorial pack ${data.packId} not found (or it is a user pack)`,
+          );
+        }
+
+        // Dedup short-circuit: already-ingested books just get linked.
+        const [existing] = await database
+          .select({ id: books.id })
+          .from(books)
+          .where(eq(books.hardcoverId, data.hardcoverId))
+          .limit(1);
+
+        if (existing) {
+          await database
+            .insert(packBooks)
+            .values({ packId: pack.id, bookId: existing.id })
+            .onConflictDoNothing();
+          return { bookId: existing.id, created: false };
+        }
+
+        const hardcoverBook = await fetchBookById(data.hardcoverId);
+        if (!hardcoverBook) {
+          throw new Error(
+            `Hardcover book ${data.hardcoverId} not found. It may have been ` +
+              `removed or the id is wrong.`,
+          );
+        }
+
+        // `genre = "unknown"` matches the user-side convention: admins
+        // sweep these via the curation surface. Mood tags stay empty for
+        // the same reason; rarity defaults to `common` and gets reassigned
+        // by the next `pnpm db:rebucket`.
+        const row = bookResponseToRow(hardcoverBook, {
+          genre: "unknown",
+          moodTags: [],
+        });
+
+        // Same upsert shape as the user path (see user-packs.ts:1019). On
+        // conflict we refresh editorial fields but leave provenance
+        // (`ingestedByUserId`, `ingestedAt`) and curation
+        // (`genre`, `moodTags`, `rarity`) untouched. `xmax = 0` flags
+        // insert vs update so the caller can tell whether a new row was
+        // actually created.
+        const [upserted] = await database
+          .insert(books)
+          .values({
+            ...row,
+            // Admin path: leave provenance null so the row reads as
+            // editorial/legacy rather than charged to the admin's
+            // personal Hardcover quota.
+            ingestedByUserId: null,
+            ingestedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: books.hardcoverId,
+            set: {
+              title: row.title,
+              authors: row.authors,
+              coverUrl: row.coverUrl,
+              description: row.description,
+              pageCount: row.pageCount,
+              publishedYear: row.publishedYear,
+              ratingsCount: row.ratingsCount,
+              averageRating: row.averageRating,
+              rawMetadata: row.rawMetadata,
+              updatedAt: sql`now()`,
+            },
+          })
+          .returning({
+            id: books.id,
+            created: sql<boolean>`(xmax = 0)`,
+          });
+
+        if (!upserted) {
+          throw new Error(
+            `Upsert of hardcoverId=${data.hardcoverId} returned no row`,
+          );
+        }
+
+        await database
+          .insert(packBooks)
+          .values({ packId: pack.id, bookId: upserted.id })
+          .onConflictDoNothing();
+
+        return { bookId: upserted.id, created: Boolean(upserted.created) };
       },
     ),
   );

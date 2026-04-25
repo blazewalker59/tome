@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createFileRoute, redirect, useNavigate, useRouter } from "@tanstack/react-router";
-import { ChevronRight } from "lucide-react";
 
 import { getMeFn } from "@/server/admin";
 import {
@@ -9,18 +8,22 @@ import {
   getMyPackFn,
   getMyPublishUnlockFn,
   ingestHardcoverBookForBuilderFn,
-  LOCAL_SPARSE_THRESHOLD,
   publishPackFn,
   removeBookFromPackDraftFn,
-  searchBooksForBuilderFn,
-  searchHardcoverForBuilderFn,
   unpublishPackFn,
   updatePackDraftFn,
-  type BuilderHardcoverHit,
   type MyPackDetail,
 } from "@/server/user-packs";
-import { checkPackComposition, type Rarity } from "@/lib/packs/composition";
+import { BookSearchPanel } from "@/components/builder/BookSearchPanel";
+import { checkPackComposition } from "@/lib/packs/composition";
 import { DEFAULTS } from "@/lib/economy/defaults";
+
+// Stable empty-set identity. The shared BookSearchPanel uses this set
+// only to flag "In pack" rows; the user builder relies on the
+// server-side `excludePackId` filter instead, so the badge is unused
+// here. Module-scoping keeps the prop reference stable across renders
+// (avoiding spurious effect re-runs inside the panel).
+const EMPTY_BOOK_ID_SET: ReadonlySet<string> = new Set();
 
 /**
  * User-pack builder.
@@ -128,7 +131,27 @@ function BuilderWorkspace({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <section className="space-y-6">
           <MetadataForm pack={pack} onSaved={reload} />
-          {!pack.isPublic && <BookSearchPanel packId={pack.id} onAdded={reload} />}
+          {!pack.isPublic && (
+            <BookSearchPanel
+              packId={pack.id}
+              // Server-side filter the user-builder's current pack out
+              // of local hits — keeps the list focused on additions.
+              excludePackIdInSearch={pack.id}
+              // Server already excludes members so the badge would be
+              // dead weight; pass an empty set to suppress it.
+              excludeBookIds={EMPTY_BOOK_ID_SET}
+              onAddLocal={async (bookId) => {
+                await addBookToPackDraftFn({ data: { packId: pack.id, bookId } });
+                await reload();
+              }}
+              onAddHardcover={async (hardcoverId) => {
+                await ingestHardcoverBookForBuilderFn({
+                  data: { packId: pack.id, hardcoverId },
+                });
+                await reload();
+              }}
+            />
+          )}
           <CurrentBooksPanel pack={pack} onRemoved={reload} />
         </section>
         <aside className="space-y-6">
@@ -264,17 +287,8 @@ function MetadataForm({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Book search
+// Author byline helper
 // ─────────────────────────────────────────────────────────────────────────────
-
-interface BookHit {
-  id: string;
-  title: string;
-  authors: ReadonlyArray<string>;
-  coverUrl: string | null;
-  genre: string;
-  rarity: Rarity;
-}
 
 /**
  * Render a compact, cap-width author byline. Hardcover hits sometimes
@@ -282,284 +296,16 @@ interface BookHit {
  * produces a single comma-joined string long enough to blow past
  * `truncate`'s effective width on narrow flex items — the full string
  * still counts toward the row's min-content size even if it's clipped
- * visually, and on mobile that pushed the Add button past the viewport
- * edge. Showing at most two names plus a "+N more" tail keeps the line
+ * visually, and on mobile that pushed trailing buttons off the viewport
+ * edge. Showing at most one name plus a "+N more" tail keeps the line
  * short enough that truncation on the *title* is the only thing the
- * layout has to handle.
+ * layout has to handle. Used by `CurrentBooksPanel`; the shared
+ * `BookSearchPanel` has its own copy of this logic.
  */
 function formatAuthors(authors: ReadonlyArray<string>): string {
-  // Only ever render a single author inline. Hardcover entries routinely
-  // have 3-6 contributors (translators, illustrators, editors) which even
-  // with truncate/min-w-0 nudges the row's intrinsic min-width up enough
-  // to push the trailing Add button off-screen on the narrowest phones.
-  // The cover + title already identify the book; the rest is noise here.
   if (authors.length === 0) return "Unknown author";
   if (authors.length === 1) return authors[0]!;
   return `${authors[0]} +${authors.length - 1} more`;
-}
-
-function BookSearchPanel({
-  packId,
-  onAdded,
-}: {
-  packId: string;
-  onAdded: () => Promise<void>;
-}) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<BookHit[]>([]);
-  const [hardcoverHits, setHardcoverHits] = useState<BuilderHardcoverHit[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchingHardcover, setSearchingHardcover] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [hardcoverError, setHardcoverError] = useState<string | null>(null);
-  const [ingestingId, setIngestingId] = useState<number | null>(null);
-  // When local results exist, Hardcover hits are usually noise — they
-  // mostly duplicate what we already have plus a long tail of foreign
-  // editions and translations. Hide them behind a toggle so the primary
-  // list stays calm; auto-expand only when local came back empty, since
-  // that's the case where the user actually needs the fallback.
-  const [hardcoverExpanded, setHardcoverExpanded] = useState(false);
-
-  // Debounce the search so every keystroke doesn't fire a server fn.
-  //
-  // Two-phase: local catalog first, then if the local result set is sparse
-  // (< LOCAL_SPARSE_THRESHOLD) also hit Hardcover for books we haven't
-  // ingested yet. Running them sequentially (not in parallel) means the
-  // Hardcover call — which is rate-limited globally — only runs when
-  // the local results don't cover the user's intent. The effect on the
-  // UI is "results appear fast; a 'From Hardcover' section fades in a
-  // moment later when needed."
-  useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setResults([]);
-      setHardcoverHits([]);
-      setError(null);
-      setHardcoverError(null);
-      return;
-    }
-    let cancelled = false;
-    const handle = setTimeout(async () => {
-      setSearching(true);
-      try {
-        const rows = await searchBooksForBuilderFn({
-          data: { query: trimmed, excludePackId: packId },
-        });
-        if (cancelled) return;
-        setResults([...rows]);
-        setError(null);
-
-        if (rows.length < LOCAL_SPARSE_THRESHOLD) {
-          setSearchingHardcover(true);
-          setHardcoverError(null);
-          try {
-            const hcRows = await searchHardcoverForBuilderFn({
-              data: { query: trimmed },
-            });
-            if (cancelled) return;
-            // The server already tags hits whose `hardcover_id` is in our
-            // catalog via `alreadyInCatalogBookId`. Dropping those keeps
-            // the fallback list focused on books the user can't find
-            // locally — the whole point of the section.
-            setHardcoverHits(
-              hcRows.filter((h) => h.alreadyInCatalogBookId === null),
-            );
-            // Auto-expand only when local had nothing to show. Any local
-            // hit means the user's query was satisfied; they can opt in
-            // to the fallback via the toggle.
-            setHardcoverExpanded(rows.length === 0);
-          } catch (err) {
-            if (!cancelled) {
-              setHardcoverError(
-                err instanceof Error ? err.message : "Hardcover search failed",
-              );
-              setHardcoverHits([]);
-            }
-          } finally {
-            if (!cancelled) setSearchingHardcover(false);
-          }
-        } else {
-          setHardcoverHits([]);
-          setHardcoverError(null);
-        }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Search failed");
-      } finally {
-        if (!cancelled) setSearching(false);
-      }
-    }, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(handle);
-    };
-  }, [query, packId]);
-
-  const onAdd = async (bookId: string) => {
-    try {
-      await addBookToPackDraftFn({ data: { packId, bookId } });
-      await onAdded();
-      // Remove from local results so the creator sees the list shrink
-      // without waiting for the next reload.
-      setResults((prev) => prev.filter((b) => b.id !== bookId));
-    } catch (err) {
-      // eslint-disable-next-line no-alert
-      alert(err instanceof Error ? err.message : "Failed to add");
-    }
-  };
-
-  const onIngestAndAdd = async (hardcoverId: number) => {
-    setIngestingId(hardcoverId);
-    try {
-      await ingestHardcoverBookForBuilderFn({
-        data: { packId, hardcoverId },
-      });
-      await onAdded();
-      // Drop the just-added hit so the list doesn't stay full of
-      // already-added entries.
-      setHardcoverHits((prev) => prev.filter((h) => h.hardcoverId !== hardcoverId));
-    } catch (err) {
-      // eslint-disable-next-line no-alert
-      alert(err instanceof Error ? err.message : "Failed to add from Hardcover");
-    } finally {
-      setIngestingId(null);
-    }
-  };
-
-  return (
-    <section className="island-shell rounded-3xl p-5">
-      <h2 className="island-kicker mb-3">Add books</h2>
-      <input
-        type="search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        className="input-field min-h-[40px] w-full rounded-full px-4 text-sm"
-        placeholder="Search by title or author…"
-      />
-      {error && (
-        <p className="mt-3 text-xs text-[color:var(--rarity-legendary)]">{error}</p>
-      )}
-      {searching && <p className="mt-3 text-xs text-[var(--sea-ink-soft)]">Searching…</p>}
-      {results.length > 0 && (
-        <ul className="mt-4 space-y-2">
-          {results.map((b) => (
-            <li
-              key={b.id}
-              className="flex min-w-0 items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
-            >
-              {b.coverUrl ? (
-                <img
-                  src={b.coverUrl}
-                  alt=""
-                  className="h-14 w-10 shrink-0 rounded-md object-cover"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-              )}
-              <div className="min-w-0 flex-1">
-                <p
-                  title={b.title}
-                  className="line-clamp-1 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
-                >
-                  {b.title}
-                </p>
-                <p className="truncate text-xs text-[var(--sea-ink-soft)]">
-                  {formatAuthors(b.authors)} · {b.rarity}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void onAdd(b.id)}
-                className="btn-primary shrink-0 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.08em]"
-              >
-                Add
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {/* Hardcover fallback section. Only rendered when local was sparse
-          and we actually have hits to show (or are loading / errored).
-          When local produced matches, the list stays collapsed behind a
-          caret toggle — see hardcoverExpanded. */}
-      {(searchingHardcover || hardcoverHits.length > 0 || hardcoverError) && (
-        <div className="mt-5">
-          <button
-            type="button"
-            onClick={() => setHardcoverExpanded((v) => !v)}
-            className="flex w-full items-center justify-between gap-2 text-left"
-            aria-expanded={hardcoverExpanded}
-          >
-            <h3 className="island-kicker text-[11px]">
-              From Hardcover
-              {hardcoverHits.length > 0 && (
-                <span className="ml-1 text-[var(--sea-ink-soft)] normal-case tracking-normal">
-                  · {hardcoverHits.length}
-                </span>
-              )}
-            </h3>
-            <ChevronRight
-              aria-hidden
-              className={`h-4 w-4 text-[var(--sea-ink)] transition-transform ${hardcoverExpanded ? "rotate-90" : ""}`}
-            />
-          </button>
-          {hardcoverExpanded && (
-            <div className="mt-2">
-              {searchingHardcover && (
-                <p className="text-xs text-[var(--sea-ink-soft)]">Searching Hardcover…</p>
-              )}
-              {hardcoverError && (
-                <p className="text-xs text-[color:var(--rarity-legendary)]">
-                  {hardcoverError}
-                </p>
-              )}
-              {hardcoverHits.length > 0 && (
-                <ul className="space-y-2">
-                  {hardcoverHits.map((h) => (
-                    <li
-                      key={h.hardcoverId}
-                      className="flex min-w-0 items-center gap-3 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-3"
-                    >
-                      {h.coverUrl ? (
-                        <img
-                          src={h.coverUrl}
-                          alt=""
-                          className="h-14 w-10 shrink-0 rounded-md object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p
-                          title={h.title}
-                          className="line-clamp-1 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
-                        >
-                          {h.title}
-                        </p>
-                        <p className="truncate text-xs text-[var(--sea-ink-soft)]">
-                          {formatAuthors(h.authors)}
-                          {h.releaseYear ? ` · ${h.releaseYear}` : ""}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={ingestingId === h.hardcoverId}
-                        onClick={() => void onIngestAndAdd(h.hardcoverId)}
-                        className="btn-primary shrink-0 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                      >
-                        {ingestingId === h.hardcoverId ? "Adding…" : "Add"}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -597,7 +343,7 @@ function CurrentBooksPanel({
           {pack.books.map((b) => (
             <li
               key={b.id}
-              className="flex min-w-0 items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
+              className="flex min-w-0 flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
             >
               {b.coverUrl ? (
                 <img

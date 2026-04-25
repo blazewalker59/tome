@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 
 import { AdminForbidden } from "@/components/AdminForbidden";
+import { BookSearchPanel } from "@/components/builder/BookSearchPanel";
 import type { Rarity } from "@/lib/cards/rarity";
 import { checkAdminFn } from "@/server/admin";
 import {
   addBookToPackFn,
   getPackFn,
-  listBooksFn,
+  ingestHardcoverBookForAdminPackFn,
   removeBookFromPackFn,
   updateBookRarityFn,
   updatePackFn,
-  type AdminBookRow,
   type AdminPackDetail,
 } from "@/server/catalog";
 
@@ -76,20 +76,6 @@ function PackWorkspace({ slug }: { slug: string }) {
   const memberIds = useMemo(
     () => new Set(pack?.books.map((b) => b.id) ?? []),
     [pack],
-  );
-
-  const handleAdd = useCallback(
-    async (bookId: string) => {
-      if (!pack) return;
-      try {
-        await addBookToPackFn({ data: { packId: pack.id, bookId } });
-        await reload();
-      } catch (err) {
-        // eslint-disable-next-line no-alert
-        alert(err instanceof Error ? err.message : "Failed to add");
-      }
-    },
-    [pack, reload],
   );
 
   const handleRemove = useCallback(
@@ -231,7 +217,23 @@ function PackWorkspace({ slug }: { slug: string }) {
           onRemove={handleRemove}
           onRarityChange={handleRarityChange}
         />
-        <AddColumn memberIds={memberIds} onAdd={handleAdd} />
+        <BookSearchPanel
+          packId={pack.id}
+          // Admin path doesn't filter members server-side; we want the
+          // "In pack" badge to show context for already-curated books
+          // rather than hiding them entirely.
+          excludeBookIds={memberIds}
+          onAddLocal={async (bookId) => {
+            await addBookToPackFn({ data: { packId: pack.id, bookId } });
+            await reload();
+          }}
+          onAddHardcover={async (hardcoverId) => {
+            await ingestHardcoverBookForAdminPackFn({
+              data: { packId: pack.id, hardcoverId },
+            });
+            await reload();
+          }}
+        />
       </div>
     </main>
   );
@@ -514,120 +516,6 @@ function MembersColumn({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Add column (catalog search)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function AddColumn({
-  memberIds,
-  onAdd,
-}: {
-  memberIds: Set<string>;
-  onAdd: (bookId: string) => void;
-}) {
-  const [search, setSearch] = useState("");
-  const [results, setResults] = useState<AdminBookRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const reqSeqRef = useRef(0);
-
-  useEffect(() => {
-    const q = search.trim();
-    const mySeq = ++reqSeqRef.current;
-    // We only search with at least 2 chars — an empty-string browse would
-    // load the full catalog into this panel, which isn't useful vs. the
-    // dedicated /admin/books view.
-    if (q.length < 2) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
-    const timer = setTimeout(() => {
-      setLoading(true);
-      listBooksFn({ data: { search: q, limit: 50 } })
-        .then((res) => {
-          if (mySeq !== reqSeqRef.current) return;
-          setResults([...res.items]);
-          setLoading(false);
-        })
-        .catch(() => {
-          if (mySeq !== reqSeqRef.current) return;
-          setLoading(false);
-        });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
-  return (
-    <section>
-      <h2 className="island-kicker mb-3">Add books</h2>
-      <input
-        type="search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search title or author (2+ chars)"
-        className="input-field mb-3 min-h-[40px] w-full rounded-full px-4 text-sm"
-        aria-label="Search catalog"
-      />
-      {loading ? (
-        <p className="text-xs text-[var(--sea-ink-soft)]">Searching…</p>
-      ) : search.trim().length < 2 ? (
-        <p className="rounded-2xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--sea-ink-soft)]">
-          Type at least 2 characters to search the catalog.
-        </p>
-      ) : results.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--sea-ink-soft)]">
-          No matches.
-        </p>
-      ) : (
-        <ul className="space-y-2">
-          {results.map((book) => {
-            const isMember = memberIds.has(book.id);
-            return (
-              <li
-                key={book.id}
-                className="flex gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3"
-              >
-                {book.coverUrl ? (
-                  <img
-                    src={book.coverUrl}
-                    alt=""
-                    className="h-14 w-10 shrink-0 rounded-md object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div className="h-14 w-10 shrink-0 rounded-md bg-[var(--surface-muted)]" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
-                    {book.title}
-                  </p>
-                  <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
-                    {book.authors.join(", ") || "Unknown"} · {book.genre}
-                  </p>
-                </div>
-                <div className="shrink-0 self-center">
-                  {isMember ? (
-                    <span className="rounded-full border border-[color:var(--rarity-rare)]/40 bg-[color:var(--rarity-rare-soft)] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[color:var(--rarity-rare)]">
-                      In pack
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => onAdd(book.id)}
-                      className="btn-secondary rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.14em]"
-                    >
-                      + Add
-                    </button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Field — small label/input wrapper used by the details form
