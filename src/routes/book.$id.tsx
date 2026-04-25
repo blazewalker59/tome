@@ -65,7 +65,7 @@ function BookDetailPage() {
       {/* Breadcrumb-ish back affordance — on a phone this is cheaper
           than the browser back chrome and more discoverable. */}
       <Link
-        to="/collection"
+        to="/library/collection"
         className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] underline-offset-4 hover:text-[var(--sea-ink)] hover:underline"
       >
         ← Back to collection

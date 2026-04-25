@@ -84,7 +84,7 @@ export default function BottomTabs() {
       <ul className="mx-auto flex max-w-md items-stretch justify-around">
         <Tab to="/" label="Home" icon={<Home aria-hidden className="h-5 w-5" />} />
         <Tab to="/rip" label="Rip" icon={<Sparkles aria-hidden className="h-5 w-5" />} />
-        <Tab to="/collection" label="Library" icon={<BookOpen aria-hidden className="h-5 w-5" />} />
+        <Tab to="/library/collection" label="Library" icon={<BookOpen aria-hidden className="h-5 w-5" />} />
       </ul>
     </nav>
   );

@@ -15,13 +15,24 @@ export interface CardProps {
    * where the card isn't yet associated with a navigable detail page.
    */
   detailHref?: string;
+  /**
+   * Controls the cover's `loading` attribute. Defaults to `eager`
+   * because most use sites (rip reveal, book detail) render a single
+   * card and want it visible immediately. Large grids (e.g. the
+   * collection page) opt into `lazy` for off-screen cards so we
+   * only eagerly fetch the above-the-fold tiles.
+   */
+  coverLoading?: "eager" | "lazy";
 }
 
 /**
  * A book card. Sized fluidly: full-width up to 320 px on mobile, capped at
  * 280 px on desktop, with a locked 2:3 aspect ratio (the classic TCG ratio).
- * The cover dominates the front; the footer holds title + author. Rarity
- * speaks through the border, never an overlay chip.
+ * The front is a full-bleed cover — no title/author footer, because every
+ * cover already carries that text and the strip cost ~1/5 of the visible
+ * area for no information gain. Rarity speaks through the border, never
+ * an overlay chip. All detail (synopsis, tags, stats, rarity label) lives
+ * on the back face.
  *
  * Structure: the root is a plain `<div>` so we can legally nest a real
  * `<a>` (the Details link on the back). A full-bleed overlay `<button>`
@@ -29,7 +40,7 @@ export interface CardProps {
  * above the button on the back face with a higher z-index + its own
  * click handler that stops propagation so navigating doesn't also flip.
  */
-export function Card({ card, startFlipped = false, detailHref }: CardProps) {
+export function Card({ card, startFlipped = false, detailHref, coverLoading = "eager" }: CardProps) {
   const [flipped, setFlipped] = useState(startFlipped);
   const rarity = RARITY_STYLES[card.rarity];
   const genreLabel = formatGenre(card.genre);
@@ -51,17 +62,23 @@ export function Card({ card, startFlipped = false, detailHref }: CardProps) {
         className="relative h-full w-full [transform-style:preserve-3d]"
         style={{ boxShadow: glowShadow }}
       >
-        {/* Front — cover-dominant; rarity speaks through the border */}
+        {/* Front — cover-only. Title and author used to live in a
+            ~19% footer strip below the cover, but every book cover
+            already shows both — the strip was redundant trim that
+            cost ~1/5 of the card's visible area. Going full-bleed
+            lets the artwork (the actual collectible surface) breathe
+            and matches how physical TCG cards read. Metadata still
+            lives on the back face and on the book detail page. */}
         <div
-          className={`absolute inset-0 flex flex-col overflow-hidden rounded-2xl bg-[var(--foam)] [backface-visibility:hidden] ${rarity.ring}`}
+          className={`absolute inset-0 overflow-hidden rounded-2xl bg-[var(--foam)] [backface-visibility:hidden] ${rarity.ring}`}
         >
-          <div className="relative flex-1 overflow-hidden bg-[var(--sand)]">
+          <div className="relative h-full w-full overflow-hidden bg-[var(--sand)]">
             <img
               src={card.coverUrl}
               alt=""
-              loading="eager"
+              loading={coverLoading}
               decoding="async"
-              fetchPriority="high"
+              fetchPriority={coverLoading === "eager" ? "high" : "low"}
               className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
             />
             {card.rarity === "foil" && (
@@ -70,18 +87,6 @@ export function Card({ card, startFlipped = false, detailHref }: CardProps) {
             {card.rarity === "legendary" && (
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-violet-900/15" />
             )}
-          </div>
-
-          <div className="flex h-[19%] min-h-[68px] flex-col justify-center gap-0.5 px-4">
-            <h3
-              className="display-title line-clamp-1 text-base font-bold leading-tight text-[var(--sea-ink)]"
-              title={card.title}
-            >
-              {card.title}
-            </h3>
-            <p className="line-clamp-1 text-xs text-[var(--sea-ink-soft)]">
-              {card.authors.join(", ")}
-            </p>
           </div>
         </div>
 

@@ -248,13 +248,13 @@ describe("groupCards", () => {
     const acquisitions = new Map<string, { packId: string | null; packName: string }>([
       ["c1", { packId: "p1", packName: "Editorial Pack" }],
       ["c2", { packId: "p1", packName: "Editorial Pack" }],
-      ["c3", { packId: "p2", packName: "Booker 2024" }],
+      ["c3", { packId: "p2", packName: "Starter 2025" }],
       // c4, c5 deliberately absent — they should cluster in "Unknown".
     ]);
     const result = groupCards(cards, "pack", { acquisitions });
     const byLabel = new Map(result.map((g) => [g.label, g]));
     expect(byLabel.get("Editorial Pack")?.cards.map((c) => c.id).sort()).toEqual(["c1", "c2"]);
-    expect(byLabel.get("Booker 2024")?.cards.map((c) => c.id)).toEqual(["c3"]);
+    expect(byLabel.get("Starter 2025")?.cards.map((c) => c.id)).toEqual(["c3"]);
     expect(byLabel.get("Unknown")?.cards.map((c) => c.id).sort()).toEqual(["c4", "c5"]);
   });
 

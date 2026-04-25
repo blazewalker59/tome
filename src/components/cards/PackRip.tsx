@@ -1,11 +1,19 @@
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useTransform, type PanInfo } from "motion/react";
 import type { CardData } from "@/lib/cards/types";
+import { packGradient, packBoxShadow, packHeroBoxShadow } from "@/lib/packs/gradient";
 import { Card } from "./Card";
 
 export interface PackRipProps {
   cards: ReadonlyArray<CardData>;
   packName: string;
+  /**
+   * Pack slug. Used to resolve the per-pack gradient for the seal,
+   * the opening flash, and the tear glow. Optional so callers that
+   * don't have a slug in scope (tests, scratch mounts) still work
+   * against the default lagoon→palm palette.
+   */
+  packSlug?: string | null;
   /** Called once every card has been revealed. */
   onComplete?: () => void;
   /** Called when the user taps "Rip another" on the done screen. */
@@ -33,11 +41,15 @@ const SWIPE_VELOCITY = 500;
  * Motion's drag-vs-tap heuristic handles the distinction natively: small
  * pointer movements pass through as clicks, larger ones become drags.
  */
-export function PackRip({ cards, packName, onComplete, onRipAnother, summary }: PackRipProps) {
+export function PackRip({ cards, packName, packSlug, onComplete, onRipAnother, summary }: PackRipProps) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [revealedCount, setRevealedCount] = useState(0);
   // Direction the current card should fly off-screen: -1 left, 1 right, 0 up.
   const [exitDir, setExitDir] = useState<-1 | 0 | 1>(0);
+
+  // Resolve once; every sub-phase paints the same wrapper colors so the
+  // seal, opening flash, and revealed cards stay visually continuous.
+  const gradient = packGradient(packSlug);
 
   // Warm the browser cache with every cover the moment the pack mounts so the
   // user never sees an image fade in mid-reveal.
@@ -90,7 +102,7 @@ export function PackRip({ cards, packName, onComplete, onRipAnother, summary }: 
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center gap-4 px-4 pb-4">
         <div className="card-stage">
-          <PackSealDrag packName={packName} onRip={startRip} />
+          <PackSealDrag packName={packName} gradient={gradient} onRip={startRip} />
         </div>
         <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
           Drag across the perforation to rip
@@ -109,9 +121,8 @@ export function PackRip({ cards, packName, onComplete, onRipAnother, summary }: 
             transition={{ duration: 0.7, ease: "easeIn" }}
             className="card-fit rounded-2xl"
             style={{
-              background:
-                "linear-gradient(135deg, var(--lagoon-deep) 0%, var(--lagoon) 55%, var(--palm) 100%)",
-              boxShadow: "0 0 100px 0 color-mix(in oklab, var(--lagoon) 70%, transparent)",
+              background: gradient.background,
+              boxShadow: packHeroBoxShadow(gradient),
             }}
           />
         </div>
@@ -216,6 +227,7 @@ const TEAR_COMMIT_THRESHOLD = 0.85;
 
 interface PackSealDragProps {
   packName: string;
+  gradient: ReturnType<typeof packGradient>;
   onRip: () => void;
 }
 
@@ -237,7 +249,7 @@ interface PackSealDragProps {
  *     the tear back to 0 so the user can try again.
  *   - Haptic pulses at the commit boundary on supporting devices.
  */
-function PackSealDrag({ packName, onRip }: PackSealDragProps) {
+function PackSealDrag({ packName, gradient, onRip }: PackSealDragProps) {
   const packRef = useRef<HTMLDivElement | null>(null);
   // 0 = sealed, 1 = fully torn. Drives the visual via useTransform below
   // so we never re-render React during the drag — the tear updates
@@ -370,10 +382,8 @@ function PackSealDrag({ packName, onRip }: PackSealDragProps) {
       }
       className="card-fit relative touch-none select-none overflow-hidden rounded-2xl shadow-2xl outline-none focus-visible:ring-2 focus-visible:ring-[var(--lagoon)]"
       style={{
-        background:
-          "linear-gradient(135deg, var(--lagoon-deep) 0%, var(--lagoon) 55%, var(--palm) 100%)",
-        boxShadow:
-          "0 0 60px -10px color-mix(in oklab, var(--lagoon) 55%, transparent), 0 30px 60px -20px rgba(0, 0, 0, 0.55)",
+        background: gradient.background,
+        boxShadow: packBoxShadow(gradient),
         // `touch-none` disables native scrolling so the pointer events
         // reach us cleanly on touch devices; `select-none` prevents
         // text-selection flicker on long drags.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCollectionSearch } from "@/routes/collection";
+import { parseCollectionSearch } from "@/routes/library.collection";
 
 describe("parseCollectionSearch", () => {
   it("returns an empty object when nothing is provided", () => {

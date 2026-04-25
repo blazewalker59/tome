@@ -12,13 +12,17 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as RipRouteImport } from './routes/rip'
 import { Route as ReadingRouteImport } from './routes/reading'
+import { Route as LibraryRouteImport } from './routes/library'
 import { Route as CollectionRouteImport } from './routes/collection'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RipIndexRouteImport } from './routes/rip.index'
 import { Route as PacksIndexRouteImport } from './routes/packs.index'
+import { Route as LibraryIndexRouteImport } from './routes/library.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as RipSlugRouteImport } from './routes/rip.$slug'
 import { Route as PacksNewRouteImport } from './routes/packs.new'
+import { Route as LibraryReadingRouteImport } from './routes/library.reading'
+import { Route as LibraryCollectionRouteImport } from './routes/library.collection'
 import { Route as BookIdRouteImport } from './routes/book.$id'
 import { Route as AdminIngestRouteImport } from './routes/admin.ingest'
 import { Route as AdminBooksRouteImport } from './routes/admin.books'
@@ -44,6 +48,11 @@ const ReadingRoute = ReadingRouteImport.update({
   path: '/reading',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LibraryRoute = LibraryRouteImport.update({
+  id: '/library',
+  path: '/library',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CollectionRoute = CollectionRouteImport.update({
   id: '/collection',
   path: '/collection',
@@ -64,6 +73,11 @@ const PacksIndexRoute = PacksIndexRouteImport.update({
   path: '/packs/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LibraryIndexRoute = LibraryIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => LibraryRoute,
+} as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/admin/',
   path: '/admin/',
@@ -78,6 +92,16 @@ const PacksNewRoute = PacksNewRouteImport.update({
   id: '/packs/new',
   path: '/packs/new',
   getParentRoute: () => rootRouteImport,
+} as any)
+const LibraryReadingRoute = LibraryReadingRouteImport.update({
+  id: '/reading',
+  path: '/reading',
+  getParentRoute: () => LibraryRoute,
+} as any)
+const LibraryCollectionRoute = LibraryCollectionRouteImport.update({
+  id: '/collection',
+  path: '/collection',
+  getParentRoute: () => LibraryRoute,
 } as any)
 const BookIdRoute = BookIdRouteImport.update({
   id: '/book/$id',
@@ -128,15 +152,19 @@ const RipUUsernameSlugRoute = RipUUsernameSlugRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
+  '/library': typeof LibraryRouteWithChildren
   '/reading': typeof ReadingRoute
   '/rip': typeof RipRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/books': typeof AdminBooksRoute
   '/admin/ingest': typeof AdminIngestRoute
   '/book/$id': typeof BookIdRoute
+  '/library/collection': typeof LibraryCollectionRoute
+  '/library/reading': typeof LibraryReadingRoute
   '/packs/new': typeof PacksNewRoute
   '/rip/$slug': typeof RipSlugRoute
   '/admin/': typeof AdminIndexRoute
+  '/library/': typeof LibraryIndexRoute
   '/packs/': typeof PacksIndexRoute
   '/rip/': typeof RipIndexRoute
   '/admin/packs/$slug': typeof AdminPacksSlugRoute
@@ -154,9 +182,12 @@ export interface FileRoutesByTo {
   '/admin/books': typeof AdminBooksRoute
   '/admin/ingest': typeof AdminIngestRoute
   '/book/$id': typeof BookIdRoute
+  '/library/collection': typeof LibraryCollectionRoute
+  '/library/reading': typeof LibraryReadingRoute
   '/packs/new': typeof PacksNewRoute
   '/rip/$slug': typeof RipSlugRoute
   '/admin': typeof AdminIndexRoute
+  '/library': typeof LibraryIndexRoute
   '/packs': typeof PacksIndexRoute
   '/rip': typeof RipIndexRoute
   '/admin/packs/$slug': typeof AdminPacksSlugRoute
@@ -170,15 +201,19 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/collection': typeof CollectionRoute
+  '/library': typeof LibraryRouteWithChildren
   '/reading': typeof ReadingRoute
   '/rip': typeof RipRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/books': typeof AdminBooksRoute
   '/admin/ingest': typeof AdminIngestRoute
   '/book/$id': typeof BookIdRoute
+  '/library/collection': typeof LibraryCollectionRoute
+  '/library/reading': typeof LibraryReadingRoute
   '/packs/new': typeof PacksNewRoute
   '/rip/$slug': typeof RipSlugRoute
   '/admin/': typeof AdminIndexRoute
+  '/library/': typeof LibraryIndexRoute
   '/packs/': typeof PacksIndexRoute
   '/rip/': typeof RipIndexRoute
   '/admin/packs/$slug': typeof AdminPacksSlugRoute
@@ -193,15 +228,19 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/collection'
+    | '/library'
     | '/reading'
     | '/rip'
     | '/sign-in'
     | '/admin/books'
     | '/admin/ingest'
     | '/book/$id'
+    | '/library/collection'
+    | '/library/reading'
     | '/packs/new'
     | '/rip/$slug'
     | '/admin/'
+    | '/library/'
     | '/packs/'
     | '/rip/'
     | '/admin/packs/$slug'
@@ -219,9 +258,12 @@ export interface FileRouteTypes {
     | '/admin/books'
     | '/admin/ingest'
     | '/book/$id'
+    | '/library/collection'
+    | '/library/reading'
     | '/packs/new'
     | '/rip/$slug'
     | '/admin'
+    | '/library'
     | '/packs'
     | '/rip'
     | '/admin/packs/$slug'
@@ -234,15 +276,19 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/collection'
+    | '/library'
     | '/reading'
     | '/rip'
     | '/sign-in'
     | '/admin/books'
     | '/admin/ingest'
     | '/book/$id'
+    | '/library/collection'
+    | '/library/reading'
     | '/packs/new'
     | '/rip/$slug'
     | '/admin/'
+    | '/library/'
     | '/packs/'
     | '/rip/'
     | '/admin/packs/$slug'
@@ -256,6 +302,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CollectionRoute: typeof CollectionRoute
+  LibraryRoute: typeof LibraryRouteWithChildren
   ReadingRoute: typeof ReadingRoute
   RipRoute: typeof RipRouteWithChildren
   SignInRoute: typeof SignInRoute
@@ -295,6 +342,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReadingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/library': {
+      id: '/library'
+      path: '/library'
+      fullPath: '/library'
+      preLoaderRoute: typeof LibraryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/collection': {
       id: '/collection'
       path: '/collection'
@@ -323,6 +377,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PacksIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/library/': {
+      id: '/library/'
+      path: '/'
+      fullPath: '/library/'
+      preLoaderRoute: typeof LibraryIndexRouteImport
+      parentRoute: typeof LibraryRoute
+    }
     '/admin/': {
       id: '/admin/'
       path: '/admin'
@@ -343,6 +404,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/packs/new'
       preLoaderRoute: typeof PacksNewRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/library/reading': {
+      id: '/library/reading'
+      path: '/reading'
+      fullPath: '/library/reading'
+      preLoaderRoute: typeof LibraryReadingRouteImport
+      parentRoute: typeof LibraryRoute
+    }
+    '/library/collection': {
+      id: '/library/collection'
+      path: '/collection'
+      fullPath: '/library/collection'
+      preLoaderRoute: typeof LibraryCollectionRouteImport
+      parentRoute: typeof LibraryRoute
     }
     '/book/$id': {
       id: '/book/$id'
@@ -410,6 +485,21 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface LibraryRouteChildren {
+  LibraryCollectionRoute: typeof LibraryCollectionRoute
+  LibraryReadingRoute: typeof LibraryReadingRoute
+  LibraryIndexRoute: typeof LibraryIndexRoute
+}
+
+const LibraryRouteChildren: LibraryRouteChildren = {
+  LibraryCollectionRoute: LibraryCollectionRoute,
+  LibraryReadingRoute: LibraryReadingRoute,
+  LibraryIndexRoute: LibraryIndexRoute,
+}
+
+const LibraryRouteWithChildren =
+  LibraryRoute._addFileChildren(LibraryRouteChildren)
+
 interface RipRouteChildren {
   RipSlugRoute: typeof RipSlugRoute
   RipIndexRoute: typeof RipIndexRoute
@@ -427,6 +517,7 @@ const RipRouteWithChildren = RipRoute._addFileChildren(RipRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CollectionRoute: CollectionRoute,
+  LibraryRoute: LibraryRouteWithChildren,
   ReadingRoute: ReadingRoute,
   RipRoute: RipRouteWithChildren,
   SignInRoute: SignInRoute,

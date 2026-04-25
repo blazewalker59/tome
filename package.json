@@ -20,7 +20,10 @@
     "db:push": "dotenv -e .env.local -- drizzle-kit push",
     "db:studio": "dotenv -e .env.local -- drizzle-kit studio",
     "db:seed": "tsx scripts/seed.ts",
+    "db:seed-editor-packs": "tsx scripts/seed-editor-packs.ts",
     "db:rebucket": "tsx scripts/rebucket.ts",
+    "db:delete-booker-pack": "tsx scripts/delete-booker-pack.ts",
+    "db:reset-my-collection": "tsx scripts/reset-my-collection.ts",
     "favicons": "tsx scripts/favicons.ts"
   },
   "dependencies": {
