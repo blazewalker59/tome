@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, RefreshCw, X } from "lucide-react";
+import { ArrowDown, ArrowUp, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 
 import { AdminForbidden } from "@/components/AdminForbidden";
 import { CoverImage } from "@/components/CoverImage";
@@ -10,7 +10,9 @@ import {
   listBooksFn,
   listPacksFn,
   refreshBookFromHardcoverFn,
+  restoreBookFn,
   setBookPacksFn,
+  softDeleteBookFn,
   updateBookCurationFn,
   updateBookRarityFn,
   type AdminBookRow,
@@ -93,6 +95,10 @@ function BooksWorkspace() {
   const [searchInput, setSearchInput] = useState("");
   const [sort, setSort] = useState<AdminBooksSortKey>("ingested");
   const [dir, setDir] = useState<SortDir>("desc");
+  // When false (default) tombstoned rows are filtered out server-side.
+  // Toggling this on lets the admin audit and restore soft-deleted
+  // catalog rows without a SQL detour.
+  const [includeDeleted, setIncludeDeleted] = useState(false);
   const [allPacks, setAllPacks] = useState<AdminPackSummary[]>([]);
   const [assignTarget, setAssignTarget] = useState<AdminBookRow | null>(null);
 
@@ -104,7 +110,7 @@ function BooksWorkspace() {
     const timer = setTimeout(() => {
       setLoadState({ kind: "loading" });
       listBooksFn({
-        data: { search: q || undefined, limit: 200, sort, dir },
+        data: { search: q || undefined, limit: 200, sort, dir, includeDeleted },
       })
         .then((result) => {
           if (mySeq !== reqSeqRef.current) return;
@@ -121,7 +127,7 @@ function BooksWorkspace() {
         });
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchInput, sort, dir]);
+  }, [searchInput, sort, dir, includeDeleted]);
 
   /**
    * Clicking a sortable header either flips direction (if it was already
@@ -251,6 +257,53 @@ function BooksWorkspace() {
     }
   }, []);
 
+  // Soft-delete a book. Tombstones the row so it stops appearing in
+  // admin search defaults, builder local search, and addBookToPack
+  // guards — but keeps every existing reference (pack memberships,
+  // user collections, reading-log entries) intact. Reversible via
+  // handleRestore. We splice the new deletedAt into local state so
+  // the row updates without a refetch; if the toggle hides
+  // tombstones, the row will disappear on the next search-driven
+  // reload, which is the right UX.
+  const handleSoftDelete = useCallback(async (bookId: string): Promise<void> => {
+    // eslint-disable-next-line no-alert
+    const confirmed = window.confirm(
+      "Soft-delete this book?\n\n" +
+        "It will be hidden from the admin browse, builder search, and " +
+        "future pack additions. Existing user collections, reading " +
+        "logs, and pack memberships are preserved. You can restore it " +
+        "from this page with 'Show deleted' toggled on.",
+    );
+    if (!confirmed) return;
+    try {
+      const result = await softDeleteBookFn({ data: { bookId } });
+      setBooks((prev) =>
+        prev.map((b) =>
+          b.id === bookId ? { ...b, deletedAt: result.deletedAt } : b,
+        ),
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(
+        `Delete failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, []);
+
+  const handleRestore = useCallback(async (bookId: string): Promise<void> => {
+    try {
+      await restoreBookFn({ data: { bookId } });
+      setBooks((prev) =>
+        prev.map((b) => (b.id === bookId ? { ...b, deletedAt: null } : b)),
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(
+        `Restore failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, []);
+
   const handleAssignSubmit = useCallback(
     async (bookId: string, packIds: string[]) => {
       try {
@@ -296,8 +349,12 @@ function BooksWorkspace() {
             memberships. Use the <RefreshCw aria-hidden className="inline h-3 w-3 align-text-bottom" />{" "}
             icon next to <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">hc#</code>{" "}
             to re-pull title, authors, and cover from Hardcover when a
-            cover URL has gone stale. Rarity edits are global and may
-            be overwritten by{" "}
+            cover URL has gone stale. The <Trash2 aria-hidden className="inline h-3 w-3 align-text-bottom" />{" "}
+            soft-deletes a book — it&rsquo;s hidden from search, builder
+            results, and new pack additions, but existing user
+            collections, reading logs, and pack memberships are
+            preserved. Toggle <em>Show deleted</em> to audit or restore.
+            Rarity edits are global and may be overwritten by{" "}
             <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">
               pnpm db:rebucket
             </code>
@@ -318,6 +375,19 @@ function BooksWorkspace() {
               ? "Loading…"
               : `${books.length} shown · ${total} total`}
           </p>
+          {/* Soft-deleted books are filtered out by default to keep
+              the working set focused on live curation. Toggle on to
+              audit / restore tombstoned rows; the listBooksFn call
+              re-runs with includeDeleted=true and the same search. */}
+          <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px] text-[var(--sea-ink-soft)]">
+            <input
+              type="checkbox"
+              checked={includeDeleted}
+              onChange={(e) => setIncludeDeleted(e.target.checked)}
+              className="h-3.5 w-3.5 cursor-pointer accent-[color:var(--lagoon)]"
+            />
+            Show deleted
+          </label>
         </div>
       </header>
 
@@ -439,6 +509,8 @@ function BooksWorkspace() {
                     onUpdate={handleCurationUpdate}
                     onRarityChange={handleRarityUpdate}
                     onRefresh={handleRefresh}
+                    onSoftDelete={handleSoftDelete}
+                    onRestore={handleRestore}
                     onAssignClick={() => setAssignTarget(book)}
                   />
                 ))
@@ -469,6 +541,8 @@ function BookRow({
   onUpdate,
   onRarityChange,
   onRefresh,
+  onSoftDelete,
+  onRestore,
   onAssignClick,
 }: {
   book: AdminBookRow;
@@ -478,6 +552,8 @@ function BookRow({
   ) => Promise<void>;
   onRarityChange: (bookId: string, rarity: Rarity) => Promise<void>;
   onRefresh: (bookId: string) => Promise<void>;
+  onSoftDelete: (bookId: string) => Promise<void>;
+  onRestore: (bookId: string) => Promise<void>;
   onAssignClick: () => void;
 }) {
   // Local drafts so typing doesn't trigger a save per keystroke. Commit
@@ -514,24 +590,47 @@ function BookRow({
     void onUpdate(book.id, { moodTags: next });
   };
 
+  const isDeleted = book.deletedAt != null;
+
   return (
-    <tr className="border-b border-[var(--line)] last:border-0 align-top">
+    <tr
+      className={`border-b border-[var(--line)] last:border-0 align-top ${
+        // Visual dim + saturate when tombstoned. The row stays
+        // interactive (admin can still edit metadata or restore) but
+        // reads as "removed from curation" at a glance. We avoid
+        // strikethrough on the title since some text (year, hc#) is
+        // legitimately struck-through-looking already.
+        isDeleted ? "opacity-60" : ""
+      }`}
+    >
       <td className="px-4 py-3">
         <div className="flex gap-3">
           <CoverImage
             src={book.coverUrl}
             alt=""
-            className="h-16 w-11 shrink-0 rounded-md object-cover"
+            className={`h-16 w-11 shrink-0 rounded-md object-cover ${
+              isDeleted ? "grayscale" : ""
+            }`}
             fallback={
               <div className="h-16 w-11 shrink-0 rounded-md bg-[var(--surface-muted)]" />
             }
           />
           <div className="min-w-0">
-            <p className="truncate font-semibold text-[var(--sea-ink)]">
-              {book.title}
-              {book.publishedYear && (
-                <span className="ml-1 text-xs font-normal text-[var(--sea-ink-soft)]">
-                  ({book.publishedYear})
+            <p className="flex items-center gap-2 truncate font-semibold text-[var(--sea-ink)]">
+              <span className="truncate">
+                {book.title}
+                {book.publishedYear && (
+                  <span className="ml-1 text-xs font-normal text-[var(--sea-ink-soft)]">
+                    ({book.publishedYear})
+                  </span>
+                )}
+              </span>
+              {isDeleted && (
+                <span
+                  className="shrink-0 rounded-full border border-[color:var(--lagoon)]/30 bg-[color:var(--lagoon)]/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[color:var(--lagoon)]"
+                  title="This book is soft-deleted; restore it to put it back in circulation."
+                >
+                  Deleted
                 </span>
               )}
             </p>
@@ -568,6 +667,32 @@ function BookRow({
                   className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
                 />
               </button>
+              {/* Delete / Restore. Soft-delete is the only destructive
+                  action exposed in the admin table; hard delete would
+                  fail the FK RESTRICT on pack_books / collections /
+                  reading_log anyway. Confirmation prompt is in the
+                  parent's handleSoftDelete so this button stays simple. */}
+              {isDeleted ? (
+                <button
+                  type="button"
+                  onClick={() => void onRestore(book.id)}
+                  title="Restore this book to the live catalog"
+                  aria-label={`Restore ${book.title}`}
+                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] p-1 text-[var(--sea-ink-soft)] transition hover:text-[color:var(--lagoon)]"
+                >
+                  <RotateCcw aria-hidden className="h-3.5 w-3.5" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void onSoftDelete(book.id)}
+                  title="Soft-delete this book (reversible)"
+                  aria-label={`Delete ${book.title}`}
+                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] p-1 text-[var(--sea-ink-soft)] transition hover:border-red-500/40 hover:text-red-600"
+                >
+                  <Trash2 aria-hidden className="h-3.5 w-3.5" />
+                </button>
+              )}
             </p>
           </div>
         </div>

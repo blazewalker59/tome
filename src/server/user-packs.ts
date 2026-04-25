@@ -28,7 +28,7 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
-import { and, asc, desc, eq, gt, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
 import { books, packBooks, packRips, packs, users } from "@/db/schema";
@@ -346,14 +346,21 @@ export const addBookToPackDraftFn = createServerFn({ method: "POST" })
         throw new Error("Pack is published — unpublish before editing contents");
       }
 
-      // Verify the book exists before inserting — the FK would also
-      // catch this but the error would be opaque.
+      // Verify the book exists and is live before inserting. The FK
+      // would catch a missing row but not a soft-deleted one, and the
+      // resulting unique-constraint chatter would be opaque to the
+      // caller. Fail-fast with a real message instead.
       const [book] = await database
-        .select({ id: books.id })
+        .select({ id: books.id, deletedAt: books.deletedAt })
         .from(books)
         .where(eq(books.id, data.bookId))
         .limit(1);
       if (!book) throw new Error(`Book ${data.bookId} not found`);
+      if (book.deletedAt) {
+        throw new Error(
+          `Book ${data.bookId} has been removed from the catalog and cannot be added to a pack`,
+        );
+      }
 
       // Position = current max + 1, so the new book lands at the end of
       // the builder's list. `MAX(position)` per pack is cheap via the
@@ -778,6 +785,11 @@ export const searchBooksForBuilderFn = createServerFn({ method: "GET" })
                 // Search over the author array via unnest.
                 sql`EXISTS (SELECT 1 FROM unnest(${books.authors}) AS a WHERE a ILIKE ${like})`,
               ),
+              // Hide soft-deleted catalog rows from the builder. The
+              // book remains visible inside any pack/collection that
+              // already references it (existing user state is
+              // preserved); we only stop new pick-ups.
+              isNull(books.deletedAt),
               excludedIds.length > 0
                 ? sql`${books.id} NOT IN ${excludedIds}`
                 : undefined,

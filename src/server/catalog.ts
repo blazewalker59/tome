@@ -144,6 +144,9 @@ export interface AdminBookRow {
   /** Epoch ms when the row was first inserted. Drives the default
    * "most recently ingested" sort in the admin table. */
   createdAt: number;
+  /** Epoch ms of soft-delete, or null for live rows. The admin table
+   * dims tombstoned rows and swaps Delete → Restore based on this. */
+  deletedAt: number | null;
   /** Packs this book belongs to, slug-keyed for display. */
   packs: ReadonlyArray<{ id: string; slug: string; name: string }>;
 }
@@ -160,6 +163,13 @@ export interface ListBooksInput {
   sort?: AdminBooksSortKey;
   /** Sort direction. Default: `desc` for ingested, `asc` for author/title. */
   dir?: SortDir;
+  /** When true, soft-deleted (`deleted_at IS NOT NULL`) books are
+   * included. Default false: the admin browse hides tombstones to
+   * keep the working set focused on live curation, the same way
+   * builder search and addBookToPack guards exclude them. The /admin
+   * /books "Show deleted" toggle flips this on so an admin can audit
+   * or restore a tombstoned row. */
+  includeDeleted?: boolean;
 }
 
 export interface ListBooksResult {
@@ -193,6 +203,7 @@ export const listBooksFn = createServerFn({ method: "GET" })
       offset: r.offset === undefined ? undefined : Number(r.offset),
       sort,
       dir,
+      includeDeleted: r.includeDeleted === true,
     };
   })
   .handler(
@@ -218,6 +229,17 @@ export const listBooksFn = createServerFn({ method: "GET" })
             sql`array_to_string(${books.authors}, ' ') ilike ${"%" + search + "%"}`,
           )
         : undefined;
+
+      // Soft-delete filter. The default (live-only) hits the partial
+      // index `books_live_created_idx` declared in the schema. Toggling
+      // `includeDeleted` drops the predicate so the admin can audit
+      // tombstoned rows and restore them.
+      const liveClause = data.includeDeleted ? undefined : isNull(books.deletedAt);
+
+      const whereClause =
+        searchClause && liveClause
+          ? and(searchClause, liveClause)
+          : (searchClause ?? liveClause);
 
       // Sorting.
       //
@@ -260,19 +282,20 @@ export const listBooksFn = createServerFn({ method: "GET" })
           averageRating: books.averageRating,
           publishedYear: books.publishedYear,
           createdAt: books.createdAt,
+          deletedAt: books.deletedAt,
         })
         .from(books);
 
-      const rows = await (searchClause ? baseQuery.where(searchClause) : baseQuery)
+      const rows = await (whereClause ? baseQuery.where(whereClause) : baseQuery)
         .orderBy(orderExpr)
         .limit(limit)
         .offset(offset);
 
-      const [{ total }] = search
+      const [{ total }] = whereClause
         ? await database
             .select({ total: sql<number>`count(*)::int` })
             .from(books)
-            .where(searchClause!)
+            .where(whereClause)
         : await database.select({ total: sql<number>`count(*)::int` }).from(books);
 
       // Pack memberships for the returned page only.
@@ -302,6 +325,7 @@ export const listBooksFn = createServerFn({ method: "GET" })
         items: rows.map((r) => ({
           ...r,
           createdAt: r.createdAt.getTime(),
+          deletedAt: r.deletedAt ? r.deletedAt.getTime() : null,
           packs: packsByBook.get(r.id) ?? [],
         })),
         total,
@@ -825,6 +849,25 @@ export const addBookToPackFn = createServerFn({ method: "POST" })
     withErrorLogging("addBookToPackFn", async ({ data }): Promise<{ ok: true }> => {
       await requireAdmin();
       const database = await getDb();
+
+      // Guard against adding a tombstoned book to a new pack. The FK
+      // doesn't catch this (the row still exists), and silently
+      // letting it through would resurface deleted books in editorial
+      // packs. setBookPacksFn intentionally does NOT have this guard
+      // — admins still need to be able to unlink existing memberships
+      // on a soft-deleted book during cleanup.
+      const [book] = await database
+        .select({ id: books.id, deletedAt: books.deletedAt })
+        .from(books)
+        .where(eq(books.id, data.bookId))
+        .limit(1);
+      if (!book) throw new Error(`Book ${data.bookId} not found`);
+      if (book.deletedAt) {
+        throw new Error(
+          `Book ${data.bookId} has been soft-deleted; restore it before adding to a pack`,
+        );
+      }
+
       await database
         .insert(packBooks)
         .values({ packId: data.packId, bookId: data.bookId })
@@ -1212,6 +1255,113 @@ export const refreshBookFromHardcoverFn = createServerFn({ method: "POST" })
           ratingsCount: updated.ratingsCount,
           averageRating: updated.averageRating,
         };
+      },
+    ),
+  );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Soft-delete + restore
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Soft delete is the chosen semantics over hard delete because the
+// `pack_books`, `collections`, and `reading_log` FKs are all `RESTRICT`
+// — a hard delete on a book that any user has ripped, shelved, or
+// logged would be refused by Postgres, or (if we cascaded) silently
+// erase user state. Soft delete preserves every existing reference
+// while removing the row from curation surfaces (admin search default,
+// builder local search, addBookToPack guard).
+//
+// Re-ingesting the same hardcover_id revives the row in place: the
+// ingest paths intentionally do NOT filter by deletedAt for their
+// dedup-by-hardcover-id check, so the unique constraint catches the
+// duplicate and the on-conflict-update branch refreshes the row's
+// API-derived fields. Restore can also be done explicitly via
+// restoreBookFn from /admin/books with `Show deleted` toggled on.
+
+export interface SoftDeleteBookInput {
+  bookId: string;
+}
+
+export interface SoftDeleteBookResult {
+  bookId: string;
+  /** Epoch ms set on the row. Echoed back so the caller can splice
+   * the tombstoned row into local state without a refetch. */
+  deletedAt: number;
+}
+
+export const softDeleteBookFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): SoftDeleteBookInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("softDeleteBookFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    return { bookId: requireUuid(r.bookId, "bookId") };
+  })
+  .handler(
+    withErrorLogging(
+      "softDeleteBookFn",
+      async ({ data }): Promise<SoftDeleteBookResult> => {
+        await requireAdmin();
+        const database = await getDb();
+
+        // Idempotent: if the row is already tombstoned we leave the
+        // existing timestamp and return it. Bumping it on every click
+        // would mislead "deleted N days ago" UIs.
+        const [updated] = await database
+          .update(books)
+          .set({
+            deletedAt: sql`coalesce(${books.deletedAt}, now())`,
+            updatedAt: sql`now()`,
+          })
+          .where(eq(books.id, data.bookId))
+          .returning({ id: books.id, deletedAt: books.deletedAt });
+
+        if (!updated || !updated.deletedAt) {
+          throw new Error(`Book ${data.bookId} not found`);
+        }
+
+        return {
+          bookId: updated.id,
+          deletedAt: updated.deletedAt.getTime(),
+        };
+      },
+    ),
+  );
+
+export interface RestoreBookInput {
+  bookId: string;
+}
+
+export interface RestoreBookResult {
+  bookId: string;
+}
+
+export const restoreBookFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): RestoreBookInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("restoreBookFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    return { bookId: requireUuid(r.bookId, "bookId") };
+  })
+  .handler(
+    withErrorLogging(
+      "restoreBookFn",
+      async ({ data }): Promise<RestoreBookResult> => {
+        await requireAdmin();
+        const database = await getDb();
+
+        const [updated] = await database
+          .update(books)
+          .set({ deletedAt: null, updatedAt: sql`now()` })
+          .where(eq(books.id, data.bookId))
+          .returning({ id: books.id });
+
+        if (!updated) {
+          throw new Error(`Book ${data.bookId} not found`);
+        }
+
+        return { bookId: updated.id };
       },
     ),
   );
