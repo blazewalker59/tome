@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, X } from "lucide-react";
+import { ArrowDown, ArrowUp, RefreshCw, X } from "lucide-react";
 
 import { AdminForbidden } from "@/components/AdminForbidden";
 import { CoverImage } from "@/components/CoverImage";
@@ -9,6 +9,7 @@ import { checkAdminFn } from "@/server/admin";
 import {
   listBooksFn,
   listPacksFn,
+  refreshBookFromHardcoverFn,
   setBookPacksFn,
   updateBookCurationFn,
   updateBookRarityFn,
@@ -207,6 +208,49 @@ function BooksWorkspace() {
     [],
   );
 
+  // Re-fetches the book from Hardcover and overwrites only the
+  // API-derived fields server-side; we splice the returned values into
+  // local state so the row updates without a full table reload.
+  // Curated fields (genre, mood tags, rarity) and pack memberships are
+  // preserved by the server fn and so don't appear in the splice.
+  const handleRefresh = useCallback(async (bookId: string): Promise<void> => {
+    try {
+      const result = await refreshBookFromHardcoverFn({ data: { bookId } });
+      setBooks((prev) =>
+        prev.map((b) =>
+          b.id === bookId
+            ? {
+                ...b,
+                title: result.title,
+                authors: result.authors,
+                coverUrl: result.coverUrl,
+                publishedYear: result.publishedYear,
+                ratingsCount: result.ratingsCount,
+                averageRating: result.averageRating,
+              }
+            : b,
+        ),
+      );
+      // Light-touch feedback. Most refreshes either silently fix a
+      // broken cover or return changed=false; an alert would be too
+      // noisy for the common case, so we only surface the no-op path
+      // (which is what an admin needs to know to escalate).
+      if (!result.changed) {
+        // eslint-disable-next-line no-alert
+        alert(
+          "Refreshed from Hardcover, but no visible fields changed. " +
+            "If the cover is still broken the upstream URL itself is dead — " +
+            "the row may need to be unlinked or re-ingested against a different edition.",
+        );
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(
+        `Refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, []);
+
   const handleAssignSubmit = useCallback(
     async (bookId: string, packIds: string[]) => {
       try {
@@ -249,8 +293,11 @@ function BooksWorkspace() {
           <p className="mt-2 max-w-2xl text-sm text-[var(--sea-ink-soft)]">
             Edit genre, mood tags, and rarity in place (saves on
             change). Click a row&rsquo;s <em>Packs</em> to manage
-            memberships. Rarity edits are global and may be overwritten
-            by{" "}
+            memberships. Use the <RefreshCw aria-hidden className="inline h-3 w-3 align-text-bottom" />{" "}
+            icon next to <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">hc#</code>{" "}
+            to re-pull title, authors, and cover from Hardcover when a
+            cover URL has gone stale. Rarity edits are global and may
+            be overwritten by{" "}
             <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">
               pnpm db:rebucket
             </code>
@@ -391,6 +438,7 @@ function BooksWorkspace() {
                     book={book}
                     onUpdate={handleCurationUpdate}
                     onRarityChange={handleRarityUpdate}
+                    onRefresh={handleRefresh}
                     onAssignClick={() => setAssignTarget(book)}
                   />
                 ))
@@ -420,6 +468,7 @@ function BookRow({
   book,
   onUpdate,
   onRarityChange,
+  onRefresh,
   onAssignClick,
 }: {
   book: AdminBookRow;
@@ -428,12 +477,18 @@ function BookRow({
     patch: { genre?: string; moodTags?: string[] },
   ) => Promise<void>;
   onRarityChange: (bookId: string, rarity: Rarity) => Promise<void>;
+  onRefresh: (bookId: string) => Promise<void>;
   onAssignClick: () => void;
 }) {
   // Local drafts so typing doesn't trigger a save per keystroke. Commit
   // happens on blur, iff the normalized value actually changed.
   const [genreDraft, setGenreDraft] = useState(book.genre);
   const [moodDraft, setMoodDraft] = useState(book.moodTags.join(", "));
+  // Local-only spinner state for the per-row Hardcover refresh. Kept on
+  // the row (not in the parent) so multiple refreshes can run in
+  // parallel without one blocking another's UI; the server's 1.1s
+  // request spacing is what actually serializes them.
+  const [refreshing, setRefreshing] = useState(false);
 
   // Sync drafts when the row is reloaded from the server (e.g. after a
   // search refresh that picks up another admin's edits).
@@ -480,12 +535,39 @@ function BookRow({
                 </span>
               )}
             </p>
-            <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-              hc#{book.hardcoverId}
-              {book.averageRating != null &&
-                ` · ★ ${Number(book.averageRating).toFixed(2)}`}
-              {book.ratingsCount > 0 &&
-                ` · ${book.ratingsCount.toLocaleString()} ratings`}
+            <p className="mt-1 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+              <span>
+                hc#{book.hardcoverId}
+                {book.averageRating != null &&
+                  ` · ★ ${Number(book.averageRating).toFixed(2)}`}
+                {book.ratingsCount > 0 &&
+                  ` · ${book.ratingsCount.toLocaleString()} ratings`}
+              </span>
+              {/* Re-fetch this book from Hardcover. Useful when the
+                  cover URL has gone stale (most common failure mode)
+                  or the title/authors have drifted upstream. Curated
+                  fields (genre, mood tags, rarity) and pack memberships
+                  are preserved server-side. */}
+              <button
+                type="button"
+                onClick={async () => {
+                  setRefreshing(true);
+                  try {
+                    await onRefresh(book.id);
+                  } finally {
+                    setRefreshing(false);
+                  }
+                }}
+                disabled={refreshing}
+                title="Refresh title, authors, and cover from Hardcover"
+                aria-label={`Refresh ${book.title} from Hardcover`}
+                className="inline-flex shrink-0 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] p-1 text-[var(--sea-ink-soft)] transition hover:text-[var(--lagoon)] disabled:cursor-progress disabled:opacity-60"
+              >
+                <RefreshCw
+                  aria-hidden
+                  className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+                />
+              </button>
             </p>
           </div>
         </div>

@@ -1068,3 +1068,150 @@ export const ingestHardcoverBookForAdminPackFn = createServerFn({ method: "POST"
       },
     ),
   );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Refresh a single book's API-derived fields from Hardcover
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Triage tool for the admin /admin/books table. Hardcover occasionally
+// rotates cover URLs (the cached_image CDN moves), updates titles, or
+// republishes editions; rows ingested months ago can drift out of sync
+// with what's authoritative upstream. Rather than re-running the full
+// ingest pipeline, this fn re-fetches the single Hardcover record by id
+// and overwrites only the fields Hardcover owns.
+//
+// Boundary discipline (mirrors the on-conflict set list in
+// ingestHardcoverBookForAdminPackFn above):
+//   API-owned, refreshed → title, authors, coverUrl, description,
+//                           pageCount, publishedYear, ratingsCount,
+//                           averageRating, rawMetadata
+//   Curated, preserved   → genre, moodTags, rarity
+//   Provenance, preserved→ ingestedByUserId, ingestedAt
+//
+// Same 1.1s rate limit as every other Hardcover call (enforced inside
+// fetchBookById). One-at-a-time clicks are fine; future bulk variants
+// would need to serialize through the same gate.
+
+export interface RefreshBookFromHardcoverInput {
+  bookId: string;
+}
+
+export interface RefreshBookFromHardcoverResult {
+  bookId: string;
+  /** True if any of the API-owned fields actually changed. The UI uses
+   * this to surface "Refreshed (no changes)" vs "Refreshed (X updated)"
+   * so admins can tell whether the broken-cover report was real. */
+  changed: boolean;
+  /** The post-refresh values for fields the admin table renders, so
+   * the caller can splice them into local state without a refetch. */
+  title: string;
+  authors: ReadonlyArray<string>;
+  coverUrl: string | null;
+  publishedYear: number | null;
+  ratingsCount: number;
+  averageRating: string | null;
+}
+
+export const refreshBookFromHardcoverFn = createServerFn({ method: "POST" })
+  .inputValidator((raw: unknown): RefreshBookFromHardcoverInput => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("refreshBookFromHardcoverFn expects an object");
+    }
+    const r = raw as Record<string, unknown>;
+    return { bookId: requireUuid(r.bookId, "bookId") };
+  })
+  .handler(
+    withErrorLogging(
+      "refreshBookFromHardcoverFn",
+      async ({ data }): Promise<RefreshBookFromHardcoverResult> => {
+        await requireAdmin();
+        const database = await getDb();
+
+        const [existing] = await database
+          .select({
+            id: books.id,
+            hardcoverId: books.hardcoverId,
+            coverUrl: books.coverUrl,
+            title: books.title,
+            authors: books.authors,
+          })
+          .from(books)
+          .where(eq(books.id, data.bookId))
+          .limit(1);
+
+        if (!existing) {
+          throw new Error(`Book ${data.bookId} not found`);
+        }
+
+        const hardcoverBook = await fetchBookById(existing.hardcoverId);
+        if (!hardcoverBook) {
+          // Either Hardcover removed the record or our stored id is wrong.
+          // Surface the cause distinctly so admins know this isn't a
+          // transient network error and can investigate the row itself.
+          throw new Error(
+            `Hardcover book ${existing.hardcoverId} not found upstream. ` +
+              `It may have been removed; consider unlinking or replacing this row.`,
+          );
+        }
+
+        // `bookResponseToRow` needs genre/moodTags but we deliberately
+        // discard the genre+moodTags it produces — only the API-owned
+        // fields below are written. Passing the existing values keeps
+        // the helper happy without leaking back into the DB.
+        const row = bookResponseToRow(hardcoverBook, {
+          genre: "unknown",
+          moodTags: [],
+        });
+
+        const [updated] = await database
+          .update(books)
+          .set({
+            title: row.title,
+            authors: row.authors,
+            coverUrl: row.coverUrl,
+            description: row.description,
+            pageCount: row.pageCount,
+            publishedYear: row.publishedYear,
+            ratingsCount: row.ratingsCount,
+            averageRating: row.averageRating,
+            rawMetadata: row.rawMetadata,
+            updatedAt: sql`now()`,
+          })
+          .where(eq(books.id, data.bookId))
+          .returning({
+            id: books.id,
+            title: books.title,
+            authors: books.authors,
+            coverUrl: books.coverUrl,
+            publishedYear: books.publishedYear,
+            ratingsCount: books.ratingsCount,
+            averageRating: books.averageRating,
+          });
+
+        if (!updated) {
+          throw new Error(`Refresh of book ${data.bookId} returned no row`);
+        }
+
+        // Cheap shallow diff against the row we read at the top. We
+        // only check the most user-visible fields; if Hardcover changed
+        // only the description or rawMetadata the admin still sees
+        // "no changes" which matches their mental model (they came here
+        // because of a broken *cover*).
+        const changed =
+          updated.coverUrl !== existing.coverUrl ||
+          updated.title !== existing.title ||
+          updated.authors.join("\u0001") !== existing.authors.join("\u0001");
+
+        return {
+          bookId: updated.id,
+          changed,
+          title: updated.title,
+          authors: updated.authors,
+          coverUrl: updated.coverUrl,
+          publishedYear: updated.publishedYear,
+          ratingsCount: updated.ratingsCount,
+          averageRating: updated.averageRating,
+        };
+      },
+    ),
+  );
