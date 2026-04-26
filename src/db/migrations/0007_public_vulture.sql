@@ -1,0 +1,1 @@
+CREATE INDEX "pack_rips_pack_idx" ON "pack_rips" USING btree ("pack_id","ripped_at");

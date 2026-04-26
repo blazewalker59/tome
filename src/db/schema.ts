@@ -451,7 +451,17 @@ export const packRips = pgTable(
     duplicates: integer("duplicates").notNull().default(0),
     shardsAwarded: integer("shards_awarded").notNull().default(0),
   },
-  (t) => [index("pack_rips_user_idx").on(t.userId, t.rippedAt)],
+  (t) => [
+    index("pack_rips_user_idx").on(t.userId, t.rippedAt),
+    // Supports the trending sort on Discover: "public packs ordered by
+    // rip count over the last 7 days." The query filters on
+    // `pack_id IN (...) AND ripped_at > now() - 7d`, which is a
+    // textbook (pack_id, ripped_at) lookup. Without this index the
+    // planner falls back to a seq scan over the whole rip log every
+    // time /rip loads — fine while the table is tiny, but it'll bite
+    // the moment community packs see real traffic.
+    index("pack_rips_pack_idx").on(t.packId, t.rippedAt),
+  ],
 );
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -50,6 +50,13 @@
       "when": 1777084134830,
       "tag": "0006_sad_gertrude_yorkes",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1777166991646,
+      "tag": "0007_public_vulture",
+      "breakpoints": true
     }
   ]
 }
