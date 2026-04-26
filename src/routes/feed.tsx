@@ -70,12 +70,17 @@ function parseFeedSearch(raw: Record<string, unknown>): FeedSearch {
 export const Route = createFileRoute("/feed")({
   validateSearch: parseFeedSearch,
   // Re-run the loader when the tab changes so each tab fetches its own
-  // payload server-side. Cheap — the inactive tab's data isn't fetched
-  // (the loader branches on `tab`), so the cost is one query per
-  // navigation.
-  loaderDeps: ({ search }) => ({ tab: search.tab ?? "social" }),
+  // payload server-side. The dep tracks the *explicit* search param
+  // (not the resolved default) because the loader needs to distinguish
+  // "user navigated to /feed with no tab" (auto-switch eligible) from
+  // "user clicked Social explicitly" (honor the choice). Collapsing to
+  // a default here would trap the user on /feed?tab=you forever.
+  loaderDeps: ({ search }) => ({ tabParam: search.tab }),
   loader: async ({ deps }) => {
-    if (deps.tab === "you") {
+    const explicitTab = deps.tabParam;
+    const resolvedTab = explicitTab ?? "social";
+
+    if (resolvedTab === "you") {
       const myRips = await getMyRipsFn();
       return { tab: "you" as const, myRips };
     }
@@ -89,14 +94,19 @@ export const Route = createFileRoute("/feed")({
     ]);
 
     // Auto-switch heuristic: signed-in viewer with an empty social
-    // feed → bounce to the You tab IF they have any rip history,
-    // since that surface is more valuable to them than the empty
-    // social state. Brand-new users (no follows AND no rips) stay on
-    // social so the suggested creators carry the page.
+    // feed AND a non-empty rip history → bounce to the You tab so
+    // they don't land on a dead state. Critically, this only runs
+    // when no `tab` param was specified — clicking the Social tab
+    // explicitly must keep them on Social so they can reach the
+    // suggested-creators surface and start following people.
     //
     // The peek is a cheap `limit: 1` MyRips fetch — one indexed query
     // against `pack_rips_user_idx`. Only runs on the empty-feed path.
-    if (feed.signedIn && feed.events.length === 0) {
+    if (
+      explicitTab === undefined &&
+      feed.signedIn &&
+      feed.events.length === 0
+    ) {
       const peek = await getMyRipsFn({ data: { limit: 1 } });
       if (peek.events.length > 0) {
         throw redirect({ to: "/feed", search: { tab: "you" } });

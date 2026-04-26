@@ -1137,6 +1137,18 @@ export const getMyRipsFn = createServerFn({ method: "GET" })
           INNER JOIN packs p ON p.id = pr.pack_id
           LEFT JOIN users pcu ON pcu.id = p.creator_id
           WHERE pr.user_id = ${me.id}
+            -- Hide orphaned rips: only surface rips where the user
+            -- still owns at least one of the books pulled. The
+            -- 0008_orphan_rip_cleanup migration deletes pre-existing
+            -- orphans; this guard keeps the surface honest in case a
+            -- future collection-reset operation produces new ones.
+            AND EXISTS (
+              SELECT 1
+              FROM unnest(pr.pulled_book_ids) AS pulled_id
+              INNER JOIN collection_cards cc
+                ON cc.user_id = pr.user_id
+               AND cc.book_id = pulled_id
+            )
             ${beforeCond}
           ORDER BY pr.ripped_at DESC
           LIMIT ${limit}
