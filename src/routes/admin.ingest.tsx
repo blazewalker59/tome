@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { CoverImage } from "@/components/CoverImage";
+import { demoteReasonLabel } from "@/lib/hardcover/rank";
 import {
   checkAdminFn,
   ingestBookFn,
@@ -407,6 +408,15 @@ function SearchPane({
                       {hit.releaseYear && (
                         <span className="ml-1 text-xs font-normal text-[var(--sea-ink-soft)]">
                           ({hit.releaseYear})
+                        </span>
+                      )}
+                      {hit.demoted && hit.demoteReason && (
+                        // Admin sees the same badges as users — keeps
+                        // the operator's mental model aligned with what
+                        // the public UI surfaces, and warns them off
+                        // ingesting summaries by accident.
+                        <span className="ml-2 inline-block rounded-sm bg-[var(--surface-muted)] px-1.5 py-0.5 align-middle text-[9px] font-medium uppercase tracking-[0.06em] text-[var(--sea-ink-soft)]">
+                          {demoteReasonLabel(hit.demoteReason)}
                         </span>
                       )}
                     </p>

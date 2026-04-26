@@ -22,6 +22,7 @@ import {
 } from "@/server/reading";
 import { useToast } from "@/components/Toast";
 import { CoverImage } from "@/components/CoverImage";
+import { demoteReasonLabel } from "@/lib/hardcover/rank";
 
 /**
  * Reading list route: `/reading`.
@@ -587,6 +588,14 @@ function LogSearchPanel({
                           className="line-clamp-1 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
                         >
                           {h.title}
+                          {h.demoted && h.demoteReason && (
+                            // Demoted hits stay selectable but get a
+                            // small inline tag so the user can see
+                            // why the ranker pushed them down.
+                            <span className="ml-2 inline-block rounded-sm bg-[var(--surface-muted)] px-1.5 py-0.5 align-middle text-[9px] font-medium uppercase tracking-[0.06em] text-[var(--sea-ink-soft)]">
+                              {demoteReasonLabel(h.demoteReason)}
+                            </span>
+                          )}
                         </p>
                         <p className="truncate text-xs text-[var(--sea-ink-soft)]">
                           {formatAuthors(h.authors)}

@@ -41,6 +41,7 @@ import { requireSessionUser } from "@/lib/auth/session";
 import { bookResponseToRow } from "@/lib/cards/hardcover";
 import type { Rarity } from "@/lib/packs/composition";
 import { fetchBookById, searchBooks, type HardcoverSearchHit } from "./hardcover";
+import type { DemoteReason } from "@/lib/hardcover/rank";
 import { withErrorLogging } from "./_shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -763,6 +764,10 @@ export interface ReadingHardcoverHit {
    *  UI can add it directly via upsertReadingEntry instead of
    *  ingesting again. */
   alreadyInCatalogBookId: string | null;
+  /** Set when the hit was demoted by the quality reranker — the UI
+   *  shows a small badge ("Summary", "Workbook", …) next to the title. */
+  demoted: boolean;
+  demoteReason: DemoteReason | null;
 }
 
 /**
@@ -817,6 +822,8 @@ export const searchHardcoverForReadingLogFn = createServerFn({ method: "GET" })
           coverUrl: h.coverUrl,
           releaseYear: h.releaseYear,
           alreadyInCatalogBookId: byHardcoverId.get(h.id) ?? null,
+          demoted: h.demoted,
+          demoteReason: h.demoteReason,
         }));
       },
     ),

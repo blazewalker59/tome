@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { CoverImage } from "@/components/CoverImage";
+import { demoteReasonLabel } from "@/lib/hardcover/rank";
 import {
   LOCAL_SPARSE_THRESHOLD,
   searchBooksForBuilderFn,
@@ -344,6 +345,16 @@ export function BookSearchPanel({
                           className="line-clamp-1 text-sm font-semibold text-[var(--sea-ink)] [overflow-wrap:anywhere]"
                         >
                           {h.title}
+                          {h.demoted && h.demoteReason && (
+                            // Inline badge — derivative-titled hits stay
+                            // selectable (the title might be legitimate)
+                            // but the label tells the user what the
+                            // ranker flagged so they don't pick a
+                            // workbook by mistake.
+                            <span className="ml-2 inline-block rounded-sm bg-[var(--surface-muted)] px-1.5 py-0.5 align-middle text-[9px] font-medium uppercase tracking-[0.06em] text-[var(--sea-ink-soft)]">
+                              {demoteReasonLabel(h.demoteReason)}
+                            </span>
+                          )}
                         </p>
                         <p className="truncate text-xs text-[var(--sea-ink-soft)]">
                           {formatAuthors(h.authors)}

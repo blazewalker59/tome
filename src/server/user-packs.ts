@@ -38,6 +38,7 @@ import type { Rarity } from "@/lib/packs/composition";
 import { checkPackComposition } from "@/lib/packs/composition";
 import { getPublishUnlockStatus } from "@/lib/packs/unlock";
 import { bookResponseToRow } from "@/lib/cards/hardcover";
+import type { DemoteReason } from "@/lib/hardcover/rank";
 import {
   fetchBookById,
   searchBooks,
@@ -846,6 +847,10 @@ export interface BuilderHardcoverHit {
   releaseYear: number | null;
   /** Populated iff we already ingested this hardcover_id. */
   alreadyInCatalogBookId: string | null;
+  /** Set when the hit was demoted by the quality reranker — the UI
+   *  shows a small badge ("Summary", "Workbook", …) next to the title. */
+  demoted: boolean;
+  demoteReason: DemoteReason | null;
 }
 
 /**
@@ -909,6 +914,8 @@ export const searchHardcoverForBuilderFn = createServerFn({ method: "GET" })
           coverUrl: h.coverUrl,
           releaseYear: h.releaseYear,
           alreadyInCatalogBookId: byHardcoverId.get(h.id) ?? null,
+          demoted: h.demoted,
+          demoteReason: h.demoteReason,
         }));
       },
     ),

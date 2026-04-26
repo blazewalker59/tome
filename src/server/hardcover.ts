@@ -28,6 +28,7 @@
 
 import { getEnv } from "@/lib/env";
 import type { HardcoverBook } from "@/lib/cards/hardcover";
+import { rankSearchHits, type DemoteReason } from "@/lib/hardcover/rank";
 
 const HARDCOVER_GRAPHQL = "https://api.hardcover.app/v1/graphql";
 
@@ -160,6 +161,16 @@ export interface HardcoverSearchHit {
   coverUrl: string | null;
   /** URL slug on hardcover.app, useful for "open source" links. */
   slug: string | null;
+  /**
+   * Quality-ranking metadata, populated by `searchBooks` via the
+   * `rankSearchHits` helper. Always present so callers can render
+   * badges uniformly without null-checking the parent. `parseSearchResults`
+   * — which is consumed by tests directly — leaves these at their
+   * neutral defaults (`false` / `null`); only `searchBooks` applies
+   * the ranker.
+   */
+  demoted: boolean;
+  demoteReason: DemoteReason | null;
 }
 
 export interface HardcoverSearchResult {
@@ -195,7 +206,21 @@ export async function searchBooks(
     search?: { results?: unknown } | null;
   }>("SearchBooks", SEARCH_BOOKS_QUERY, { query: trimmed, perPage, page });
 
-  return parseSearchResults(json.search?.results, page, perPage);
+  const parsed = parseSearchResults(json.search?.results, page, perPage);
+  // Apply quality reranker once at the boundary so all three callers
+  // (admin ingest, pack builder, reading log) inherit the same order
+  // and the same demote metadata. Drops publisher-junk hits, marks
+  // derivative-titled hits as `demoted` with a reason, hard-sinks them
+  // below clean hits, then sorts clean hits by quality desc.
+  const ranked = rankSearchHits(parsed.hits);
+  return {
+    ...parsed,
+    hits: ranked.map(({ hit, demoted, demoteReason }) => ({
+      ...hit,
+      demoted,
+      demoteReason,
+    })),
+  };
 }
 
 /**
@@ -252,6 +277,12 @@ export function parseSearchResults(
       ratingsCount: pickInt(d, "ratings_count"),
       coverUrl,
       slug: pickString(d, "slug"),
+      // Neutral defaults — `searchBooks` overlays real values via the
+      // ranker. Tests that call `parseSearchResults` directly observe
+      // these defaults, which is the correct contract: parsing is
+      // separate from ranking.
+      demoted: false,
+      demoteReason: null,
     });
   }
   return { hits, found, page, perPage };
