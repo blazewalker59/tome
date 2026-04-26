@@ -71,6 +71,9 @@ export default function Header() {
           <Link to="/rip" className="nav-link" activeProps={{ className: "nav-link is-active" }}>
             Rip
           </Link>
+          <Link to="/feed" className="nav-link" activeProps={{ className: "nav-link is-active" }}>
+            Feed
+          </Link>
           <Link
             to="/library/collection"
             className="nav-link"

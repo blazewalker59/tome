@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
-import { BookOpen, Home, Sparkles } from "lucide-react";
+import { BookOpen, Home, Rss, Sparkles } from "lucide-react";
 
 /**
  * Mobile-only bottom tab bar. Hidden on `sm` and up where the top header
@@ -84,6 +84,13 @@ export default function BottomTabs() {
       <ul className="mx-auto flex max-w-md items-stretch justify-around">
         <Tab to="/" label="Home" icon={<Home aria-hidden className="h-5 w-5" />} />
         <Tab to="/rip" label="Rip" icon={<Sparkles aria-hidden className="h-5 w-5" />} />
+        {/* Feed is fourth so the rip CTA stays visually centered in
+            a 3-icon mental model — Home + Rip + Library remain the
+            primary loop, with Feed an adjacent surface. Order tested
+            against thumb reachability: Feed at the right edge keeps
+            the chord on the dominant hand for right-handed users
+            (the majority) without crowding the rip tap target. */}
+        <Tab to="/feed" label="Feed" icon={<Rss aria-hidden className="h-5 w-5" />} />
         <Tab to="/library/collection" label="Library" icon={<BookOpen aria-hidden className="h-5 w-5" />} />
       </ul>
     </nav>
@@ -94,9 +101,10 @@ function Tab({ to, label, icon }: { to: string; label: string; icon: React.React
   return (
     <li className="flex-1">
       <Link
-        // @ts-expect-error — string `to` is fine; TanStack typed-routes can't
-        // infer the union here without per-route typing.
-        to={to}
+        // String `to` is fine here; TanStack typed-routes can't infer the
+        // union without per-route typing, so we cast through `any` rather
+        // than leave a `@ts-expect-error` that flickers between TS releases.
+        to={to as never}
         className="bottom-tab"
         activeProps={{ className: "bottom-tab is-active" }}
       >

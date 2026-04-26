@@ -1,19 +1,25 @@
 /**
  * Server functions for the social graph.
  *
- * Scope (this PR — first social slice):
+ * Scope:
  *   • follow / unfollow another user by username
  *   • read follower + following counts and the viewer's follow state
  *     for a given profile
+ *   • read the viewer's follow feed: a chronologically-ordered union
+ *     of "a followee published a pack" and "a followee pulled a
+ *     legendary card" events, paginated by timestamp cursor.
  *
  * Out of scope (deferred to follow-ups):
- *   • follow feed (publishes + legendary pulls from followees)
  *   • user search / Discover-people page
  *
  * Authorization:
  *   • follow / unfollow require auth (the actor is the signed-in user).
  *   • follow-state read is anonymous-friendly: counts are public,
  *     `viewerFollows` collapses to `false` when there's no session.
+ *   • follow-feed read requires auth — the response is keyed to "the
+ *     people YOU follow." Anonymous callers get a structured
+ *     `null`-shaped response so the route can render a sign-in
+ *     prompt instead of a sad empty feed.
  *
  * Identity layer:
  *   • Profiles are addressed by `users.username` everywhere in the
@@ -29,10 +35,10 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
-import { follows, users } from "@/db/schema";
+import { follows, packBooks, packRips, packs, users } from "@/db/schema";
 import { getSessionUser, requireSessionUser } from "@/lib/auth/session";
 import { withErrorLogging } from "./_shared";
 
@@ -276,6 +282,529 @@ export const getFollowStateFn = createServerFn({ method: "GET" })
   );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Read: follow feed
+//
+// A chronological union of two event types from people the viewer
+// follows:
+//
+//   1. PACK_PUBLISHED — `packs.published_at` flipped (`is_public = true`,
+//      `creator_id` ∈ followees). Surfaces "@alice shipped a deck."
+//   2. LEGENDARY_PULL — a `pack_rips` row whose `pulled_book_ids`
+//      includes any book with `rarity = 'legendary'`. Surfaces
+//      "@alice just pulled a legendary: <Title>." Multiple legendaries
+//      in a single rip collapse into one event with the cards in an
+//      array — mass-rip events should read as one moment, not five.
+//
+// Pagination is timestamp-cursor based: callers pass an optional
+// `before` (epoch ms) and we return up to `limit` events strictly
+// older than that cursor. This is monotonic across both event types
+// because `events.timestamp` is the union key. The caller threads the
+// last event's timestamp back as `before` to fetch the next page.
+//
+// Why two queries + JS merge instead of one SQL UNION ALL? Three
+// reasons:
+//   • The two event shapes are different enough (publish has a pack,
+//     pull has a rip + cards) that a UNION would force coalesced
+//     columns and a discriminator we'd then re-split client-side.
+//   • Each query stays simple and indexable; the merge is O(n+m)
+//     against a hard cap (limit = 20 by default).
+//   • Drizzle's UNION ergonomics are clunky enough that the readability
+//     win goes to the merge approach.
+//
+// We over-fetch each side (limit * 2) so that after the merge + cap
+// we still have `limit` events. Worst case: all `limit * 2` events
+// come from one stream and the other contributes nothing. That's fine
+// — we just truncate.
+//
+// Anonymous callers and signed-in callers with zero follows both get
+// `{ events: [], suggestions }`. The `suggestions` payload mirrors
+// `listPublicPacksFn` minimally (just enough for the empty-state to
+// render trending public packs) so the feed route doesn't need a
+// second loader call.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type FollowFeedEventType = "pack_published" | "legendary_pull";
+
+interface FollowFeedActor {
+  id: string;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
+export interface PackPublishedEvent {
+  type: "pack_published";
+  /**
+   * Epoch ms. For pack_published this is `packs.published_at`. Used
+   * for ordering and as the pagination cursor (`before`).
+   */
+  timestamp: number;
+  /** Stable key for the React list. Composed so a deletion + repost
+   *  produces a fresh row. */
+  id: string;
+  actor: FollowFeedActor;
+  pack: {
+    id: string;
+    slug: string;
+    name: string;
+    description: string | null;
+    coverImageUrl: string | null;
+    genreTags: ReadonlyArray<string>;
+    bookCount: number;
+  };
+}
+
+export interface LegendaryPullEvent {
+  type: "legendary_pull";
+  timestamp: number;
+  id: string;
+  actor: FollowFeedActor;
+  pack: {
+    /** Pack the legendary came from. May be editorial (creator_id null)
+     *  or a user pack. The link target is /rip/$slug for editorial,
+     *  /u/$username/$slug for user packs — the route picks based on
+     *  whether `creatorUsername` is null. */
+    id: string;
+    slug: string;
+    name: string;
+    creatorUsername: string | null;
+  };
+  /** All legendaries pulled in this single rip. Usually 1; multi-
+   *  legendary rips are rare but real. */
+  cards: ReadonlyArray<{
+    bookId: string;
+    title: string;
+    coverUrl: string | null;
+    /** Author display string — first author or "Multiple authors". */
+    authors: ReadonlyArray<string>;
+  }>;
+}
+
+export type FollowFeedEvent = PackPublishedEvent | LegendaryPullEvent;
+
+/**
+ * Trending public-pack suggestion shown in the empty state. A trimmed
+ * subset of `listPublicPacksFn`'s payload — just enough for a tile.
+ */
+export interface FeedSuggestion {
+  id: string;
+  slug: string;
+  name: string;
+  coverImageUrl: string | null;
+  genreTags: ReadonlyArray<string>;
+  creatorUsername: string;
+}
+
+export interface FollowFeedPayload {
+  /**
+   * Page of feed events, newest first. Up to `limit` items. Empty
+   * when the viewer follows no one (or follows quiet accounts) — the
+   * UI uses `suggestions` instead in that case.
+   */
+  events: ReadonlyArray<FollowFeedEvent>;
+  /**
+   * Empty-state seed: trending public packs. Always populated (even
+   * when `events` is non-empty) so the feed footer can suggest more
+   * creators to follow without a second round-trip. The route renders
+   * them only when the events list is empty.
+   */
+  suggestions: ReadonlyArray<FeedSuggestion>;
+  /**
+   * Cursor for the next page: epoch ms of the oldest event returned,
+   * or null when there are no more events. Caller passes this back
+   * as `before` to load older items.
+   */
+  nextCursor: number | null;
+  /** True when the viewer is signed in. Anonymous callers get this
+   *  flag set so the route can show a sign-in CTA instead of an
+   *  empty feed. */
+  signedIn: boolean;
+  /** True when the signed-in viewer follows zero people. Lets the UI
+   *  branch on "go follow someone" vs "your followees are quiet". */
+  followingCount: number;
+}
+
+export interface FollowFeedInput {
+  /** Epoch ms; return events strictly older than this. Omit for the
+   *  newest page. */
+  before?: number;
+  /** Page size cap. Defaults to 20; max 50. */
+  limit?: number;
+}
+
+/**
+ * Pure merge step: union two streams of feed events, sort newest-
+ * first, and cap. Extracted from the handler so we can unit-test the
+ * ordering and cap behavior without standing up a database.
+ *
+ * Stable across event types: ties on `timestamp` (rare but possible
+ * in tests) break by id so the order is deterministic.
+ */
+function mergeFeedEvents(
+  publishes: ReadonlyArray<FollowFeedEvent>,
+  pulls: ReadonlyArray<FollowFeedEvent>,
+  limit: number,
+): FollowFeedEvent[] {
+  const merged = [...publishes, ...pulls];
+  merged.sort((a, b) => {
+    if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  return merged.slice(0, limit);
+}
+
+export const getFollowFeedFn = createServerFn({ method: "GET" })
+  .inputValidator((raw: unknown): FollowFeedInput => {
+    if (raw === undefined || raw === null) return {};
+    if (typeof raw !== "object") {
+      throw new Error("getFollowFeedFn expects an object or undefined");
+    }
+    const r = raw as Record<string, unknown>;
+    const out: FollowFeedInput = {};
+    if (r.before !== undefined) {
+      const n = Number(r.before);
+      if (!Number.isFinite(n) || n <= 0) {
+        throw new Error("before must be a positive epoch ms");
+      }
+      out.before = n;
+    }
+    if (r.limit !== undefined) {
+      const n = Number(r.limit);
+      if (!Number.isInteger(n) || n <= 0 || n > 50) {
+        throw new Error("limit must be a positive integer ≤ 50");
+      }
+      out.limit = n;
+    }
+    return out;
+  })
+  .handler(
+    withErrorLogging(
+      "getFollowFeedFn",
+      async ({ data }): Promise<FollowFeedPayload> => {
+        const limit = data.limit ?? 20;
+        const before = data.before ? new Date(data.before) : null;
+        const database = await getDb();
+        const me = await getSessionUser();
+
+        // Suggestions are always loaded — even for signed-in users
+        // with active feeds, we want them available for the
+        // "discover more creators" footer. Cheap query (cap 6) so the
+        // redundancy is fine.
+        const suggestions = await loadFeedSuggestions(database, me?.id ?? null);
+
+        if (!me) {
+          return {
+            events: [],
+            suggestions,
+            nextCursor: null,
+            signedIn: false,
+            followingCount: 0,
+          };
+        }
+
+        // Followee set. Single round-trip then we hold the array in
+        // memory for the two stream queries. Empty array short-
+        // circuits — Postgres handles `IN ()` poorly and there's
+        // nothing to fetch anyway.
+        const followeeRows = await database
+          .select({ id: follows.followeeId })
+          .from(follows)
+          .where(eq(follows.followerId, me.id));
+        const followeeIds = followeeRows.map((r) => r.id);
+
+        if (followeeIds.length === 0) {
+          return {
+            events: [],
+            suggestions,
+            nextCursor: null,
+            signedIn: true,
+            followingCount: 0,
+          };
+        }
+
+        // Over-fetch each stream so the merge has enough material to
+        // hit `limit` after combination. limit*2 + buffer of 5 covers
+        // the case where the merge boundary sits right at the cap.
+        const overFetch = limit * 2 + 5;
+
+        const [publishes, pulls] = await Promise.all([
+          loadPackPublishedEvents(database, followeeIds, before, overFetch),
+          loadLegendaryPullEvents(database, followeeIds, before, overFetch),
+        ]);
+
+        const events = mergeFeedEvents(publishes, pulls, limit);
+
+        // Cursor = timestamp of the last item, or null when we
+        // exhausted both streams. We can't tell with certainty that
+        // we're done without another query, but if either stream
+        // returned fewer than `overFetch` rows AND the merge consumed
+        // every event, there's no more. Conservative approach: only
+        // emit a cursor when we filled `limit`, since that's the
+        // signal the client uses to fetch more.
+        const nextCursor =
+          events.length === limit ? events[events.length - 1].timestamp : null;
+
+        return {
+          events,
+          suggestions,
+          nextCursor,
+          signedIn: true,
+          followingCount: followeeIds.length,
+        };
+      },
+    ),
+  );
+
+/**
+ * Trending public packs (re-derived 7-day rip count, same logic as
+ * `listPublicPacksFn`) excluding the viewer's own packs. Capped at 6
+ * since the empty-state surface is small and we don't want to hit the
+ * DB hard for a footer banner.
+ */
+async function loadFeedSuggestions(
+  database: Awaited<ReturnType<typeof getDb>>,
+  myId: string | null,
+): Promise<FeedSuggestion[]> {
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const trendingExpr = sql<number>`(
+    SELECT COUNT(*)::int
+    FROM ${packRips}
+    WHERE ${packRips.packId} = ${packs.id}
+      AND ${packRips.rippedAt} > ${weekAgo}
+  )`;
+
+  const conditions = [
+    sql`${packs.creatorId} IS NOT NULL`,
+    eq(packs.isPublic, true),
+  ];
+  if (myId) conditions.push(sql`${packs.creatorId} <> ${myId}`);
+
+  const rows = await database
+    .select({
+      id: packs.id,
+      slug: packs.slug,
+      name: packs.name,
+      coverImageUrl: packs.coverImageUrl,
+      genreTags: packs.genreTags,
+      creatorUsername: users.username,
+    })
+    .from(packs)
+    .innerJoin(users, eq(packs.creatorId, users.id))
+    .where(and(...conditions))
+    .orderBy(desc(trendingExpr), desc(packs.publishedAt))
+    .limit(6);
+
+  return rows.map((r) => ({ ...r, genreTags: r.genreTags ?? [] }));
+}
+
+/**
+ * Pack-published events from followees. Filters by `creator_id IN
+ * (followees) AND is_public = true AND published_at IS NOT NULL`,
+ * applies the optional `before` cursor, and orders by `published_at`
+ * desc. Joins `users` for actor display + a correlated count of
+ * member books.
+ */
+async function loadPackPublishedEvents(
+  database: Awaited<ReturnType<typeof getDb>>,
+  followeeIds: ReadonlyArray<string>,
+  before: Date | null,
+  limit: number,
+): Promise<PackPublishedEvent[]> {
+  const conditions = [
+    inArray(packs.creatorId, [...followeeIds]),
+    eq(packs.isPublic, true),
+    sql`${packs.publishedAt} IS NOT NULL`,
+  ];
+  if (before) conditions.push(lt(packs.publishedAt, before));
+
+  const rows = await database
+    .select({
+      packId: packs.id,
+      slug: packs.slug,
+      name: packs.name,
+      description: packs.description,
+      coverImageUrl: packs.coverImageUrl,
+      genreTags: packs.genreTags,
+      publishedAt: packs.publishedAt,
+      bookCount: sql<number>`(
+        SELECT COUNT(*)::int FROM ${packBooks}
+        WHERE ${packBooks.packId} = ${packs.id}
+      )`,
+      actor: {
+        id: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+      },
+    })
+    .from(packs)
+    .innerJoin(users, eq(packs.creatorId, users.id))
+    .where(and(...conditions))
+    .orderBy(desc(packs.publishedAt))
+    .limit(limit);
+
+  return rows.map((r) => ({
+    type: "pack_published" as const,
+    // publishedAt is non-null per the WHERE clause; the `!` here is
+    // load-bearing — Drizzle's column is typed as nullable but the
+    // filter guarantees presence at runtime.
+    timestamp: r.publishedAt!.getTime(),
+    id: `pub:${r.packId}`,
+    actor: r.actor,
+    pack: {
+      id: r.packId,
+      slug: r.slug,
+      name: r.name,
+      description: r.description,
+      coverImageUrl: r.coverImageUrl,
+      genreTags: r.genreTags ?? [],
+      bookCount: r.bookCount,
+    },
+  }));
+}
+
+/**
+ * Legendary-pull events from followees. We unnest each rip's
+ * `pulled_book_ids` array, join `books` to find legendaries, and
+ * group back by rip so a multi-legendary rip is one event. The query
+ * also joins `packs` for pack identity + `users` (twice: once for the
+ * ripping user, once for the pack creator's username when the pack is
+ * a user pack).
+ *
+ * Aggregation is done in SQL via array_agg so we get one row per rip
+ * with a `cards` payload — keeps the JS map step trivial.
+ */
+async function loadLegendaryPullEvents(
+  database: Awaited<ReturnType<typeof getDb>>,
+  followeeIds: ReadonlyArray<string>,
+  before: Date | null,
+  limit: number,
+): Promise<LegendaryPullEvent[]> {
+  // Subquery: per-rip aggregation of legendary cards. We select the
+  // rip + actor + pack columns, then aggregate the legendary book
+  // metadata via array_agg. The HAVING clause drops rips with zero
+  // legendaries — the WHERE on rarity already filters but the
+  // aggregate still produces a row per rip if any joined book matched.
+  // No it doesn't — the inner JOIN against books-with-rarity-legendary
+  // means rips with no legendary books produce no rows at all, so a
+  // GROUP BY collapses to non-empty groups only. HAVING is a safety net.
+  //
+  // Drizzle doesn't expose array_agg ergonomically through its query
+  // builder when paired with cross-table joins on uuid arrays, so we
+  // drop to raw SQL for the aggregate. Bind params keep this safe.
+  const beforeCond = before ? sql`AND pr.ripped_at < ${before}` : sql``;
+  const followeeArray = sql.raw(
+    `ARRAY[${followeeIds.map((id) => `'${id.replace(/'/g, "''")}'::uuid`).join(",")}]`,
+  );
+
+  // Sanity: followeeIds is already validated as a non-empty array of
+  // UUIDs by the caller. The single-quote escape is belt-and-braces
+  // — Postgres uuids never contain quotes, but we don't want to bet
+  // on the input shape staying static.
+
+  const result = await database.execute<{
+    rip_id: string;
+    ripped_at: Date;
+    pack_id: string;
+    pack_slug: string;
+    pack_name: string;
+    pack_creator_username: string | null;
+    actor_id: string;
+    actor_username: string;
+    actor_display_name: string | null;
+    actor_avatar_url: string | null;
+    cards: Array<{
+      book_id: string;
+      title: string;
+      cover_url: string | null;
+      authors: string[];
+    }>;
+  }>(sql`
+    SELECT
+      pr.id AS rip_id,
+      pr.ripped_at,
+      p.id AS pack_id,
+      p.slug AS pack_slug,
+      p.name AS pack_name,
+      pcu.username AS pack_creator_username,
+      au.id AS actor_id,
+      au.username AS actor_username,
+      au.display_name AS actor_display_name,
+      au.avatar_url AS actor_avatar_url,
+      jsonb_agg(
+        jsonb_build_object(
+          'book_id', b.id,
+          'title', b.title,
+          'cover_url', b.cover_url,
+          'authors', b.authors
+        )
+        ORDER BY b.title
+      ) AS cards
+    FROM pack_rips pr
+    INNER JOIN users au ON au.id = pr.user_id
+    INNER JOIN packs p ON p.id = pr.pack_id
+    LEFT JOIN users pcu ON pcu.id = p.creator_id
+    INNER JOIN LATERAL unnest(pr.pulled_book_ids) AS pulled_id ON true
+    INNER JOIN books b ON b.id = pulled_id AND b.rarity = 'legendary'
+    WHERE pr.user_id = ANY(${followeeArray})
+      ${beforeCond}
+    GROUP BY pr.id, pr.ripped_at, p.id, p.slug, p.name, pcu.username,
+             au.id, au.username, au.display_name, au.avatar_url
+    ORDER BY pr.ripped_at DESC
+    LIMIT ${limit}
+  `);
+
+  // Drizzle's `execute` returns the driver's row shape, which for
+  // postgres-js comes back as an array on the result itself. Some
+  // driver versions wrap it in `.rows`; handle both.
+  const rows = (Array.isArray(result) ? result : result.rows) as Array<{
+    rip_id: string;
+    ripped_at: Date;
+    pack_id: string;
+    pack_slug: string;
+    pack_name: string;
+    pack_creator_username: string | null;
+    actor_id: string;
+    actor_username: string;
+    actor_display_name: string | null;
+    actor_avatar_url: string | null;
+    cards: Array<{
+      book_id: string;
+      title: string;
+      cover_url: string | null;
+      authors: string[];
+    }>;
+  }>;
+
+  return rows.map((r) => ({
+    type: "legendary_pull" as const,
+    timestamp:
+      r.ripped_at instanceof Date
+        ? r.ripped_at.getTime()
+        : new Date(r.ripped_at).getTime(),
+    id: `pull:${r.rip_id}`,
+    actor: {
+      id: r.actor_id,
+      username: r.actor_username,
+      displayName: r.actor_display_name,
+      avatarUrl: r.actor_avatar_url,
+    },
+    pack: {
+      id: r.pack_id,
+      slug: r.pack_slug,
+      name: r.pack_name,
+      creatorUsername: r.pack_creator_username,
+    },
+    cards: r.cards.map((c) => ({
+      bookId: c.book_id,
+      title: c.title,
+      coverUrl: c.cover_url,
+      authors: c.authors ?? [],
+    })),
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Test surface
 //
 // Exposed via `_internals` rather than direct export so the file's
@@ -283,4 +812,4 @@ export const getFollowStateFn = createServerFn({ method: "GET" })
 // used in `src/lib/economy/ledger.ts` and `config.ts`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const _internals = { coerceUsernameInput };
+export const _internals = { coerceUsernameInput, mergeFeedEvents };
