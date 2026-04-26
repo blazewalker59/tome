@@ -32,7 +32,7 @@ import { and, asc, desc, eq, gt, ilike, inArray, isNull, or, sql } from "drizzle
 
 import { getDb } from "@/db/client";
 import { books, packBooks, packRips, packs, users } from "@/db/schema";
-import { requireSessionUser } from "@/lib/auth/session";
+import { getSessionUser, requireSessionUser } from "@/lib/auth/session";
 import { getEconomy } from "@/lib/economy/config";
 import type { Rarity } from "@/lib/packs/composition";
 import { checkPackComposition } from "@/lib/packs/composition";
@@ -1148,6 +1148,168 @@ export const getPublicProfileFn = createServerFn({ method: "GET" })
             publishedAt: p.publishedAt?.getTime() ?? null,
           })),
         };
+      },
+    ),
+  );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Discover — list public, creator-authored packs
+//
+// Drives the "Recently shared by community" carousel on /rip. Sorted
+// by trending — rip count over the last 7 days — re-derived from
+// `pack_rips` on every read.
+//
+// Why re-derive instead of using `packs.rip_count_week`?
+//   • The denormalized counter is bumped on every rip but never
+//     decays. Without a scheduled reset job it grows unbounded and
+//     "trending this week" effectively means "trending all-time".
+//     Computing the window on read costs one extra aggregate (against
+//     the new `pack_rips_pack_idx` index) and gives an honest signal.
+//   • Treating `rip_count_week` as a write-through cache rather than
+//     the source of truth means a future cron can refresh it without
+//     this read path changing — and if the cache drifts it self-heals
+//     because nothing reads it.
+//
+// The list excludes the caller's own packs when signed in: the
+// section is meant for discovery, and a creator seeing their own pack
+// in "recently shared by community" feels broken. Anonymous callers
+// see everything.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PublicPackSummary {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  coverImageUrl: string | null;
+  genreTags: ReadonlyArray<string>;
+  publishedAt: number | null;
+  bookCount: number;
+  /** Rip count in the trailing 7-day window. Used for sorting; the
+   *  UI may also surface it as a "🔥 N rips this week" chip. */
+  ripsThisWeek: number;
+  creator: {
+    id: string;
+    username: string;
+    displayName: string | null;
+    avatarUrl: string | null;
+  };
+}
+
+export interface ListPublicPacksInput {
+  /** Page size cap. Defaults to 20; the carousel only shows ~5–10
+   *  but a higher ceiling lets a future grid view reuse this fn. */
+  limit?: number;
+  /**
+   * Sort order:
+   *   - `trending` (default): 7-day rip count desc, then publishedAt
+   *     desc as a tie-breaker so brand-new packs aren't buried by
+   *     established ones with zero rips.
+   *   - `recent`: publishedAt desc only — useful for a "fresh drops"
+   *     view if we ever expose one.
+   */
+  sort?: "trending" | "recent";
+}
+
+export const listPublicPacksFn = createServerFn({ method: "GET" })
+  .inputValidator((raw: unknown): ListPublicPacksInput => {
+    if (raw === undefined || raw === null) return {};
+    if (typeof raw !== "object") {
+      throw new Error("listPublicPacksFn expects an object or undefined");
+    }
+    const r = raw as Record<string, unknown>;
+    const out: ListPublicPacksInput = {};
+    if (r.limit !== undefined) {
+      const n = Number(r.limit);
+      if (!Number.isInteger(n) || n <= 0 || n > 100) {
+        throw new Error("limit must be a positive integer ≤ 100");
+      }
+      out.limit = n;
+    }
+    if (r.sort !== undefined) {
+      if (r.sort !== "trending" && r.sort !== "recent") {
+        throw new Error("sort must be 'trending' or 'recent'");
+      }
+      out.sort = r.sort;
+    }
+    return out;
+  })
+  .handler(
+    withErrorLogging(
+      "listPublicPacksFn",
+      async ({ data }): Promise<ReadonlyArray<PublicPackSummary>> => {
+        const limit = data.limit ?? 20;
+        const sort = data.sort ?? "trending";
+        const database = await getDb();
+        const me = await getSessionUser();
+
+        // 7-day window for the trending counter. Captured once per
+        // request so the boundary doesn't drift between subselect
+        // and ORDER BY (would only matter at midnight, but cheap to
+        // be correct).
+        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+        // Re-derived counter as a correlated subselect. The
+        // `pack_rips_pack_idx` covers (pack_id, ripped_at) so the
+        // planner can do an index range scan per pack. Cast to int
+        // because COUNT(*) returns bigint and we want a JS number on
+        // the wire.
+        const ripsThisWeekExpr = sql<number>`(
+          SELECT COUNT(*)::int
+          FROM ${packRips}
+          WHERE ${packRips.packId} = ${packs.id}
+            AND ${packRips.rippedAt} > ${weekAgo}
+        )`;
+
+        const conditions = [
+          // creator_id NOT NULL → user-built (not editorial).
+          sql`${packs.creatorId} IS NOT NULL`,
+          eq(packs.isPublic, true),
+        ];
+        if (me) {
+          // Hide the caller's own packs from the discovery surface.
+          // Their own packs already live on /me/packs; surfacing them
+          // here makes the "community" carousel feel mis-labeled.
+          conditions.push(sql`${packs.creatorId} <> ${me.id}`);
+        }
+
+        const orderBy =
+          sort === "trending"
+            ? [desc(ripsThisWeekExpr), desc(packs.publishedAt)]
+            : [desc(packs.publishedAt)];
+
+        const rows = await database
+          .select({
+            id: packs.id,
+            slug: packs.slug,
+            name: packs.name,
+            description: packs.description,
+            coverImageUrl: packs.coverImageUrl,
+            genreTags: packs.genreTags,
+            publishedAt: packs.publishedAt,
+            bookCount: sql<number>`(
+              SELECT COUNT(*)::int FROM ${packBooks}
+              WHERE ${packBooks.packId} = ${packs.id}
+            )`,
+            ripsThisWeek: ripsThisWeekExpr,
+            creator: {
+              id: users.id,
+              username: users.username,
+              displayName: users.displayName,
+              avatarUrl: users.avatarUrl,
+            },
+          })
+          .from(packs)
+          .innerJoin(users, eq(packs.creatorId, users.id))
+          .where(and(...conditions))
+          .orderBy(...orderBy)
+          .limit(limit);
+
+        return rows.map((r) => ({
+          ...r,
+          genreTags: r.genreTags ?? [],
+          publishedAt: r.publishedAt?.getTime() ?? null,
+        }));
       },
     ),
   );

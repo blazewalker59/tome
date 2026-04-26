@@ -3,6 +3,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion, type PanInfo } from "motion/react";
 import { Sparkles } from "lucide-react";
 import { getRipPacksFn, getShardBalanceFn, type PackSummary } from "@/server/collection";
+import { listPublicPacksFn, type PublicPackSummary } from "@/server/user-packs";
 import { packGradient, packBoxShadow } from "@/lib/packs/gradient";
 
 /**
@@ -39,8 +40,19 @@ import { packGradient, packBoxShadow } from "@/lib/packs/gradient";
  */
 export const Route = createFileRoute("/rip/")({
   loader: async () => {
-    const [packs, shardInfo] = await Promise.all([getRipPacksFn(), getShardBalanceFn()]);
-    return { packs, shards: shardInfo?.shards ?? null };
+    const [packs, shardInfo, communityPacks] = await Promise.all([
+      getRipPacksFn(),
+      getShardBalanceFn(),
+      // Trending = 7-day rip count, re-derived on read (see fn doc).
+      // Cap at 10 so the carousel stays scannable; the section is a
+      // teaser into a future full Discover page, not a leaderboard.
+      listPublicPacksFn({ data: { sort: "trending", limit: 10 } }),
+    ]);
+    return {
+      packs,
+      shards: shardInfo?.shards ?? null,
+      communityPacks,
+    };
   },
   component: RipPickerPage,
 });
@@ -51,17 +63,36 @@ export const Route = createFileRoute("/rip/")({
 // the carousel, and it falls apart with one item on a black stage.
 const MIN_SLOTS = 3;
 
-type Slot = { kind: "pack"; pack: PackSummary } | { kind: "placeholder"; id: string };
+// Editorial slot: real packs from `getRipPacksFn`, padded with
+// placeholders to MIN_SLOTS.
+type EditorialSlot =
+  | { kind: "pack"; pack: PackSummary }
+  | { kind: "placeholder"; id: string };
+
+// Community slot: real public user packs, or placeholders when the
+// section is empty. Carries the creator's username so the centered
+// metadata can show "by @username" and link to the public pack page.
+type CommunitySlot =
+  | { kind: "pack"; pack: PublicPackSummary }
+  | { kind: "placeholder"; id: string };
+
+// Shared shape the carousel actually consumes — both editorial and
+// community slots conform to this minimal contract. Per-section
+// metadata renderers branch on `pack` vs `placeholder` and on the
+// concrete pack shape via the parent's closure.
+type Slot =
+  | { kind: "pack"; pack: PackSummary | PublicPackSummary }
+  | { kind: "placeholder"; id: string };
 
 function RipPickerPage() {
-  const { packs, shards } = Route.useLoaderData();
+  const { packs, shards, communityPacks } = Route.useLoaderData();
   const navigate = useNavigate();
 
   // Editorial slots = real packs + placeholders padded to MIN_SLOTS.
   // Stable ids on placeholders so motion layout effects have a key
   // to track.
-  const editorialSlots = useMemo<Slot[]>(() => {
-    const real = packs.map<Slot>((pack) => ({ kind: "pack", pack }));
+  const editorialSlots = useMemo<EditorialSlot[]>(() => {
+    const real = packs.map<EditorialSlot>((pack) => ({ kind: "pack", pack }));
     const padded = [...real];
     let i = 0;
     while (padded.length < MIN_SLOTS) {
@@ -70,18 +101,26 @@ function RipPickerPage() {
     return padded;
   }, [packs]);
 
-  // Community slots = all placeholders for now. Sized intentionally
-  // (5) so the carousel has visible neighbours on either side of the
-  // centered tile — same peek-in framing as editorial. When the
-  // user-pack feed lands these become real rows.
-  const communitySlots = useMemo<Slot[]>(
-    () =>
-      Array.from({ length: 5 }, (_, i) => ({
+  // Community slots: real public packs when any exist, otherwise a
+  // row of placeholders so the section still has a visible carousel
+  // (matches the original "design slot is real" intent). When real
+  // packs are present we still pad to MIN_SLOTS so a single pack
+  // doesn't sit alone on the stage with no peek-in neighbours.
+  const communitySlots = useMemo<CommunitySlot[]>(() => {
+    if (communityPacks.length === 0) {
+      return Array.from({ length: 5 }, (_, i) => ({
         kind: "placeholder",
         id: `community-${i}`,
-      })),
-    [],
-  );
+      }));
+    }
+    const real = communityPacks.map<CommunitySlot>((pack) => ({ kind: "pack", pack }));
+    const padded = [...real];
+    let i = 0;
+    while (padded.length < MIN_SLOTS) {
+      padded.push({ kind: "placeholder", id: `community-pad-${i++}` });
+    }
+    return padded;
+  }, [communityPacks]);
 
   return (
     // Hub layout: pinned to the viewport between header and bottom
@@ -165,22 +204,94 @@ function RipPickerPage() {
 
       {/* ----- Recently shared by community ----- */}
       <section aria-labelledby="rip-community-heading">
-        <SectionHeading id="rip-community-heading" kicker="Coming soon">
+        <SectionHeading
+          id="rip-community-heading"
+          kicker={communityPacks.length === 0 ? "Coming soon" : "Trending this week"}
+        >
           Recently shared by community
         </SectionHeading>
 
-        {/* Same carousel, all-placeholder slots, smaller stage so it
-            visually subordinates to editorial without losing the
-            peek-in framing. No metadata renderer — the trailing
-            "start building" link below is the section's CTA. */}
+        {/* Same carousel, smaller stage so it visually subordinates
+            to editorial without losing the peek-in framing. When real
+            community packs exist, tapping the centered tile opens the
+            public pack page (`/u/$username/$slug`) — the rip flow
+            from there mirrors editorial. The section's metadata
+            renderer surfaces creator attribution + a "🔥 N rips" chip
+            so the trending signal isn't invisible. */}
         <PackCarousel
           slots={communitySlots}
           stageHeight="clamp(300px, 44vh, 380px)"
           tileWidth="min(48vw, 180px)"
+          onActivate={(slot) => {
+            if (slot.kind !== "pack") return;
+            // Only community slots have a `creator`; the type guard
+            // narrows via the field's presence rather than a tag so
+            // the carousel stays generic over both pack shapes.
+            const pack = slot.pack;
+            if (!("creator" in pack)) return;
+            navigate({
+              to: "/u/$username/$slug",
+              params: { username: pack.creator.username, slug: pack.slug },
+            });
+          }}
+          renderMetadata={(slot) => {
+            if (slot.kind !== "pack") {
+              // Empty-state copy stays close to the placeholder
+              // tiles so the section reads as "nothing yet, but
+              // here's how to fill it".
+              return (
+                <p className="text-xs uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
+                  Be the first to share a pack
+                </p>
+              );
+            }
+            const pack = slot.pack;
+            // The community section only ever renders PublicPackSummary
+            // shapes (or placeholders), so the `creator` field is
+            // guaranteed when `kind === "pack"`. Editorial summaries
+            // never reach this renderer.
+            if (!("creator" in pack)) return null;
+            return (
+              <>
+                <h3 className="text-base font-semibold text-[var(--sea-ink)]">
+                  {pack.name}
+                </h3>
+                <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+                  by{" "}
+                  <Link
+                    to="/u/$username"
+                    params={{ username: pack.creator.username }}
+                    className="font-medium text-[var(--sea-ink)] underline decoration-dotted underline-offset-2"
+                  >
+                    @{pack.creator.username}
+                  </Link>
+                  {pack.ripsThisWeek > 0 && (
+                    <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--lagoon)_18%,transparent)] px-2 py-[1px] text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink)]">
+                      🔥 {pack.ripsThisWeek} rip
+                      {pack.ripsThisWeek === 1 ? "" : "s"} this week
+                    </span>
+                  )}
+                </p>
+                <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
+                  {pack.bookCount} books sealed
+                </p>
+                <Link
+                  to="/u/$username/$slug"
+                  params={{ username: pack.creator.username, slug: pack.slug }}
+                  className="btn-primary mt-3 inline-flex w-full max-w-[320px] items-center justify-center rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
+                >
+                  Open pack
+                </Link>
+              </>
+            );
+          }}
         />
 
         <p className="mt-4 text-center text-xs text-[var(--sea-ink-soft)]">
-          User-built packs will land here soon. Want to make one?{" "}
+          {communityPacks.length === 0
+            ? "User-built packs will land here as creators publish them."
+            : "More on the way."}{" "}
+          Want to make one?{" "}
           <Link
             to="/packs/new"
             className="font-medium text-[var(--sea-ink)] underline decoration-dotted underline-offset-2"
@@ -483,8 +594,19 @@ function PackCarouselItem({ slot, offset, tileWidth, onClick }: PackCarouselItem
  * slow loop with a long pause between passes, making the centered
  * pack feel alive without dominating the stage.
  * No tear interaction here; tapping just selects/navigates.
+ *
+ * Accepts both editorial (`PackSummary`) and community
+ * (`PublicPackSummary`) shapes via a structural prop type — the
+ * preview only needs the fields they share, so widening here keeps
+ * the carousel generic without a runtime branch.
  */
-function PackPreview({ pack, active }: { pack: PackSummary; active: boolean }) {
+function PackPreview({
+  pack,
+  active,
+}: {
+  pack: Pick<PackSummary, "slug" | "name" | "bookCount" | "coverImageUrl" | "genreTags">;
+  active: boolean;
+}) {
   const gradient = packGradient(pack.slug, pack.genreTags);
   // Cover art, when present, owns the seal — we skip the gradient,
   // sparkle field, and shimmer sweep so the photograph reads as the
