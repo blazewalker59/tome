@@ -805,6 +805,407 @@ async function loadLegendaryPullEvents(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Suggested creators (social-tab empty state)
+//
+// Surfaces *people* (not packs) for users with an empty feed. Ranking
+// is "recent activity" so an unrelated all-time leaderboard doesn't
+// freeze the same handful of names at the top forever.
+//
+// Score = (public packs published in last 30d) + (legendary pulls in
+// last 30d). Equal weights are intentional — both signals indicate
+// "this user is alive and creating," and tuning weights without a
+// real dataset is premature. We exclude the viewer's own account and
+// anyone they already follow so every suggestion is actionable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SUGGESTED_CREATOR_LOOKBACK_DAYS = 30;
+
+export interface SuggestedCreator {
+  id: string;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  /** Public packs published in the lookback window. */
+  packsPublished: number;
+  /** Legendary cards the user pulled in the lookback window. */
+  legendariesPulled: number;
+  /** Composite ranking score: `packsPublished + legendariesPulled`. Surfaced
+   *  so the UI can show the breakdown without recomputing it. */
+  score: number;
+}
+
+export interface SuggestedCreatorsPayload {
+  creators: ReadonlyArray<SuggestedCreator>;
+  /** True when the viewer is signed in. Anonymous viewers still get
+   *  suggestions (the social tab's signed-out empty state uses them
+   *  too) but the dedupe-against-already-followed step is skipped. */
+  signedIn: boolean;
+}
+
+export const getSuggestedCreatorsFn = createServerFn({ method: "GET" })
+  .inputValidator((raw: unknown): { limit?: number } => {
+    if (raw === undefined || raw === null) return {};
+    if (typeof raw !== "object") {
+      throw new Error("getSuggestedCreatorsFn expects an object or undefined");
+    }
+    const r = raw as Record<string, unknown>;
+    const out: { limit?: number } = {};
+    if (r.limit !== undefined) {
+      const n = Number(r.limit);
+      if (!Number.isInteger(n) || n <= 0 || n > 24) {
+        throw new Error("limit must be a positive integer ≤ 24");
+      }
+      out.limit = n;
+    }
+    return out;
+  })
+  .handler(
+    withErrorLogging(
+      "getSuggestedCreatorsFn",
+      async ({ data }): Promise<SuggestedCreatorsPayload> => {
+        const limit = data.limit ?? 6;
+        const database = await getDb();
+        const me = await getSessionUser();
+        const since = new Date(
+          Date.now() - SUGGESTED_CREATOR_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+        );
+
+        // Two correlated subqueries against the activity tables. We
+        // could compute either side standalone with a GROUP BY, but
+        // pre-aggregating here keeps the WHERE/ORDER/LIMIT fused into
+        // a single round-trip and matches the existing trending-pack
+        // pattern in `loadFeedSuggestions`. Drizzle's nested-query
+        // composition is awkward enough that raw SQL is clearer.
+        //
+        // Exclusion clauses:
+        //   • viewer themself (no point suggesting yourself)
+        //   • viewer's existing followees (every suggestion should be
+        //     a *new* potential follow)
+        // The "score > 0" filter drops dormant accounts; without it
+        // every user in the system would tie at zero on a fresh DB.
+        const excludeId = me?.id ?? null;
+        const result = await database.execute<{
+          id: string;
+          username: string;
+          display_name: string | null;
+          avatar_url: string | null;
+          packs_published: number;
+          legendaries_pulled: number;
+          score: number;
+        }>(sql`
+          WITH pack_counts AS (
+            SELECT creator_id AS user_id, COUNT(*)::int AS n
+            FROM packs
+            WHERE creator_id IS NOT NULL
+              AND is_public = true
+              AND published_at IS NOT NULL
+              AND published_at > ${since}
+            GROUP BY creator_id
+          ),
+          pull_counts AS (
+            SELECT pr.user_id, COUNT(*)::int AS n
+            FROM pack_rips pr
+            INNER JOIN LATERAL unnest(pr.pulled_book_ids) AS pulled_id ON true
+            INNER JOIN books b ON b.id = pulled_id AND b.rarity = 'legendary'
+            WHERE pr.ripped_at > ${since}
+            GROUP BY pr.user_id
+          ),
+          combined AS (
+            SELECT
+              u.id,
+              u.username,
+              u.display_name,
+              u.avatar_url,
+              COALESCE(pc.n, 0) AS packs_published,
+              COALESCE(plc.n, 0) AS legendaries_pulled,
+              COALESCE(pc.n, 0) + COALESCE(plc.n, 0) AS score
+            FROM users u
+            LEFT JOIN pack_counts pc ON pc.user_id = u.id
+            LEFT JOIN pull_counts plc ON plc.user_id = u.id
+            WHERE COALESCE(pc.n, 0) + COALESCE(plc.n, 0) > 0
+              ${excludeId ? sql`AND u.id <> ${excludeId}` : sql``}
+              ${
+                excludeId
+                  ? sql`AND u.id NOT IN (
+                          SELECT followee_id FROM follows
+                          WHERE follower_id = ${excludeId}
+                        )`
+                  : sql``
+              }
+          )
+          SELECT id, username, display_name, avatar_url,
+                 packs_published, legendaries_pulled, score
+          FROM combined
+          ORDER BY score DESC, username ASC
+          LIMIT ${limit}
+        `);
+
+        const rows = (Array.isArray(result) ? result : result.rows) as Array<{
+          id: string;
+          username: string;
+          display_name: string | null;
+          avatar_url: string | null;
+          packs_published: number;
+          legendaries_pulled: number;
+          score: number;
+        }>;
+
+        return {
+          creators: rows.map((r) => ({
+            id: r.id,
+            username: r.username,
+            displayName: r.display_name,
+            avatarUrl: r.avatar_url,
+            packsPublished: r.packs_published,
+            legendariesPulled: r.legendaries_pulled,
+            score: r.score,
+          })),
+          signedIn: me !== null,
+        };
+      },
+    ),
+  );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// My rip history (You-tab feed)
+//
+// One event per rip the viewer has done, newest first, with a
+// "highlight" card chosen by `pickHighlightCard` and the full pulled-
+// card payload available for an expandable view. Auth-required: the
+// You tab only renders when signed in.
+//
+// Cursor pagination mirrors the follow feed: `before` = epoch ms of
+// `ripped_at`, returned events are strictly older. We use the existing
+// `pack_rips_user_idx` (user_id, ripped_at) index — no schema change.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface MyRipCard {
+  bookId: string;
+  title: string;
+  coverUrl: string | null;
+  authors: ReadonlyArray<string>;
+  rarity: "common" | "uncommon" | "rare" | "foil" | "legendary";
+}
+
+export interface MyRipEvent {
+  /** Stable key for React lists. */
+  id: string;
+  /** Epoch ms — `pack_rips.ripped_at`. */
+  timestamp: number;
+  pack: {
+    id: string;
+    slug: string;
+    name: string;
+    /** Null = editorial; non-null = user pack. The route uses this
+     *  to pick `/rip/$slug` vs `/u/$username/$slug` link targets. */
+    creatorUsername: string | null;
+  };
+  /** All books pulled in this rip, ordered by rarity desc then title.
+   *  The first entry is also surfaced as `highlight` for fast access. */
+  cards: ReadonlyArray<MyRipCard>;
+  /** Convenience: the highest-rarity card from `cards` (tiebreak by
+   *  title asc — same order as the array's first entry). */
+  highlight: MyRipCard;
+  /** Total count from `pulled_book_ids`. Should equal `cards.length`
+   *  unless a book was deleted post-rip; surfacing both lets the UI
+   *  say "5 cards" honestly even if one couldn't be hydrated. */
+  totalCardCount: number;
+  /** Number of cards from this rip that were dupes. Pulled directly
+   *  from `pack_rips.duplicates` for the existing audit log. */
+  duplicateCount: number;
+  /** Shards awarded by this rip (mostly from dupe conversions plus
+   *  any pity bonuses). Snapshot from `pack_rips.shards_awarded`. */
+  shardsAwarded: number;
+}
+
+export interface MyRipsPayload {
+  events: ReadonlyArray<MyRipEvent>;
+  nextCursor: number | null;
+}
+
+const RARITY_ORDER: Record<MyRipCard["rarity"], number> = {
+  legendary: 5,
+  foil: 4,
+  rare: 3,
+  uncommon: 2,
+  common: 1,
+};
+
+/**
+ * Pick the headline card for a rip card list. Highest rarity wins;
+ * ties broken by title asc so the same rip always picks the same
+ * highlight (deterministic test output, stable visuals across
+ * navigations). Pure for unit testing.
+ *
+ * Returns the input slice in highlight-first order so the caller
+ * doesn't need a second sort pass.
+ */
+function sortRipCards(cards: ReadonlyArray<MyRipCard>): MyRipCard[] {
+  return [...cards].sort((a, b) => {
+    const ra = RARITY_ORDER[a.rarity];
+    const rb = RARITY_ORDER[b.rarity];
+    if (ra !== rb) return rb - ra;
+    return a.title < b.title ? -1 : a.title > b.title ? 1 : 0;
+  });
+}
+
+export const getMyRipsFn = createServerFn({ method: "GET" })
+  .inputValidator((raw: unknown): FollowFeedInput => {
+    // Same shape as FollowFeedInput — `before` epoch ms + `limit`.
+    // Reusing the type avoids the duplicate validator shape; the
+    // semantics are identical (cursor + page size).
+    if (raw === undefined || raw === null) return {};
+    if (typeof raw !== "object") {
+      throw new Error("getMyRipsFn expects an object or undefined");
+    }
+    const r = raw as Record<string, unknown>;
+    const out: FollowFeedInput = {};
+    if (r.before !== undefined) {
+      const n = Number(r.before);
+      if (!Number.isFinite(n) || n <= 0) {
+        throw new Error("before must be a positive epoch ms");
+      }
+      out.before = n;
+    }
+    if (r.limit !== undefined) {
+      const n = Number(r.limit);
+      if (!Number.isInteger(n) || n <= 0 || n > 50) {
+        throw new Error("limit must be a positive integer ≤ 50");
+      }
+      out.limit = n;
+    }
+    return out;
+  })
+  .handler(
+    withErrorLogging(
+      "getMyRipsFn",
+      async ({ data }): Promise<MyRipsPayload> => {
+        const limit = data.limit ?? 20;
+        const before = data.before ? new Date(data.before) : null;
+        const me = await requireSessionUser();
+        const database = await getDb();
+
+        // Single round-trip: rips for the viewer + per-rip card
+        // hydration via lateral unnest + books join. Same shape as
+        // the legendary-pull query but without the rarity filter (we
+        // want every card here) and ordered by ripped_at, not pack.
+        // Drops to raw SQL for the array unnest + jsonb_agg combo —
+        // Drizzle's builder doesn't compose this cleanly.
+        const beforeCond = before ? sql`AND pr.ripped_at < ${before}` : sql``;
+        const result = await database.execute<{
+          rip_id: string;
+          ripped_at: Date;
+          duplicates: number;
+          shards_awarded: number;
+          pulled_count: number;
+          pack_id: string;
+          pack_slug: string;
+          pack_name: string;
+          pack_creator_username: string | null;
+          cards: Array<{
+            book_id: string;
+            title: string;
+            cover_url: string | null;
+            authors: string[];
+            rarity: MyRipCard["rarity"];
+          }> | null;
+        }>(sql`
+          SELECT
+            pr.id AS rip_id,
+            pr.ripped_at,
+            pr.duplicates,
+            pr.shards_awarded,
+            COALESCE(array_length(pr.pulled_book_ids, 1), 0) AS pulled_count,
+            p.id AS pack_id,
+            p.slug AS pack_slug,
+            p.name AS pack_name,
+            pcu.username AS pack_creator_username,
+            (
+              SELECT jsonb_agg(
+                jsonb_build_object(
+                  'book_id', b.id,
+                  'title', b.title,
+                  'cover_url', b.cover_url,
+                  'authors', b.authors,
+                  'rarity', b.rarity
+                )
+              )
+              FROM unnest(pr.pulled_book_ids) AS pulled_id
+              INNER JOIN books b ON b.id = pulled_id
+            ) AS cards
+          FROM pack_rips pr
+          INNER JOIN packs p ON p.id = pr.pack_id
+          LEFT JOIN users pcu ON pcu.id = p.creator_id
+          WHERE pr.user_id = ${me.id}
+            ${beforeCond}
+          ORDER BY pr.ripped_at DESC
+          LIMIT ${limit}
+        `);
+
+        const rows = (Array.isArray(result) ? result : result.rows) as Array<{
+          rip_id: string;
+          ripped_at: Date;
+          duplicates: number;
+          shards_awarded: number;
+          pulled_count: number;
+          pack_id: string;
+          pack_slug: string;
+          pack_name: string;
+          pack_creator_username: string | null;
+          cards: Array<{
+            book_id: string;
+            title: string;
+            cover_url: string | null;
+            authors: string[];
+            rarity: MyRipCard["rarity"];
+          }> | null;
+        }>;
+
+        const events: MyRipEvent[] = [];
+        for (const r of rows) {
+          const rawCards = (r.cards ?? []).map((c) => ({
+            bookId: c.book_id,
+            title: c.title,
+            coverUrl: c.cover_url,
+            authors: c.authors ?? [],
+            rarity: c.rarity,
+          }));
+          // Defensive: a rip with all-deleted books shouldn't render
+          // at all (no highlight to pick). The UI shouldn't hit this
+          // path — packs use FK with restrict — but books can in
+          // theory be soft-removed by an admin script.
+          if (rawCards.length === 0) continue;
+          const sorted = sortRipCards(rawCards);
+          const ts =
+            r.ripped_at instanceof Date
+              ? r.ripped_at.getTime()
+              : new Date(r.ripped_at).getTime();
+          events.push({
+            id: `myrip:${r.rip_id}`,
+            timestamp: ts,
+            pack: {
+              id: r.pack_id,
+              slug: r.pack_slug,
+              name: r.pack_name,
+              creatorUsername: r.pack_creator_username,
+            },
+            cards: sorted,
+            highlight: sorted[0],
+            totalCardCount: r.pulled_count,
+            duplicateCount: r.duplicates,
+            shardsAwarded: r.shards_awarded,
+          });
+        }
+
+        const nextCursor =
+          events.length === limit ? events[events.length - 1].timestamp : null;
+
+        return { events, nextCursor };
+      },
+    ),
+  );
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Test surface
 //
 // Exposed via `_internals` rather than direct export so the file's
@@ -812,4 +1213,10 @@ async function loadLegendaryPullEvents(
 // used in `src/lib/economy/ledger.ts` and `config.ts`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const _internals = { coerceUsernameInput, mergeFeedEvents };
+export const _internals = {
+  coerceUsernameInput,
+  mergeFeedEvents,
+  sortRipCards,
+  RARITY_ORDER,
+  SUGGESTED_CREATOR_LOOKBACK_DAYS,
+};

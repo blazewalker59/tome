@@ -20,7 +20,7 @@ import {
  * here makes a rename impossible to land silently.
  */
 
-const { coerceUsernameInput, mergeFeedEvents } = _internals;
+const { coerceUsernameInput, mergeFeedEvents, sortRipCards, RARITY_ORDER, SUGGESTED_CREATOR_LOOKBACK_DAYS } = _internals;
 
 describe("coerceUsernameInput", () => {
   it("returns trimmed username", () => {
@@ -146,5 +146,71 @@ describe("mergeFeedEvents", () => {
     const publishes = [makePub("a", 100)];
     const pulls = [makePull("b", 50)];
     expect(mergeFeedEvents(publishes, pulls, 0)).toEqual([]);
+  });
+});
+
+describe("sortRipCards", () => {
+  // Minimal card factory — sortRipCards only inspects rarity + title
+  // for ordering, so we don't need full book metadata.
+  const card = (
+    id: string,
+    title: string,
+    rarity: "common" | "uncommon" | "rare" | "foil" | "legendary",
+  ) => ({ bookId: id, title, coverUrl: null, authors: [], rarity });
+
+  it("sorts by rarity descending (legendary first)", () => {
+    const sorted = sortRipCards([
+      card("a", "A", "common"),
+      card("b", "B", "legendary"),
+      card("c", "C", "uncommon"),
+      card("d", "D", "foil"),
+      card("e", "E", "rare"),
+    ]);
+    // Picks the rarest card as highlight (sorted[0]).
+    expect(sorted.map((c) => c.rarity)).toEqual([
+      "legendary",
+      "foil",
+      "rare",
+      "uncommon",
+      "common",
+    ]);
+  });
+
+  it("breaks rarity ties by title ascending", () => {
+    const sorted = sortRipCards([
+      card("a", "Zelda", "rare"),
+      card("b", "Anna", "rare"),
+      card("c", "Mira", "rare"),
+    ]);
+    expect(sorted.map((c) => c.title)).toEqual(["Anna", "Mira", "Zelda"]);
+  });
+
+  it("does not mutate the input array", () => {
+    const input = [card("a", "Z", "common"), card("b", "A", "legendary")];
+    const snapshot = [...input];
+    sortRipCards(input);
+    expect(input).toEqual(snapshot);
+  });
+
+  it("handles empty input", () => {
+    expect(sortRipCards([])).toEqual([]);
+  });
+
+  it("RARITY_ORDER monotonically descends from legendary to common", () => {
+    // Pinned because the order is the contract for `sortRipCards`'s
+    // highlight pick. A bug here would silently demote legendaries.
+    expect(RARITY_ORDER.legendary).toBeGreaterThan(RARITY_ORDER.foil);
+    expect(RARITY_ORDER.foil).toBeGreaterThan(RARITY_ORDER.rare);
+    expect(RARITY_ORDER.rare).toBeGreaterThan(RARITY_ORDER.uncommon);
+    expect(RARITY_ORDER.uncommon).toBeGreaterThan(RARITY_ORDER.common);
+  });
+});
+
+describe("suggested creator config", () => {
+  it("lookback window matches the documented 30 days", () => {
+    // Pinned so a tweak to the constant is forced through review —
+    // the window directly affects what the empty-state surface shows
+    // and is referenced in the SQL window clause.
+    expect(SUGGESTED_CREATOR_LOOKBACK_DAYS).toBe(30);
   });
 });
