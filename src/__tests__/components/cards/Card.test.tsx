@@ -19,12 +19,21 @@ const sampleCard: CardData = {
 };
 
 describe("<Card>", () => {
-  it("renders title, authors, and the rarity label", () => {
+  it("renders title, authors, and the rarity label exactly once, on the back face", () => {
     renderWithProviders(<Card card={sampleCard} />);
-    // Title and authors appear on both card faces (front + back are both in DOM).
-    expect(screen.getAllByRole("heading", { name: /piranesi/i }).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Susanna Clarke").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Legendary").length).toBeGreaterThanOrEqual(1);
+    // The front face is a full-bleed cover with no text, so every piece of
+    // metadata resolves to exactly one node. These are singular `getBy*`
+    // queries on purpose — each throws on a second match, so reintroducing a
+    // title/author strip on the front face fails here rather than silently
+    // passing the way a ">= 1" assertion would.
+    //
+    // The title is checked twice, by role and by text: the role query pins it
+    // as a real heading, while the text query is element-agnostic and so also
+    // catches a duplicate rendered as a plain <p>.
+    expect(screen.getByRole("heading", { name: /piranesi/i })).toBeInTheDocument();
+    expect(screen.getByText("Piranesi")).toBeInTheDocument();
+    expect(screen.getByText("Susanna Clarke")).toBeInTheDocument();
+    expect(screen.getByText("Legendary")).toBeInTheDocument();
   });
 
   it("limits visible mood tags to 3", () => {
@@ -47,14 +56,30 @@ describe("<Card>", () => {
     expect(button.getAttribute("aria-label")).toContain("Susanna Clarke");
   });
 
-  it("keeps only one front face in DOM (back face is mirrored 3D, not duplicated content node)", async () => {
+  it("flips via transform only — both faces stay mounted, nothing is added or removed", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<Card card={sampleCard} />);
+    const { container } = renderWithProviders(<Card card={sampleCard} />);
     const button = screen.getByRole("button", { name: /piranesi/i });
-    // Title appears once on each face — both are in DOM (CSS backface flips).
-    expect(screen.getAllByText("Piranesi")).toHaveLength(2);
+
+    // The two faces are always both in the DOM; `[backface-visibility:hidden]`
+    // plus a rotateY transform is what hides one of them. Nothing is
+    // conditionally mounted, so the flip cannot drop or duplicate content.
+    //
+    // The cover is queried through the container because it renders with
+    // `alt=""` (it's decorative — the back face carries the real title), which
+    // makes it presentational and therefore invisible to role queries.
+    const faceContent = () => ({
+      covers: container.querySelectorAll("img").length,
+      titles: screen.getAllByText("Piranesi").length,
+      descriptions: screen.getAllByText(/infinite house of statues/i).length,
+    });
+
+    const before = faceContent();
+    // Front: one cover. Back: one title, one synopsis. No duplication anywhere.
+    expect(before).toEqual({ covers: 1, titles: 1, descriptions: 1 });
+
     await user.click(button);
-    // Click is a flip toggle; nothing is added or removed from the DOM.
-    expect(screen.getAllByText("Piranesi")).toHaveLength(2);
+
+    expect(faceContent()).toEqual(before);
   });
 });
