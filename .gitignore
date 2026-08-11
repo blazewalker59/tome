@@ -20,3 +20,4 @@ todos.json
 # access/refresh/id tokens, and password hashes — local-only, never committed.
 scripts/migration-data/
 coverage
+dist

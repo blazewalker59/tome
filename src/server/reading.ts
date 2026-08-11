@@ -31,7 +31,7 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
-import { and, desc, eq, gt, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, like, or, sql } from "drizzle-orm";
 
 import { fetchBookById, searchBooks } from "./hardcover";
 import { withErrorLogging } from "./_shared";
@@ -40,6 +40,7 @@ import type { Rarity } from "@/lib/packs/composition";
 import type { DemoteReason } from "@/lib/hardcover/rank";
 import type { ShardChangeResult } from "@/lib/economy/ledger";
 import { getDb } from "@/db/client";
+import { toAuthorsNeedle } from "@/db/authors";
 import { books, readingEntries, shardEvents } from "@/db/schema";
 import { getEconomy } from "@/lib/economy/config";
 import { grantShards } from "@/lib/economy/ledger";
@@ -439,177 +440,193 @@ export const upsertReadingEntryFn = createServerFn({ method: "POST" })
           throw new Error(`Book ${data.bookId} not found`);
         }
 
-        return await database.transaction(async (tx) => {
-          // Read current state. Used both to decide transitions and to
-          // stamp started_at / finished_at only on first entry into
-          // each status (so un-finishing and re-finishing doesn't
-          // overwrite the original timestamp).
-          const [prior] = await tx
-            .select({
-              status: readingEntries.status,
-              startedAt: readingEntries.startedAt,
-              finishedAt: readingEntries.finishedAt,
-              rating: readingEntries.rating,
-              note: readingEntries.note,
-            })
-            .from(readingEntries)
-            .where(
-              and(
-                eq(readingEntries.userId, user.id),
-                eq(readingEntries.bookId, data.bookId),
-              ),
-            )
-            .limit(1);
+        // ── Structure note (Neon → D1) ────────────────────────────────────
+        //
+        // This body used to run inside `database.transaction()`. D1 has no
+        // interactive transactions, so the steps now run sequentially against
+        // the plain client. Each individual write is still atomic on its own
+        // (the upsert is one statement; `grantShards` batches its ledger
+        // insert and balance refresh).
+        //
+        // What that gives up: if the shard grant fails after the entry upsert
+        // succeeds, the status change sticks without its shards, and the
+        // user won't get them later — `decideTransitionGrant` keys off the
+        // status *transition*, which has already happened.
+        //
+        // Accepted rather than engineered around. Making it atomic means
+        // inlining `grantShards`'s cap check and its partial-index conflict
+        // target here, duplicating the subtlest logic in the ledger into a
+        // second place, to close a window that costs a few shards on a
+        // transient database error. `recordRipFn` gets the full treatment
+        // because there the user has spent real currency; here they have not.
 
-          const now = new Date();
-          const desiredStatus: ReadingStatus =
-            data.status ??
-            (prior?.status as ReadingStatus | undefined) ??
-            "tbr";
+        // Read current state. Used both to decide transitions and to
+        // stamp started_at / finished_at only on first entry into
+        // each status (so un-finishing and re-finishing doesn't
+        // overwrite the original timestamp).
+        const [prior] = await database
+          .select({
+            status: readingEntries.status,
+            startedAt: readingEntries.startedAt,
+            finishedAt: readingEntries.finishedAt,
+            rating: readingEntries.rating,
+            note: readingEntries.note,
+          })
+          .from(readingEntries)
+          .where(
+            and(
+              eq(readingEntries.userId, user.id),
+              eq(readingEntries.bookId, data.bookId),
+            ),
+          )
+          .limit(1);
 
-          // Stamp transitions via the pure helper so the test suite
-          // can exercise the same rule in isolation.
-          const { startedAt: nextStartedAt, finishedAt: nextFinishedAt } =
-            computeReadingTimestamps(
-              desiredStatus,
-              prior
-                ? { startedAt: prior.startedAt, finishedAt: prior.finishedAt }
-                : undefined,
-              now,
-            );
+        const now = new Date();
+        const desiredStatus: ReadingStatus =
+          data.status ?? (prior?.status as ReadingStatus | undefined) ?? "tbr";
 
-          // Upsert the row. On insert we rely on the schema defaults
-          // for created_at; on update we explicitly bump updated_at.
-          if (prior) {
-            await tx
-              .update(readingEntries)
-              .set({
-                status: desiredStatus,
-                rating: data.rating !== undefined ? data.rating : prior.rating,
-                note: data.note !== undefined ? data.note : prior.note,
-                startedAt: nextStartedAt,
-                finishedAt: nextFinishedAt,
-                updatedAt: now,
-              })
-              .where(
-                and(
-                  eq(readingEntries.userId, user.id),
-                  eq(readingEntries.bookId, data.bookId),
-                ),
-              );
-          } else {
-            await tx.insert(readingEntries).values({
-              userId: user.id,
-              bookId: data.bookId,
+        // Stamp transitions via the pure helper so the test suite
+        // can exercise the same rule in isolation.
+        const { startedAt: nextStartedAt, finishedAt: nextFinishedAt } =
+          computeReadingTimestamps(
+            desiredStatus,
+            prior
+              ? { startedAt: prior.startedAt, finishedAt: prior.finishedAt }
+              : undefined,
+            now,
+          );
+
+        // Upsert the row. On insert we rely on the schema defaults
+        // for created_at; on update we explicitly bump updated_at.
+        if (prior) {
+          await database
+            .update(readingEntries)
+            .set({
               status: desiredStatus,
-              rating: data.rating ?? null,
-              note: data.note ?? null,
+              rating: data.rating !== undefined ? data.rating : prior.rating,
+              note: data.note !== undefined ? data.note : prior.note,
               startedAt: nextStartedAt,
               finishedAt: nextFinishedAt,
-              // created_at + updated_at default to now().
-            });
-          }
-
-          // Grant logic. Uses the pure transition helper to decide
-          // which grant — if any — applies, then gates finish grants
-          // behind the anti-farm window.
-          const grants: Array<ReadingGrant> = [];
-          let finishGuardSuppressed = false;
-          const oldStatus = prior?.status as ReadingStatus | undefined;
-          const transition = decideTransitionGrant(oldStatus, desiredStatus);
-          const cfg = await getEconomy();
-
-          if (transition === "start_reading") {
-            const r = await grantShards(
-              tx,
-              user.id,
-              "start_reading",
-              cfg.transitions.startReading.shards,
-              { bookId: data.bookId },
-            );
-            pushGrantIfApplied(grants, "start_reading", r);
-          } else if (transition === "finish_reading") {
-            // Guard BEFORE grantShards. Suppressing a grant is
-            // different from "granted 0" because the partial unique
-            // index on shard_events would then block future legitimate
-            // grants for this (user, book). Letting the row stay
-            // un-inserted preserves the once-per-book invariant: a
-            // legitimate finish later still qualifies.
-            //
-            // Use the transaction handle for this read, NOT the outer
-            // `database`. Our Neon pool runs with `max: 1`, so any
-            // query on the outer connection while the transaction is
-            // open will wait forever for the pool's single socket to
-            // free up — the exact hang we saw when users tapped
-            // Finished. The read is a plain SELECT on `shard_events`
-            // (different table than the one being written), so the
-            // transaction's snapshot gives us a consistent view
-            // without any lock contention.
-            const allowed = await shouldGrantFinish(tx, user.id, data.bookId);
-            if (allowed) {
-              const r = await grantShards(
-                tx,
-                user.id,
-                "finish_reading",
-                cfg.transitions.finishReading.shards,
-                { bookId: data.bookId },
-              );
-              pushGrantIfApplied(grants, "finish_reading", r);
-            } else {
-              finishGuardSuppressed = true;
-            }
-          }
-
-          // Re-read the row so the returned shape matches listReadingEntriesFn.
-          const [updated] = await tx
-            .select({
-              bookId: readingEntries.bookId,
-              status: readingEntries.status,
-              rating: readingEntries.rating,
-              note: readingEntries.note,
-              startedAt: readingEntries.startedAt,
-              finishedAt: readingEntries.finishedAt,
-              createdAt: readingEntries.createdAt,
-              updatedAt: readingEntries.updatedAt,
-              book: {
-                id: books.id,
-                title: books.title,
-                authors: books.authors,
-                coverUrl: books.coverUrl,
-                genre: books.genre,
-                rarity: books.rarity,
-              },
+              updatedAt: now,
             })
-            .from(readingEntries)
-            .innerJoin(books, eq(readingEntries.bookId, books.id))
             .where(
               and(
                 eq(readingEntries.userId, user.id),
                 eq(readingEntries.bookId, data.bookId),
               ),
-            )
-            .limit(1);
+            );
+        } else {
+          await database.insert(readingEntries).values({
+            userId: user.id,
+            bookId: data.bookId,
+            status: desiredStatus,
+            rating: data.rating ?? null,
+            note: data.note ?? null,
+            startedAt: nextStartedAt,
+            finishedAt: nextFinishedAt,
+            // created_at + updated_at default to now().
+          });
+        }
 
-          if (!updated) {
-            throw new Error("upsertReadingEntryFn: entry vanished after write");
+        // Grant logic. Uses the pure transition helper to decide
+        // which grant — if any — applies, then gates finish grants
+        // behind the anti-farm window.
+        const grants: Array<ReadingGrant> = [];
+        let finishGuardSuppressed = false;
+        const oldStatus = prior?.status as ReadingStatus | undefined;
+        const transition = decideTransitionGrant(oldStatus, desiredStatus);
+        const cfg = await getEconomy();
+
+        if (transition === "start_reading") {
+          const r = await grantShards(
+            database,
+            user.id,
+            "start_reading",
+            cfg.transitions.startReading.shards,
+            { bookId: data.bookId },
+          );
+          pushGrantIfApplied(grants, "start_reading", r);
+        } else if (transition === "finish_reading") {
+          // Guard BEFORE grantShards. Suppressing a grant is
+          // different from "granted 0" because the partial unique
+          // index on shard_events would then block future legitimate
+          // grants for this (user, book). Letting the row stay
+          // un-inserted preserves the once-per-book invariant: a
+          // legitimate finish later still qualifies.
+          //
+          // (Under Neon this read had to use the transaction handle
+          // rather than the outer client, because the pool ran with
+          // `max: 1` and a second query on the outer connection would
+          // deadlock against the open transaction. D1 has no pool and no
+          // transaction here, so that hazard is gone with the driver.)
+          const allowed = await shouldGrantFinish(
+            database,
+            user.id,
+            data.bookId,
+          );
+          if (allowed) {
+            const r = await grantShards(
+              database,
+              user.id,
+              "finish_reading",
+              cfg.transitions.finishReading.shards,
+              { bookId: data.bookId },
+            );
+            pushGrantIfApplied(grants, "finish_reading", r);
+          } else {
+            finishGuardSuppressed = true;
           }
+        }
 
-          return {
-            entry: {
-              bookId: updated.bookId,
-              status: updated.status as ReadingStatus,
-              rating: updated.rating ?? null,
-              note: updated.note ?? null,
-              startedAt: updated.startedAt?.getTime() ?? null,
-              finishedAt: updated.finishedAt?.getTime() ?? null,
-              createdAt: updated.createdAt.getTime(),
-              updatedAt: updated.updatedAt.getTime(),
-              book: { ...updated.book, rarity: updated.book.rarity as Rarity },
+        // Re-read the row so the returned shape matches listReadingEntriesFn.
+        const [updated] = await database
+          .select({
+            bookId: readingEntries.bookId,
+            status: readingEntries.status,
+            rating: readingEntries.rating,
+            note: readingEntries.note,
+            startedAt: readingEntries.startedAt,
+            finishedAt: readingEntries.finishedAt,
+            createdAt: readingEntries.createdAt,
+            updatedAt: readingEntries.updatedAt,
+            book: {
+              id: books.id,
+              title: books.title,
+              authors: books.authors,
+              coverUrl: books.coverUrl,
+              genre: books.genre,
+              rarity: books.rarity,
             },
-            grants,
-            finishGuardSuppressed,
-          };
-        });
+          })
+          .from(readingEntries)
+          .innerJoin(books, eq(readingEntries.bookId, books.id))
+          .where(
+            and(
+              eq(readingEntries.userId, user.id),
+              eq(readingEntries.bookId, data.bookId),
+            ),
+          )
+          .limit(1);
+
+        if (!updated) {
+          throw new Error("upsertReadingEntryFn: entry vanished after write");
+        }
+
+        return {
+          entry: {
+            bookId: updated.bookId,
+            status: updated.status as ReadingStatus,
+            rating: updated.rating ?? null,
+            note: updated.note ?? null,
+            startedAt: updated.startedAt?.getTime() ?? null,
+            finishedAt: updated.finishedAt?.getTime() ?? null,
+            createdAt: updated.createdAt.getTime(),
+            updatedAt: updated.updatedAt.getTime(),
+            book: { ...updated.book, rarity: updated.book.rarity as Rarity },
+          },
+          grants,
+          finishGuardSuppressed,
+        };
       },
     ),
   );
@@ -709,7 +726,7 @@ export const searchForReadingLogFn = createServerFn({ method: "GET" })
       async ({ data }): Promise<ReadonlyArray<LocalSearchHit>> => {
         const user = await requireSessionUser();
         const database = await getDb();
-        const like = `%${data.query}%`;
+        const likePattern = `%${data.query}%`;
 
         const rows = await database
           .select({
@@ -723,8 +740,10 @@ export const searchForReadingLogFn = createServerFn({ method: "GET" })
           .from(books)
           .where(
             or(
-              ilike(books.title, like),
-              sql`EXISTS (SELECT 1 FROM unnest(${books.authors}) AS a WHERE a ILIKE ${like})`,
+              like(books.title, likePattern),
+              // Author search hits the denormalized `authors_text` column;
+              // see src/db/authors.ts for why the JSON array can't serve it.
+              like(books.authorsText, `%${toAuthorsNeedle(data.query)}%`),
             ),
           )
           .limit(20);
@@ -920,7 +939,9 @@ export const ingestHardcoverForReadingLogFn = createServerFn({ method: "POST" })
             target: books.hardcoverId,
             set: {
               title: row.title,
+              // Both author columns, always together (src/db/authors.ts).
               authors: row.authors,
+              authorsText: row.authorsText,
               coverUrl: row.coverUrl,
               description: row.description,
               pageCount: row.pageCount,

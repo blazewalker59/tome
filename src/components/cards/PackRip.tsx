@@ -7,13 +7,34 @@ import {
 } from "motion/react";
 import { Card } from "./Card";
 import type { ReactNode, PointerEvent as ReactPointerEvent } from "react";
-import type { PanInfo } from "motion/react";
+import type { PanInfo, Variants } from "motion/react";
 import type { CardData } from "@/lib/cards/types";
 import {
   packBoxShadow,
   packGradient,
   packHeroBoxShadow,
 } from "@/lib/packs/gradient";
+
+/**
+ * Reveal animation for the card currently on top of the stack.
+ *
+ * `exit` is a function of the swipe direction passed down via `custom`, so the
+ * card flies out the way it was thrown (and floats up when advanced by the
+ * button, where `dir` is 0). Motion only accepts a dynamic variant inside a
+ * `variants` map — an inline `exit={(dir) => ...}` is a type error, because
+ * the direction has nowhere to come from without the variant indirection.
+ */
+const cardVariants: Variants = {
+  initial: { opacity: 0, y: 30, scale: 0.92 },
+  animate: { opacity: 1, y: 0, scale: 1 },
+  exit: (dir: -1 | 0 | 1) => ({
+    opacity: 0,
+    x: dir === 0 ? 0 : dir * 320,
+    y: dir === 0 ? -30 : 0,
+    scale: 0.96,
+    transition: { duration: 0.28, ease: [0.4, 0, 0.2, 1] },
+  }),
+};
 
 export interface PackRipProps {
   cards: ReadonlyArray<CardData>;
@@ -224,15 +245,10 @@ export function PackRip({
               dragConstraints={{ left: 0, right: 0 }}
               dragElastic={0.4}
               onDragEnd={handleDragEnd}
-              initial={{ opacity: 0, y: 30, scale: 0.92 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={(dir: -1 | 0 | 1) => ({
-                opacity: 0,
-                x: dir === 0 ? 0 : dir * 320,
-                y: dir === 0 ? -30 : 0,
-                scale: 0.96,
-                transition: { duration: 0.28, ease: [0.4, 0, 0.2, 1] },
-              })}
+              variants={cardVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
               transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
               className="card-fit cursor-grab active:cursor-grabbing"
             >

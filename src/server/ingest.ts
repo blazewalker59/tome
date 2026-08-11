@@ -200,7 +200,9 @@ export const ingestBookFn = createServerFn({ method: "POST" })
         target: books.hardcoverId,
         set: {
           title: row.title,
+          // Both author columns, always together (src/db/authors.ts).
           authors: row.authors,
+          authorsText: row.authorsText,
           coverUrl: row.coverUrl,
           description: row.description,
           pageCount: row.pageCount,

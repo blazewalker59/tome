@@ -51,7 +51,7 @@ export async function getAuth() {
     // via `usePlural: true`. This is preferred over renaming our tables
     // because every FK in the app already points at `users.id`.
     database: drizzleAdapter(db, {
-      provider: "pg",
+      provider: "sqlite",
       usePlural: true,
     }),
     secret,
@@ -126,20 +126,18 @@ export async function getAuth() {
           after: async (user) => {
             const cfg = await getEconomy();
             if (cfg.welcomeGrant <= 0) return;
-            // Grants happen on their own mini-transaction since Better
-            // Auth doesn't hand us the user-create transaction. Failure
-            // here MUST NOT roll back the user — log and continue. A
-            // missing welcome grant is recoverable (admin can top them
-            // up); a failed user create because of a grant error is not.
+            // Failure here MUST NOT roll back the user — log and continue.
+            // A missing welcome grant is recoverable (admin can top them up);
+            // a failed user create because of a grant error is not.
+            //
+            // This used to wrap the grant in `db.transaction()`. On D1 that
+            // wrapper buys nothing (see src/db/client.ts), and it bought
+            // little here even on Postgres — Better Auth doesn't hand us the
+            // user-create transaction, so the grant was always a separate
+            // unit of work from the insert it accompanies. `grantShards`
+            // batches its own ledger-insert + balance-upsert atomically.
             try {
-              await db.transaction(async (tx) => {
-                await grantShards(
-                  tx,
-                  user.id,
-                  "welcome_grant",
-                  cfg.welcomeGrant,
-                );
-              });
+              await grantShards(db, user.id, "welcome_grant", cfg.welcomeGrant);
             } catch (err) {
               console.error("[tome/auth] welcome grant failed", {
                 userId: user.id,
@@ -152,9 +150,11 @@ export async function getAuth() {
     },
     advanced: {
       database: {
-        // Stay on Postgres `uuid` primary keys to match the rest of the
-        // schema. Without this Better Auth would generate its own string
-        // ids and our FK column types (all `uuid`) would mismatch.
+        // Keep minting UUIDs. The columns are `text` on SQLite rather than
+        // Postgres `uuid`, so any string would now satisfy the type — but the
+        // rows migrated over from Neon carry UUID ids, and Better Auth's own
+        // default id format would sit oddly alongside them. Staying on
+        // randomUUID keeps one id shape across the whole table.
         generateId: () => crypto.randomUUID(),
       },
     },

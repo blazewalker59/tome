@@ -1,55 +1,42 @@
 /**
  * Cross-runtime env accessor.
  *
- * Server code runs on Node locally (tsx / `pnpm dev`) and on Cloudflare
- * Workers in production. Each surfaces bindings differently:
+ * Server code runs on Node locally (tsx scripts) and on Cloudflare Workers in
+ * dev and production. Each surfaces configuration differently:
  *
- *   - Node: `process.env.FOO` (populated from .env.local by the dev server).
- *   - Cloudflare Workers: secrets + vars are on the `env` object exposed by
- *     the virtual `cloudflare:workers` module — NOT on `process.env` unless
- *     the `nodejs_compat_populate_process_env` compat flag is set, which is
- *     gated behind a specific compat date and brittle to reason about.
+ *   - Cloudflare Workers: secrets + vars live on the `env` object handed to
+ *     the Worker's fetch invocation. `src/server.ts` captures it into an
+ *     AsyncLocalStorage scope; `getCloudflareEnv()` reads it back.
+ *   - Node: `process.env.FOO`, populated from `.env.local` by the scripts.
  *
- * Reading from `cloudflare:workers` first and falling back to `process.env`
- * works on both runtimes with no flag coordination. The dynamic `import()`
- * is deliberate so Node (where the specifier is unresolvable) just throws
- * and falls through.
+ * This used to dynamically `import("cloudflare:workers")` to reach the env.
+ * That worked, but the virtual specifier is unresolvable off-Workers, so the
+ * module threw-and-caught on every Node call and — more annoyingly — Vitest's
+ * resolver choked on it, which is why several tests had to mock whole server
+ * modules just to avoid importing this file. Reading the request-scoped env
+ * instead removes the virtual import entirely.
  *
- * NOTE: call `getEnv('FOO')` from inside a function body, NEVER at module
- * top-level. On Workers the `cloudflare:workers` module is only available
- * once a `fetch` handler is running; importing at module eval can return
- * an `env` object that hasn't been populated yet.
+ * NOTE: call `getEnv('FOO')` from inside a function body, never at module
+ * top-level. On Workers there is no env until a request is in flight.
  */
 
-let cachedCfEnv: Record<string, string | undefined> | null | undefined =
-  undefined;
-
-async function loadCloudflareEnv(): Promise<Record<
-  string,
-  string | undefined
-> | null> {
-  if (cachedCfEnv !== undefined) return cachedCfEnv;
-  try {
-    // @ts-expect-error — virtual module, only resolvable on Workers runtime
-    const mod = (await import("cloudflare:workers")) as {
-      env?: Record<string, string | undefined>;
-    };
-    cachedCfEnv = mod.env ?? null;
-  } catch {
-    cachedCfEnv = null;
-  }
-  return cachedCfEnv;
-}
+import { getCloudflareEnv } from "@/db/client";
 
 /**
  * Resolve a server-side env variable from whatever runtime we're on.
  *
- * Checks Cloudflare Workers bindings first (secrets + vars), then
- * `process.env` as a fallback. Returns `undefined` if neither has it.
+ * Checks the Cloudflare request env first (secrets + vars), then
+ * `process.env`. Returns `undefined` if neither has it.
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function getEnv(name: string): Promise<string | undefined> {
-  const cf = await loadCloudflareEnv();
-  if (cf && cf[name]) return cf[name];
+  try {
+    const value = getCloudflareEnv()[name];
+    if (typeof value === "string" && value) return value;
+  } catch {
+    // Not inside a Worker request — fall through to process.env.
+  }
+
   if (typeof process !== "undefined" && process.env) {
     return process.env[name];
   }

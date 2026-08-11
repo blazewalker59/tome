@@ -27,11 +27,7 @@
  * After this completes, run `pnpm db:rebucket` to recompute rarity
  * buckets across the (now much larger) catalog.
  */
-import { config as loadEnv } from "dotenv";
-
 import { eq, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
 
 import { bookResponseToRow } from "../src/lib/cards/hardcover";
 import { books, packBooks, packs } from "../src/db/schema";
@@ -41,17 +37,9 @@ import {
   fetchBookById,
   searchBooks,
 } from "../src/server/hardcover";
+import { db } from "./_db";
 import type { IngestCuration } from "../src/lib/cards/hardcover";
 import type { HardcoverSearchHit } from "../src/server/hardcover";
-
-loadEnv({ path: ".env.local" });
-loadEnv();
-
-const url = process.env.DATABASE_URL;
-if (!url) {
-  console.error("[editor-packs] Missing DATABASE_URL. Set it in .env.local.");
-  process.exit(1);
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Editorial curation: pack definitions
@@ -292,9 +280,7 @@ const PACKS: ReadonlyArray<PackDef> = [
  * search relevance is generally trustworthy, and name variants
  * ("V. E. Schwab" vs "Victoria Schwab") would cause false negatives.
  */
-async function resolveTitle(
-  q: TitleQuery,
-): Promise<
+async function resolveTitle(q: TitleQuery): Promise<
   | {
       ok: true;
       hit: HardcoverSearchHit;
@@ -351,9 +337,6 @@ function moodTagsForIndex(
 // ──────────────────────────────────────────────────────────────────────────────
 // Main
 // ──────────────────────────────────────────────────────────────────────────────
-
-const client = postgres(url, { max: 1 });
-const db = drizzle(client, { schema: { books, packs, packBooks } });
 
 // The rate-limit clock starts stale if the module was imported but
 // never used — no-op if it's already zero. Keeps the very first
@@ -416,7 +399,9 @@ try {
           target: books.hardcoverId,
           set: {
             title: row.title,
+            // Both author columns, always together (src/db/authors.ts).
             authors: row.authors,
+            authorsText: row.authorsText,
             coverUrl: row.coverUrl,
             description: row.description,
             pageCount: row.pageCount,
@@ -428,7 +413,7 @@ try {
             ratingsCount: row.ratingsCount,
             averageRating: row.averageRating,
             rawMetadata: row.rawMetadata,
-            updatedAt: sql`now()`,
+            updatedAt: new Date(),
           },
         })
         .returning({ id: books.id });
@@ -483,51 +468,55 @@ try {
   }
 
   // ────────────────────────────────────────────────────────────────
-  // Upsert packs + reset membership. Single transaction so a failure
-  // halfway through doesn't leave a pack with half its books.
+  // Upsert packs + reset membership.
+  //
+  // This used to run in one transaction so a mid-run failure couldn't leave
+  // a pack holding half its books. Scripts reach D1 over its HTTP API, which
+  // has no cross-request transaction, so that guarantee is gone. It matters
+  // less than it looks: the whole script is idempotent (packs upsert by slug,
+  // membership is deleted and rewritten wholesale), so the repair for a
+  // partial run is to run it again.
   // ────────────────────────────────────────────────────────────────
   console.log(
     `\n[editor-packs] upserting ${packResults.length} editorial packs…`,
   );
-  await db.transaction(async (tx) => {
-    for (const { def, resolved } of packResults) {
-      const [pack] = await tx
-        .insert(packs)
-        .values({
-          slug: def.slug,
+  for (const { def, resolved } of packResults) {
+    const [pack] = await db
+      .insert(packs)
+      .values({
+        slug: def.slug,
+        name: def.name,
+        description: def.description,
+        creatorId: null,
+        isPublic: true,
+        publishedAt: new Date(),
+        genreTags: [...def.genreTags],
+      })
+      .onConflictDoUpdate({
+        target: packs.slug,
+        targetWhere: sql`creator_id IS NULL`,
+        set: {
           name: def.name,
           description: def.description,
-          creatorId: null,
-          isPublic: true,
-          publishedAt: sql`now()`,
           genreTags: [...def.genreTags],
-        })
-        .onConflictDoUpdate({
-          target: packs.slug,
-          targetWhere: sql`creator_id IS NULL`,
-          set: {
-            name: def.name,
-            description: def.description,
-            genreTags: [...def.genreTags],
-          },
-        })
-        .returning({ id: packs.id });
+        },
+      })
+      .returning({ id: packs.id });
 
-      await tx.delete(packBooks).where(eq(packBooks.packId, pack.id));
-      if (resolved.length > 0) {
-        await tx.insert(packBooks).values(
-          resolved.map((b, idx) => ({
-            packId: pack.id,
-            bookId: b.bookRowId,
-            position: idx,
-          })),
-        );
-      }
-      console.log(
-        `[editor-packs]   ✓ ${def.slug}: ${resolved.length}/${def.titles.length} books`,
+    await db.delete(packBooks).where(eq(packBooks.packId, pack.id));
+    if (resolved.length > 0) {
+      await db.insert(packBooks).values(
+        resolved.map((b, idx) => ({
+          packId: pack.id,
+          bookId: b.bookRowId,
+          position: idx,
+        })),
       );
     }
-  });
+    console.log(
+      `[editor-packs]   ✓ ${def.slug}: ${resolved.length}/${def.titles.length} books`,
+    );
+  }
 
   // ────────────────────────────────────────────────────────────────
   // Final report
@@ -557,11 +546,9 @@ try {
   }
 
   console.log(
-    "\n[editor-packs] Next: run `pnpm db:rebucket` to redistribute rarity buckets.",
+    "\n[editor-packs] Next: run `bun run db:rebucket` to redistribute rarity buckets.",
   );
 } catch (err) {
   console.error("[editor-packs] ✗ failed:", err);
   process.exitCode = 1;
-} finally {
-  await client.end();
 }

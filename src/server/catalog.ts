@@ -24,9 +24,9 @@ import {
   asc,
   desc,
   eq,
-  ilike,
   inArray,
   isNull,
+  like,
   or,
   sql,
 } from "drizzle-orm";
@@ -38,6 +38,7 @@ import { getDb } from "@/db/client";
 import { books, packBooks, packs } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth/session";
 import { bookResponseToRow } from "@/lib/cards/hardcover";
+import { toAuthorsNeedle } from "@/db/authors";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error-logging wrapper (mirrors src/server/collection.ts)
@@ -242,12 +243,14 @@ export const listBooksFn = createServerFn({ method: "GET" })
         const dir: SortDir = data.dir ?? (sort === "ingested" ? "desc" : "asc");
 
         // `authors` is `text[]`; we search it by unnesting into a single
-        // whitespace-separated string via `array_to_string` + `ilike`. Not
-        // index-friendly but fine at our scale (a few hundred books).
+        // the denormalized `authors_text` column. SQLite has no `ILIKE`;
+        // plain `LIKE` is already case-insensitive for ASCII, and
+        // `authors_text` is stored lowercased (as is the needle) so
+        // non-ASCII names compare consistently too. See src/db/authors.ts.
         const searchClause = search
           ? or(
-              ilike(books.title, `%${search}%`),
-              sql`array_to_string(${books.authors}, ' ') ilike ${"%" + search + "%"}`,
+              like(books.title, `%${search}%`),
+              like(books.authorsText, `%${toAuthorsNeedle(search)}%`),
             )
           : undefined;
 
@@ -268,11 +271,14 @@ export const listBooksFn = createServerFn({ method: "GET" })
         //
         //   * `ingested` → `books.created_at`. Straightforward timestamp sort.
         //   * `title`    → plain text sort on `books.title`.
-        //   * `author`   → sort on the *first* author only. `authors` is a
-        //     `text[]`; `authors[1]` in SQL (1-indexed) collapses the array
-        //     to a single sortable text value. Books with no authors (empty
-        //     array) get NULL there; `NULLS LAST` pushes them to the bottom
-        //     regardless of direction so they don't hog the top of A→Z.
+        //   * `author`   → sort on the *first* author only. This was
+        //     `authors[1]` when `authors` was a Postgres `text[]`;
+        //     `json_extract(authors, '$[0]')` is the SQLite equivalent over
+        //     the JSON array (0-indexed, where the Postgres form was
+        //     1-indexed). Books with no authors get NULL from both; `NULLS
+        //     LAST` pushes them to the bottom regardless of direction so they
+        //     don't hog the top of A→Z. SQLite has supported NULLS LAST since
+        //     3.30, well below D1's version.
         //
         // We always add `books.id` as a secondary tiebreaker so paging is
         // stable across calls even when primary-sort values collide.
@@ -281,7 +287,7 @@ export const listBooksFn = createServerFn({ method: "GET" })
             ? books.createdAt
             : sort === "title"
               ? books.title
-              : sql`${books.authors}[1]`;
+              : sql`json_extract(${books.authors}, '$[0]')`;
         const orderExpr =
           sort === "author"
             ? dir === "asc"
@@ -1145,7 +1151,9 @@ export const ingestHardcoverBookForAdminPackFn = createServerFn({
             target: books.hardcoverId,
             set: {
               title: row.title,
+              // Both author columns, always together (src/db/authors.ts).
               authors: row.authors,
+              authorsText: row.authorsText,
               coverUrl: row.coverUrl,
               description: row.description,
               pageCount: row.pageCount,
@@ -1275,7 +1283,9 @@ export const refreshBookFromHardcoverFn = createServerFn({ method: "POST" })
           .update(books)
           .set({
             title: row.title,
+            // Both author columns, always together (src/db/authors.ts).
             authors: row.authors,
+            authorsText: row.authorsText,
             coverUrl: row.coverUrl,
             description: row.description,
             pageCount: row.pageCount,

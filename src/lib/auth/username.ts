@@ -20,10 +20,8 @@
  * through to the raw 8-char uuid prefix which is effectively unique.
  */
 import { eq } from "drizzle-orm";
-import type { NeonDatabase } from "drizzle-orm/neon-serverless";
+import type { Database as DB } from "@/db/client";
 import * as schema from "@/db/schema";
-
-type DB = NeonDatabase<typeof schema>;
 
 const USERNAME_RE = /[^a-z0-9_-]+/g;
 

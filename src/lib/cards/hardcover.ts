@@ -14,6 +14,7 @@
 
 import type { InferInsertModel } from "drizzle-orm";
 import type { books } from "@/db/schema";
+import { setAuthors } from "@/db/authors";
 
 /**
  * Minimal shape of a book object as returned by our ingestion query
@@ -138,7 +139,11 @@ export function bookResponseToRow(
   return {
     hardcoverId: book.id,
     title: book.title.trim(),
-    authors: extractAuthors(book.contributions),
+    // `setAuthors` emits BOTH `authors` (the JSON array) and `authorsText`
+    // (the flattened search key). They must always be written together — see
+    // src/db/authors.ts. Every path that inserts a book goes through this
+    // function, which is what keeps the pair honest.
+    ...setAuthors(extractAuthors(book.contributions)),
     coverUrl: extractCoverUrl(book),
     description: book.description ?? null,
     pageCount: book.pages ?? null,

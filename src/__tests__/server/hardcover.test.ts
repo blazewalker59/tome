@@ -1,4 +1,4 @@
-import { HttpResponse, graphql } from "msw";
+import { HttpResponse, graphql, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { server } from "@test/msw/server";
 import {
@@ -115,10 +115,14 @@ describe("fetchBookById", () => {
   });
 
   it("surfaces HTTP 429 distinctly so callers can back off", async () => {
+    // Modelled with `http.post`, not `graphql.link`: a 429 comes from the
+    // edge/proxy in front of Hardcover and never reaches the GraphQL layer,
+    // so the body is plain text rather than a GraphQL envelope. (msw's
+    // graphql resolver types reject a non-GraphQL body, correctly.)
     server.use(
-      graphql.link(HARDCOVER_GRAPHQL).query("GetBook", () => {
-        return new HttpResponse("Throttled", { status: 429 });
-      }),
+      http.post(HARDCOVER_GRAPHQL, () =>
+        HttpResponse.text("Throttled", { status: 429 }),
+      ),
     );
     const err = await fetchBookById(12345).catch((e) => e);
     expect(err).toBeInstanceOf(HardcoverError);
@@ -126,10 +130,12 @@ describe("fetchBookById", () => {
   });
 
   it("surfaces non-ok HTTP status with the status code", async () => {
+    // See the 429 case above — a gateway 502 is a transport failure, not a
+    // GraphQL response.
     server.use(
-      graphql.link(HARDCOVER_GRAPHQL).query("GetBook", () => {
-        return new HttpResponse("Bad Gateway", { status: 502 });
-      }),
+      http.post(HARDCOVER_GRAPHQL, () =>
+        HttpResponse.text("Bad Gateway", { status: 502 }),
+      ),
     );
     const err = await fetchBookById(12345).catch((e) => e);
     expect(err).toBeInstanceOf(HardcoverError);

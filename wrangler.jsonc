@@ -1,0 +1,63 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Single source-of-truth Wrangler config. The @cloudflare/vite-plugin reads
+  // this for dev + `vite build` (which requires `main` to point at the source
+  // entry). The CI deploy passes the built bundle positionally:
+  //
+  //   wrangler deploy dist/server/index.js --config wrangler.jsonc --env production
+  //
+  // which overrides `main`, so this one file drives dev, build, and deploy.
+  //
+  // This replaces the previous setup, where Nitro generated a wrangler.json
+  // into .output/ and a .wrangler/deploy/config.json redirect pointed wrangler
+  // at it. That generated config could not carry a D1 binding, which is why
+  // the move to D1 required moving to a checked-in config.
+  "name": "tome",
+  // nodejs_compat is still required: Better Auth and Drizzle both reach for
+  // node builtins (crypto, async_hooks). The date is bumped from the old
+  // 2025-03-15 because that value was chosen for Neon's TCP-socket support,
+  // which D1 does not need.
+  "compatibility_date": "2025-01-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./src/server.ts",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+  },
+  // Static assets from the vite client build (used at deploy time).
+  "assets": {
+    "directory": "./dist/client",
+  },
+  "d1_databases": [
+    {
+      // Binding name is deliberately `DB`, not wrangler's suggested
+      // `tome_db` — src/db/client.ts reads env.DB.
+      "binding": "DB",
+      "database_name": "tome-db",
+      "database_id": "9974d01e-6ed2-4369-a81c-fbf34d195f0a",
+      "migrations_dir": "drizzle",
+    },
+  ],
+  // Bindings are NOT inherited into named environments, so production repeats
+  // them. There is no staging environment: merges to main deploy to production.
+  "env": {
+    "production": {
+      "name": "tome",
+      "workers_dev": true,
+      "observability": {
+        "enabled": true,
+      },
+      "assets": {
+        "directory": "./dist/client",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "tome-db",
+          "database_id": "9974d01e-6ed2-4369-a81c-fbf34d195f0a",
+          "migrations_dir": "drizzle",
+        },
+      ],
+    },
+  },
+}

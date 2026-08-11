@@ -34,9 +34,10 @@ import {
   desc,
   eq,
   gt,
-  ilike,
   inArray,
   isNull,
+  like,
+  notInArray,
   or,
   sql,
 } from "drizzle-orm";
@@ -48,6 +49,7 @@ import type { HardcoverSearchHit } from "./hardcover";
 import type { Rarity } from "@/lib/packs/composition";
 import type { DemoteReason } from "@/lib/hardcover/rank";
 import { getDb } from "@/db/client";
+import { toAuthorsNeedle } from "@/db/authors";
 import { books, packBooks, packRips, packs, users } from "@/db/schema";
 import { getSessionUser, requireSessionUser } from "@/lib/auth/session";
 import { getEconomy } from "@/lib/economy/config";
@@ -185,7 +187,7 @@ async function reserveSlugForCreator(
     .select({ slug: packs.slug })
     .from(packs)
     .where(
-      and(eq(packs.creatorId, creatorId), ilike(packs.slug, `${candidate}%`)),
+      and(eq(packs.creatorId, creatorId), like(packs.slug, `${candidate}%`)),
     );
   const taken = new Set(existing.map((r) => r.slug));
   if (!taken.has(candidate)) return candidate;
@@ -829,11 +831,11 @@ export const searchBooksForBuilderFn = createServerFn({ method: "GET" })
       > => {
         await requireSessionUser();
         const database = await getDb();
-        const like = `%${data.query}%`;
+        const likePattern = `%${data.query}%`;
 
         // If we're excluding a pack's current members, fetch those ids
         // first. Kept as a separate query so the main search plan
-        // stays simple (ilike + optional NOT IN).
+        // stays simple (LIKE + optional NOT IN).
         let excludedIds: Array<string> = [];
         if (data.excludePackId) {
           const rows = await database
@@ -856,9 +858,11 @@ export const searchBooksForBuilderFn = createServerFn({ method: "GET" })
           .where(
             and(
               or(
-                ilike(books.title, like),
-                // Search over the author array via unnest.
-                sql`EXISTS (SELECT 1 FROM unnest(${books.authors}) AS a WHERE a ILIKE ${like})`,
+                like(books.title, likePattern),
+                // Author search hits the denormalized `authors_text` column.
+                // SQLite can't search inside the JSON `authors` array with an
+                // index, which is why that column exists (src/db/authors.ts).
+                like(books.authorsText, `%${toAuthorsNeedle(data.query)}%`),
               ),
               // Hide soft-deleted catalog rows from the builder. The
               // book remains visible inside any pack/collection that
@@ -866,7 +870,7 @@ export const searchBooksForBuilderFn = createServerFn({ method: "GET" })
               // preserved); we only stop new pick-ups.
               isNull(books.deletedAt),
               excludedIds.length > 0
-                ? sql`${books.id} NOT IN ${excludedIds}`
+                ? notInArray(books.id, excludedIds)
                 : undefined,
             ),
           )
@@ -1124,7 +1128,9 @@ export const ingestHardcoverBookForBuilderFn = createServerFn({
             target: books.hardcoverId,
             set: {
               title: row.title,
+              // Both author columns, always together (src/db/authors.ts).
               authors: row.authors,
+              authorsText: row.authorsText,
               coverUrl: row.coverUrl,
               description: row.description,
               pageCount: row.pageCount,

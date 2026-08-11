@@ -42,28 +42,24 @@ const mocks = vi.hoisted(() => {
     current: { data: null, isPending: true },
   };
   const listeners = new Set<() => void>();
+  // Typed as a call signature rather than `ReturnType<typeof vi.fn>`: as of
+  // Vitest 4 the bare `Mock` type is `Mock<Procedure | Constructable>`, a
+  // union that TypeScript won't let you *call* without narrowing.
   return {
     sessionState,
     listeners,
-    signOutMock: (async () => ({
-      data: { success: true },
-    })) as unknown as ReturnType<typeof vi.fn>,
-    signInSocialMock: (async () => ({
-      data: { url: "https://accounts.google.test/o/oauth2" },
-      error: null,
-    })) as unknown as ReturnType<typeof vi.fn>,
+    signOutMock: vi.fn<(...args: Array<unknown>) => Promise<unknown>>(),
+    signInSocialMock: vi.fn<(...args: Array<unknown>) => Promise<unknown>>(),
   };
 });
 
-// Replace the hoisted stubs with real vi.fn()s we can assert on. Mutating
-// the `mocks` object keeps the reference the mock factory already holds.
-mocks.signOutMock = vi.fn().mockResolvedValue({ data: { success: true } });
-mocks.signInSocialMock = vi
-  .fn()
-  .mockResolvedValue({
-    data: { url: "https://accounts.google.test/o/oauth2" },
-    error: null,
-  });
+// Give the hoisted mocks their default resolutions. Mutating in place (rather
+// than reassigning) keeps the reference the mock factory already closed over.
+mocks.signOutMock.mockResolvedValue({ data: { success: true } });
+mocks.signInSocialMock.mockResolvedValue({
+  data: { url: "https://accounts.google.test/o/oauth2" },
+  error: null,
+});
 
 function setSession(next: MockSession) {
   mocks.sessionState.current = next;

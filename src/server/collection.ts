@@ -16,6 +16,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { withErrorLogging } from "./_shared";
 import type { BookRow } from "@/lib/cards/book-to-card";
+import type { BatchItem } from "drizzle-orm/batch";
 import { getDb } from "@/db/client";
 import {
   books,
@@ -24,12 +25,25 @@ import {
   packRips,
   packs,
   shardBalances,
+  shardEvents,
   users,
 } from "@/db/schema";
 import { getSessionUser } from "@/lib/auth/session";
 import { getEconomy } from "@/lib/economy/config";
-import { grantShards, spendShards } from "@/lib/economy/ledger";
+import {
+  grantShards,
+  rebuildBalanceStatement,
+  spendShards,
+} from "@/lib/economy/ledger";
 import { classifyRip } from "@/lib/cards/classify-rip";
+
+/**
+ * A statement that can go into `db.batch([...])`. Drizzle types each builder
+ * differently (insert vs update vs raw), so a heterogeneous array needs the
+ * common `BatchItem` supertype to be assembled conditionally the way
+ * `recordRipFn` does.
+ */
+type BatchStatement = BatchItem<"sqlite">;
 
 /**
  * Wrapper removed — moved to `./_shared` so both `collection.ts` and
@@ -703,97 +717,139 @@ export const recordRipFn = createServerFn({ method: "POST" })
         const packCost = cfg.packCost;
         const perDupe = cfg.dupeRefund.shardsPerDupe;
 
-        return await database.transaction(async (tx) => {
-          // 1. Resolve the pack and its membership in one shot. The pack
-          //    row gives us `creator_id` for the self-rip guard; the join
-          //    against `pack_books` gives us the authoritative book set
-          //    so we can reject pulls that include any book outside the
-          //    pack. Doing this BEFORE the shard debit means a tampered
-          //    request never costs the user anything.
-          const packRows = await tx
-            .select({
-              packId: packs.id,
-              creatorId: packs.creatorId,
-              bookId: packBooks.bookId,
-            })
-            .from(packs)
-            .innerJoin(packBooks, eq(packBooks.packId, packs.id))
-            .where(eq(packs.id, packId));
+        // ── Structure note (Neon → D1) ────────────────────────────────────
+        //
+        // This was one `database.transaction()`. D1 has no interactive
+        // transactions, so it is now three phases:
+        //
+        //   A. Reads and validation. No writes, so nothing to roll back.
+        //   B. The debit, on its own, as an atomic compare-and-swap.
+        //   C. Every remaining write, in one `db.batch()` — which D1 runs as
+        //      a single atomic transaction.
+        //
+        // The seam between B and C is the one place this is weaker than a
+        // real transaction: if C fails after B succeeded, the user has paid
+        // and received nothing. That is handled explicitly with a
+        // compensating refund below rather than left to chance.
+        //
+        // Ordering B before C (rather than folding the debit into C) is
+        // deliberate. If the debit rode along inside C without its
+        // affordability guard, two concurrent rips could both pay and
+        // overdraw; if it rode along *with* the guard, the guard could fail
+        // while the rest of the batch still granted the cards — a free pack.
+        // Charging first, atomically, makes "paid but not delivered" the only
+        // possible gap, and that one is repairable.
 
-          if (packRows.length === 0) {
-            throw new Error(`recordRip: pack ${packId} not found or empty`);
-          }
+        // ── Phase A: reads and validation ────────────────────────────────
 
-          const creatorId = packRows[0].creatorId;
-          if (creatorId && creatorId === user.id) {
-            // Creators can't rip their own packs. Without this check a
-            // creator could spend 50 shards on a pack of books they
-            // already own and bank the dupe refunds — a low-effort grind
-            // and an obvious self-deal once user packs ship publicly.
-            throw new Error(`${SELF_RIP_PREFIX}cannot rip a pack you authored`);
-          }
+        // 1. Resolve the pack and its membership in one shot. The pack row
+        //    gives us `creator_id` for the self-rip guard; the join against
+        //    `pack_books` gives us the authoritative book set so we can
+        //    reject pulls that include any book outside the pack. Doing this
+        //    BEFORE the shard debit means a tampered request never costs the
+        //    user anything.
+        const packRows = await database
+          .select({
+            packId: packs.id,
+            creatorId: packs.creatorId,
+            bookId: packBooks.bookId,
+          })
+          .from(packs)
+          .innerJoin(packBooks, eq(packBooks.packId, packs.id))
+          .where(eq(packs.id, packId));
 
-          const packBookIds = new Set(packRows.map((r) => r.bookId));
-          for (const id of pulledBookIds) {
-            if (!packBookIds.has(id)) {
-              // The client computed `pullPack` and is reporting which
-              // books to commit. We trust the count (5 in v1) but not
-              // the identities — every committed id must belong to the
-              // pack. Anything else is a tampered request.
-              throw new Error(
-                `${INVALID_PULL_PREFIX}book ${id} is not a member of pack ${packId}`,
-              );
-            }
-          }
+        if (packRows.length === 0) {
+          throw new Error(`recordRip: pack ${packId} not found or empty`);
+        }
 
-          // 2. Charge the pack cost. If the user can't afford it we bail
-          //    before touching anything else — no collection insert, no
-          //    audit row, no dupe refunds. `spendShards` row-locks the
-          //    balance so two concurrent rips can't both drain the
-          //    account below zero.
-          //
-          //    Note: we used to defensively upsert a `users` row here to cover
-          //    the case where the Supabase-era `handle_new_user` trigger hadn't
-          //    fired. That's no longer needed: Better Auth's
-          //    `databaseHooks.user.create.before` (see `src/lib/auth/server.ts`)
-          //    runs synchronously inside the OAuth callback and guarantees the
-          //    `users` row exists before any server fn can be called.
-          const debit = await spendShards(tx, user.id, packCost, { packId });
-          if (!debit.applied) {
+        const creatorId = packRows[0].creatorId;
+        if (creatorId && creatorId === user.id) {
+          // Creators can't rip their own packs. Without this check a
+          // creator could spend 50 shards on a pack of books they
+          // already own and bank the dupe refunds — a low-effort grind
+          // and an obvious self-deal once user packs ship publicly.
+          throw new Error(`${SELF_RIP_PREFIX}cannot rip a pack you authored`);
+        }
+
+        const packBookIds = new Set(packRows.map((r) => r.bookId));
+        for (const id of pulledBookIds) {
+          if (!packBookIds.has(id)) {
+            // The client computed `pullPack` and is reporting which
+            // books to commit. We trust the count (5 in v1) but not
+            // the identities — every committed id must belong to the
+            // pack. Anything else is a tampered request.
             throw new Error(
-              `${INSUFFICIENT_SHARDS_PREFIX}have=${debit.newBalance} need=${packCost}`,
+              `${INVALID_PULL_PREFIX}book ${id} is not a member of pack ${packId}`,
             );
           }
+        }
 
-          // 3. Find which of the pulled books the user already owned BEFORE
-          //    this rip. Combined with the in-rip dedup the classifier
-          //    handles, this gives us correct new/dupe buckets even when
-          //    the same book appears multiple times in one pull.
-          const existing = await tx
-            .select({ bookId: collectionCards.bookId })
-            .from(collectionCards)
-            .where(
-              and(
-                eq(collectionCards.userId, user.id),
-                inArray(collectionCards.bookId, pulledBookIds as Array<string>),
-              ),
-            );
-          const ownedSet = new Set(existing.map((e) => e.bookId));
-
-          // 4. Classify pulls. `classifyRip` is a pure helper covered by
-          //    `src/__tests__/lib/cards/classify-rip.test.ts`; the
-          //    previous inline version mixed index spaces between the
-          //    filtered-new array and the original pull, mis-classifying
-          //    pulls like [ownedB, unownedA, unownedA].
-          const { newBookIds: dedupedNewIds, duplicateBookIds } = classifyRip(
-            pulledBookIds,
-            ownedSet,
+        // 2. Find which of the pulled books the user already owned BEFORE
+        //    this rip. Combined with the in-rip dedup the classifier
+        //    handles, this gives us correct new/dupe buckets even when
+        //    the same book appears multiple times in one pull.
+        const existing = await database
+          .select({ bookId: collectionCards.bookId })
+          .from(collectionCards)
+          .where(
+            and(
+              eq(collectionCards.userId, user.id),
+              inArray(collectionCards.bookId, pulledBookIds as Array<string>),
+            ),
           );
+        const ownedSet = new Set(existing.map((e) => e.bookId));
 
-          // 5. Insert fresh collection rows. ON CONFLICT handles the
-          //    theoretical race where a concurrent rip inserts the same row.
-          if (dedupedNewIds.length > 0) {
-            await tx
+        // 3. Classify pulls. `classifyRip` is a pure helper covered by
+        //    `src/__tests__/lib/cards/classify-rip.test.ts`.
+        const { newBookIds: dedupedNewIds, duplicateBookIds } = classifyRip(
+          pulledBookIds,
+          ownedSet,
+        );
+
+        // Everything the writes need is now known, so it can all be computed
+        // up front — including the rip's id. Generating it here rather than
+        // reading it back from an INSERT ... RETURNING is what collapses the
+        // write phase into a single batch: the dupe-refund rows can reference
+        // the rip before it exists, and `shards_awarded` can be written once
+        // with its final value instead of being backfilled.
+        const ripId = crypto.randomUUID();
+        const dupeCounts = new Map<string, number>();
+        for (const id of duplicateBookIds) {
+          dupeCounts.set(id, (dupeCounts.get(id) ?? 0) + 1);
+        }
+        const shardsAwarded =
+          perDupe > 0 ? perDupe * duplicateBookIds.length : 0;
+
+        // ── Phase B: charge for the pack ─────────────────────────────────
+        //
+        // Atomic compare-and-swap inside `spendShards`; refuses rather than
+        // overdrawing when two rips race. Nothing else has been written yet,
+        // so a refusal here leaves no debris.
+        //
+        // Note: we used to defensively upsert a `users` row here to cover the
+        // case where the Supabase-era `handle_new_user` trigger hadn't fired.
+        // That's no longer needed: Better Auth's
+        // `databaseHooks.user.create.before` (see `src/lib/auth/server.ts`)
+        // runs synchronously inside the OAuth callback and guarantees the
+        // `users` row exists before any server fn can be called.
+        const debit = await spendShards(database, user.id, packCost, {
+          packId,
+        });
+        if (!debit.applied) {
+          throw new Error(
+            `${INSUFFICIENT_SHARDS_PREFIX}have=${debit.newBalance} need=${packCost}`,
+          );
+        }
+
+        // ── Phase C: everything else, atomically ─────────────────────────
+
+        const writes: Array<BatchStatement> = [];
+
+        // Fresh collection rows. ON CONFLICT handles the theoretical race
+        // where a concurrent rip inserts the same row.
+        if (dedupedNewIds.length > 0) {
+          writes.push(
+            database
               .insert(collectionCards)
               .values(
                 dedupedNewIds.map((bookId) => ({
@@ -805,93 +861,118 @@ export const recordRipFn = createServerFn({ method: "POST" })
               )
               .onConflictDoNothing({
                 target: [collectionCards.userId, collectionCards.bookId],
-              });
-          }
+              }),
+          );
+        }
 
-          // 6. Bump quantities for duplicates. A single SQL update per unique
-          //    dupe id; quantity is +N where N is how many times the id appeared.
-          const dupeCounts = new Map<string, number>();
-          for (const id of duplicateBookIds) {
-            dupeCounts.set(id, (dupeCounts.get(id) ?? 0) + 1);
-          }
-          for (const [bookId, count] of dupeCounts) {
-            await tx
+        // Bump quantities for duplicates — one update per unique dupe id,
+        // +N where N is how many times that id appeared in the pull.
+        for (const [bookId, count] of dupeCounts) {
+          writes.push(
+            database
               .update(collectionCards)
               .set({
                 quantity: sql`${collectionCards.quantity} + ${count}`,
-                updatedAt: sql`now()`,
+                updatedAt: new Date(),
               })
               .where(
                 and(
                   eq(collectionCards.userId, user.id),
                   eq(collectionCards.bookId, bookId),
                 ),
-              );
-          }
+              ),
+          );
+        }
 
-          // 7. Insert the audit row first so the dupe refunds can reference
-          //    it. `duplicates` stores the COUNT of dupes, not the ids.
-          //    `shardsAwarded` is filled in after the refunds; initial 0
-          //    is replaced below.
-          const [rip] = await tx
-            .insert(packRips)
-            .values({
-              userId: user.id,
-              packId,
-              pulledBookIds: pulledBookIds as Array<string>,
-              duplicates: duplicateBookIds.length,
-              shardsAwarded: 0,
-            })
-            .returning({ id: packRips.id });
+        // The audit row. `duplicates` stores the COUNT of dupes, not the ids.
+        writes.push(
+          database.insert(packRips).values({
+            id: ripId,
+            userId: user.id,
+            packId,
+            pulledBookIds: pulledBookIds as Array<string>,
+            duplicates: duplicateBookIds.length,
+            shardsAwarded,
+          }),
+        );
 
-          // 8. Grant flat dupe refunds via the ledger — one `dupe_refund`
-          //    row per dupe instance, each tied back to the rip id so we
-          //    can reconstruct "this rip yielded 2 dupes worth 10 shards"
-          //    later. `grantShards` updates the balance cache for us.
-          let shardsAwarded = 0;
-          let newShardBalance = debit.newBalance;
-          for (const bookId of duplicateBookIds) {
-            if (perDupe <= 0) break;
-            const r = await grantShards(tx, user.id, "dupe_refund", perDupe, {
-              bookId,
-              packId,
-              ripId: rip.id,
-            });
-            if (r.applied) {
-              shardsAwarded += r.delta;
-              newShardBalance = r.newBalance;
-            }
-          }
+        // Flat dupe refunds — one `dupe_refund` ledger row per dupe instance,
+        // each tied back to the rip so we can later reconstruct "this rip
+        // yielded 2 dupes worth 10 shards".
+        //
+        // Written directly rather than through `grantShards` because these go
+        // inside the batch. That is safe precisely for `dupe_refund`: it is
+        // uncapped, and it is not covered by the `shard_events_once_per_book_uq`
+        // partial index, so `grantShards` would have done a plain insert with
+        // no cap check and no conflict target — exactly this. Do not
+        // copy this shortcut for a capped or index-covered reason.
+        if (shardsAwarded > 0) {
+          writes.push(
+            database.insert(shardEvents).values(
+              duplicateBookIds.map((bookId) => ({
+                userId: user.id,
+                delta: perDupe,
+                reason: "dupe_refund",
+                refBookId: bookId,
+                refPackId: packId,
+                refRipId: ripId,
+              })),
+            ),
+          );
+        }
 
-          // 9. Backfill the rip row's shardsAwarded now that we know the
-          //    total. Keeping it denormalized on pack_rips makes "biggest
-          //    rip ever" and similar queries cheap.
-          if (shardsAwarded > 0) {
-            await tx
-              .update(packRips)
-              .set({ shardsAwarded })
-              .where(eq(packRips.id, rip.id));
-          }
-
-          // 10. Bump the pack's denormalized weekly-rip counter. Used as a
-          //     trending signal on the discovery surface. The counter is now
-          //     also re-derived on read by `listPublicPacksFn` from
-          //     `pack_rips` over a rolling 7-day window, so this denorm is
-          //     a hot-path cache rather than the source of truth — drift
-          //     resolves itself the next time the read query runs.
-          await tx
+        // Bump the pack's denormalized weekly-rip counter, a trending signal
+        // on the discovery surface. `listPublicPacksFn` also re-derives this
+        // from `pack_rips` over a rolling 7-day window, so the denorm is a
+        // hot-path cache rather than the source of truth — drift resolves
+        // itself the next time the read query runs.
+        writes.push(
+          database
             .update(packs)
             .set({ ripCountWeek: sql`${packs.ripCountWeek} + 1` })
-            .where(eq(packs.id, packId));
+            .where(eq(packs.id, packId)),
+        );
 
-          return {
-            newBookIds: dedupedNewIds,
-            duplicateBookIds,
-            shardsAwarded,
-            packCost,
-            newShardBalance,
-          };
-        });
+        // Refresh the balance cache from the ledger. MUST be last: it sums
+        // `shard_events`, so it has to see the dupe-refund rows above.
+        writes.push(rebuildBalanceStatement(database, user.id));
+
+        let newShardBalance = debit.newBalance;
+        try {
+          const results = await database.batch(
+            writes as [BatchStatement, ...Array<BatchStatement>],
+          );
+          const balanceRows = results[results.length - 1] as Array<{
+            shards: number;
+          }>;
+          newShardBalance = balanceRows[0]?.shards ?? debit.newBalance;
+        } catch (err) {
+          // The user has already paid (phase B) and the cards did not land.
+          // Give the shards back so a transient D1 failure doesn't silently
+          // cost them a pack. This is the one compensating write in the app;
+          // if it also fails there is nothing further to do automatically, so
+          // it is logged loudly for manual repair.
+          try {
+            await grantShards(database, user.id, "rip_refund", packCost, {
+              packId,
+            });
+          } catch (refundErr) {
+            console.error(
+              "[tome/collection] rip refund FAILED — user was charged and " +
+                "received nothing; manual correction required",
+              { userId: user.id, packId, packCost, cause: refundErr },
+            );
+          }
+          throw err;
+        }
+
+        return {
+          newBookIds: dedupedNewIds,
+          duplicateBookIds,
+          shardsAwarded,
+          packCost,
+          newShardBalance,
+        };
       },
     ),
   );

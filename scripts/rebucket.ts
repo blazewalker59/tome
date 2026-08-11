@@ -13,41 +13,23 @@
  *   1. Load every book's `(id, ratings_count, average_rating)` — the only
  *      columns `assignRarities()` needs. Keeps the working set small.
  *   2. Run the pure `assignRarities()` function to compute new rarities.
- *   3. Diff against current values and write ONLY the rows that changed,
- *      inside a single transaction. Churn-free runs become a no-op in
- *      terms of rows touched, which makes `updated_at` meaningful.
+ *   3. Diff against current values and write ONLY the rows that changed.
+ *      Churn-free runs become a no-op in terms of rows touched, which
+ *      makes `updated_at` meaningful.
  *
- * Same runtime posture as `migrate.ts` / `seed.ts`: Node + `postgres-js`
- * against the pooled Neon URL. Never runs on Workers.
+ * Runs on Node against D1's HTTP API via `./_db` — never on Workers, and
+ * never against the local miniflare database.
  *
  * Exit codes:
  *   0 — ran to completion (including "0 changes" no-op runs)
- *   1 — missing DATABASE_URL or a query failed
+ *   1 — missing D1 credentials or a query failed
  */
-import { config as loadEnv } from "dotenv";
-
-import { inArray, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
+import { inArray } from "drizzle-orm";
 
 import { books } from "../src/db/schema";
 import { assignRarities } from "../src/lib/cards/rarity";
+import { db } from "./_db";
 import type { Rarity } from "../src/lib/cards/rarity";
-
-loadEnv({ path: ".env.local" });
-loadEnv();
-
-const url = process.env.DATABASE_URL;
-
-if (!url) {
-  console.error(
-    "[rebucket] Missing DATABASE_URL. Set it in .env.local — see .env.example.",
-  );
-  process.exit(1);
-}
-
-const client = postgres(url, { max: 1 });
-const db = drizzle(client);
 
 try {
   console.log("[rebucket] loading catalog…");
@@ -70,9 +52,9 @@ try {
   );
 
   // Collect diffs grouped by target rarity so we can issue one UPDATE
-  // per rarity (5 statements max) using `WHERE id = ANY($1)`, instead
-  // of N per-row updates. On Neon each round trip is network latency,
-  // so this matters even for modest N.
+  // per rarity (5 statements max) using `WHERE id IN (...)`, instead of
+  // N per-row updates. Every statement here is an HTTP round trip to
+  // D1's API, so this matters even for modest N.
   const changesByRarity = new Map<Rarity, Array<string>>();
   let unchanged = 0;
   for (const row of rows) {
@@ -96,15 +78,18 @@ try {
     console.log(
       `[rebucket] applying ${changed} changes (${unchanged} already correct)…`,
     );
-    await db.transaction(async (tx) => {
-      for (const [rarity, ids] of changesByRarity) {
-        await tx
-          .update(books)
-          .set({ rarity, updatedAt: sql`now()` })
-          .where(inArray(books.id, ids));
-        console.log(`[rebucket]   → ${rarity}: ${ids.length}`);
-      }
-    });
+    // Sequential rather than transactional: the sqlite-proxy driver issues
+    // one HTTP call per statement and D1's API has no cross-request
+    // transaction. Re-running the script is safe (it is idempotent — it
+    // recomputes buckets from scratch), so a partial application just means
+    // running it again.
+    for (const [rarity, ids] of changesByRarity) {
+      await db
+        .update(books)
+        .set({ rarity, updatedAt: new Date() })
+        .where(inArray(books.id, ids));
+      console.log(`[rebucket]   → ${rarity}: ${ids.length}`);
+    }
     console.log("[rebucket] ✓ done");
   }
 
@@ -131,6 +116,4 @@ try {
 } catch (err) {
   console.error("[rebucket] ✗ failed:", err);
   process.exitCode = 1;
-} finally {
-  await client.end();
 }

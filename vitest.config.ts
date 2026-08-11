@@ -1,14 +1,21 @@
-import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 import viteReact from "@vitejs/plugin-react";
 
+/**
+ * Vitest config, deliberately separate from vite.config.ts: that file loads
+ * @cloudflare/vite-plugin, which sets `resolve.external` for the SSR
+ * environment and breaks Vitest's module resolution. Keeping the two apart
+ * avoids needing an `isTest` guard to conditionally drop the plugin.
+ */
 export default defineConfig({
   plugins: [viteReact()],
   resolve: {
     alias: {
-      "@": resolve(__dirname, "./src"),
-      "@test": resolve(__dirname, "./src/__tests__/_setup"),
-      "#": resolve(__dirname, "./src"),
+      // `import.meta.dirname` rather than `__dirname`: Vite's native config
+      // loader (soon the default) can't evaluate CJS globals.
+      "@": new URL("./src", import.meta.url).pathname,
+      "@test": new URL("./src/__tests__/_setup", import.meta.url).pathname,
+      "#": new URL("./src", import.meta.url).pathname,
     },
   },
   test: {
