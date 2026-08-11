@@ -899,7 +899,7 @@ export const ingestHardcoverForReadingLogFn = createServerFn({ method: "POST" })
         // — counting only rows stamped with this user's id.
         const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
         const [{ count: recentCount }] = await database
-          .select({ count: sql<number>`count(*)::int` })
+          .select({ count: sql<number>`count(*)` })
           .from(books)
           .where(
             and(
@@ -949,7 +949,7 @@ export const ingestHardcoverForReadingLogFn = createServerFn({ method: "POST" })
               ratingsCount: row.ratingsCount,
               averageRating: row.averageRating,
               rawMetadata: row.rawMetadata,
-              updatedAt: sql`now()`,
+              updatedAt: new Date(),
               // Provenance fields are write-once — see user-packs.ts.
             },
           })

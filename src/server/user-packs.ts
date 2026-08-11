@@ -50,6 +50,7 @@ import type { Rarity } from "@/lib/packs/composition";
 import type { DemoteReason } from "@/lib/hardcover/rank";
 import { getDb } from "@/db/client";
 import { toAuthorsNeedle } from "@/db/authors";
+import { toEpochSeconds } from "@/db/sql";
 import { books, packBooks, packRips, packs, users } from "@/db/schema";
 import { getSessionUser, requireSessionUser } from "@/lib/auth/session";
 import { getEconomy } from "@/lib/economy/config";
@@ -399,7 +400,7 @@ export const addBookToPackDraftFn = createServerFn({ method: "POST" })
         // composite PK + position column.
         const [{ maxPos }] = await database
           .select({
-            maxPos: sql<number>`COALESCE(MAX(${packBooks.position}), -1)::int`,
+            maxPos: sql<number>`COALESCE(MAX(${packBooks.position}), -1)`,
           })
           .from(packBooks)
           .where(eq(packBooks.packId, data.packId));
@@ -682,7 +683,7 @@ export const listMyPacksFn = createServerFn({ method: "GET" }).handler(
           isPublic: packs.isPublic,
           publishedAt: packs.publishedAt,
           bookCount: sql<number>`(
-          SELECT COUNT(*)::int FROM ${packBooks} WHERE ${packBooks.packId} = ${packs.id}
+          SELECT COUNT(*) FROM ${packBooks} WHERE ${packBooks.packId} = ${packs.id}
         )`,
         })
         .from(packs)
@@ -1077,7 +1078,7 @@ export const ingestHardcoverBookForBuilderFn = createServerFn({
         // index `books_ingested_by_at_idx` covers this predicate.
         const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
         const [{ count: recentCount }] = await database
-          .select({ count: sql<number>`count(*)::int` })
+          .select({ count: sql<number>`count(*)` })
           .from(books)
           .where(
             and(
@@ -1138,7 +1139,7 @@ export const ingestHardcoverBookForBuilderFn = createServerFn({
               ratingsCount: row.ratingsCount,
               averageRating: row.averageRating,
               rawMetadata: row.rawMetadata,
-              updatedAt: sql`now()`,
+              updatedAt: new Date(),
               // Intentionally NOT updating: genre, moodTags, rarity,
               // ingestedByUserId, ingestedAt. Curation is the admin's
               // domain; provenance is write-once on first ingest.
@@ -1225,7 +1226,7 @@ export const getPublicProfileFn = createServerFn({ method: "GET" })
             genreTags: packs.genreTags,
             publishedAt: packs.publishedAt,
             bookCount: sql<number>`(
-              SELECT COUNT(*)::int FROM ${packBooks} WHERE ${packBooks.packId} = ${packs.id}
+              SELECT COUNT(*) FROM ${packBooks} WHERE ${packBooks.packId} = ${packs.id}
             )`,
           })
           .from(packs)
@@ -1346,10 +1347,10 @@ export const listPublicPacksFn = createServerFn({ method: "GET" })
         // because COUNT(*) returns bigint and we want a JS number on
         // the wire.
         const ripsThisWeekExpr = sql<number>`(
-          SELECT COUNT(*)::int
+          SELECT COUNT(*)
           FROM ${packRips}
           WHERE ${packRips.packId} = ${packs.id}
-            AND ${packRips.rippedAt} > ${weekAgo}
+            AND ${packRips.rippedAt} > ${toEpochSeconds(weekAgo)}
         )`;
 
         const conditions = [
@@ -1379,7 +1380,7 @@ export const listPublicPacksFn = createServerFn({ method: "GET" })
             genreTags: packs.genreTags,
             publishedAt: packs.publishedAt,
             bookCount: sql<number>`(
-              SELECT COUNT(*)::int FROM ${packBooks}
+              SELECT COUNT(*) FROM ${packBooks}
               WHERE ${packBooks.packId} = ${packs.id}
             )`,
             ripsThisWeek: ripsThisWeekExpr,

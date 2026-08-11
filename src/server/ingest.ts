@@ -212,7 +212,7 @@ export const ingestBookFn = createServerFn({ method: "POST" })
           ratingsCount: row.ratingsCount,
           averageRating: row.averageRating,
           rawMetadata: row.rawMetadata,
-          updatedAt: sql`now()`,
+          updatedAt: new Date(),
           // NOTE: deliberately do NOT overwrite `rarity` here. The
           // rebucket script is the single authority for rarity.
         },

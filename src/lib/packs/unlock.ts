@@ -40,10 +40,10 @@ export async function getPublishUnlockStatus(
 ): Promise<PublishUnlockStatus> {
   const [cfg, database] = await Promise.all([getEconomy(), getDb()]);
   // Count, not row fetch — we only need the number and the index on
-  // (user_id, status, updated_at) makes this cheap. Uses `count(*)::int`
+  // (user_id, status, updated_at) makes this cheap. Uses `count(*)`
   // so drizzle hands us a plain number rather than a string.
   const [row] = await database
-    .select({ n: sql<number>`count(*)::int` })
+    .select({ n: sql<number>`count(*)` })
     .from(readingEntries)
     .where(
       and(

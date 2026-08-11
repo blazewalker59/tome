@@ -324,12 +324,10 @@ export const listBooksFn = createServerFn({ method: "GET" })
 
         const [{ total }] = whereClause
           ? await database
-              .select({ total: sql<number>`count(*)::int` })
+              .select({ total: sql<number>`count(*)` })
               .from(books)
               .where(whereClause)
-          : await database
-              .select({ total: sql<number>`count(*)::int` })
-              .from(books);
+          : await database.select({ total: sql<number>`count(*)` }).from(books);
 
         // Pack memberships for the returned page only.
         const bookIds = rows.map((r) => r.id);
@@ -409,7 +407,7 @@ export const updateBookCurationFn = createServerFn({ method: "POST" })
         await requireAdmin();
         const database = await getDb();
 
-        const patch: Record<string, unknown> = { updatedAt: sql`now()` };
+        const patch: Record<string, unknown> = { updatedAt: new Date() };
         if (data.genre !== undefined) {
           patch.genre = normalizeKebab(data.genre, "Genre");
         }
@@ -502,7 +500,7 @@ export const updateBookRarityFn = createServerFn({ method: "POST" })
 
         const [updated] = await database
           .update(books)
-          .set({ rarity: data.rarity, updatedAt: sql`now()` })
+          .set({ rarity: data.rarity, updatedAt: new Date() })
           .where(eq(books.id, data.bookId))
           .returning({ id: books.id, rarity: books.rarity });
 
@@ -555,7 +553,7 @@ export const listPacksFn = createServerFn({ method: "GET" }).handler(
           isPublic: packs.isPublic,
           coverImageUrl: packs.coverImageUrl,
           createdAt: packs.createdAt,
-          bookCount: sql<number>`count(${packBooks.packId})::int`,
+          bookCount: sql<number>`count(${packBooks.packId})`,
         })
         .from(packs)
         .leftJoin(packBooks, eq(packBooks.packId, packs.id))
@@ -1161,7 +1159,7 @@ export const ingestHardcoverBookForAdminPackFn = createServerFn({
               ratingsCount: row.ratingsCount,
               averageRating: row.averageRating,
               rawMetadata: row.rawMetadata,
-              updatedAt: sql`now()`,
+              updatedAt: new Date(),
             },
           })
           .returning({
@@ -1293,7 +1291,7 @@ export const refreshBookFromHardcoverFn = createServerFn({ method: "POST" })
             ratingsCount: row.ratingsCount,
             averageRating: row.averageRating,
             rawMetadata: row.rawMetadata,
-            updatedAt: sql`now()`,
+            updatedAt: new Date(),
           })
           .where(eq(books.id, data.bookId))
           .returning({
@@ -1386,7 +1384,7 @@ export const softDeleteBookFn = createServerFn({ method: "POST" })
           .update(books)
           .set({
             deletedAt: sql`coalesce(${books.deletedAt}, now())`,
-            updatedAt: sql`now()`,
+            updatedAt: new Date(),
           })
           .where(eq(books.id, data.bookId))
           .returning({ id: books.id, deletedAt: books.deletedAt });
@@ -1428,7 +1426,7 @@ export const restoreBookFn = createServerFn({ method: "POST" })
 
         const [updated] = await database
           .update(books)
-          .set({ deletedAt: null, updatedAt: sql`now()` })
+          .set({ deletedAt: null, updatedAt: new Date() })
           .where(eq(books.id, data.bookId))
           .returning({ id: books.id });
 

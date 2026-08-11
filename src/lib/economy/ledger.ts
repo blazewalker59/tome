@@ -388,7 +388,7 @@ async function countEventsSince(
   since: Date,
 ): Promise<number> {
   const [row] = await db
-    // `count(*)::int` on Postgres — SQLite's count() is already an integer
+    // `count(*)` on Postgres — SQLite's count() is already an integer
     // and has no cast syntax.
     .select({ count: sql<number>`count(*)` })
     .from(shardEvents)

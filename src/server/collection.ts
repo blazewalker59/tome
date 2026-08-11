@@ -517,7 +517,7 @@ export const getRipPacksFn = createServerFn({ method: "GET" }).handler(
           // separate N+1 pass and keeps the payload compact for the
           // carousel.
           bookCount: sql<number>`(
-          SELECT COUNT(*)::int
+          SELECT COUNT(*)
           FROM ${packBooks}
           WHERE ${packBooks.packId} = ${packs.id}
         )`,

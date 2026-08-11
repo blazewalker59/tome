@@ -39,6 +39,7 @@ import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 
 import { withErrorLogging } from "./_shared";
 import { getDb } from "@/db/client";
+import { toEpochSeconds } from "@/db/sql";
 import { follows, packBooks, packRips, packs, users } from "@/db/schema";
 import { getSessionUser, requireSessionUser } from "@/lib/auth/session";
 
@@ -53,20 +54,6 @@ type AggregatedCard = {
   authors: Array<string> | null;
   rarity?: string;
 };
-
-/**
- * Convert a Date to the epoch-SECONDS integer SQLite stores.
- *
- * Only needed inside raw `sql` templates. Drizzle's query builder knows a
- * column is `integer({ mode: "timestamp" })` and converts a bound Date for
- * you; a raw template has no column to consult, so it would hand the Date
- * straight to D1, which accepts only null/number/string/boolean/ArrayBuffer
- * and rejects it. Every date interpolated into raw SQL in this file goes
- * through here.
- */
-function toEpochSeconds(d: Date): number {
-  return Math.floor(d.getTime() / 1000);
-}
 
 /**
  * Parse the TEXT payload of a SQLite `json_group_array` aggregate.
@@ -199,7 +186,7 @@ export const followUserFn = createServerFn({ method: "POST" })
         // column directly. Acceptable while the table is small; if it
         // grows we'll add `index("follows_followee_idx").on(t.followeeId)`.
         const [{ count }] = await database
-          .select({ count: sql<number>`count(*)::int` })
+          .select({ count: sql<number>`count(*)` })
           .from(follows)
           .where(eq(follows.followeeId, targetId));
 
@@ -242,7 +229,7 @@ export const unfollowUserFn = createServerFn({ method: "POST" })
           );
 
         const [{ count }] = await database
-          .select({ count: sql<number>`count(*)::int` })
+          .select({ count: sql<number>`count(*)` })
           .from(follows)
           .where(eq(follows.followeeId, targetId));
 
@@ -297,12 +284,12 @@ export const getFollowStateFn = createServerFn({ method: "GET" })
         const me = await getSessionUser();
 
         const [followerRow] = await database
-          .select({ count: sql<number>`count(*)::int` })
+          .select({ count: sql<number>`count(*)` })
           .from(follows)
           .where(eq(follows.followeeId, targetId));
 
         const [followingRow] = await database
-          .select({ count: sql<number>`count(*)::int` })
+          .select({ count: sql<number>`count(*)` })
           .from(follows)
           .where(eq(follows.followerId, targetId));
 
@@ -617,10 +604,10 @@ async function loadFeedSuggestions(
 ): Promise<Array<FeedSuggestion>> {
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const trendingExpr = sql<number>`(
-    SELECT COUNT(*)::int
+    SELECT COUNT(*)
     FROM ${packRips}
     WHERE ${packRips.packId} = ${packs.id}
-      AND ${packRips.rippedAt} > ${weekAgo}
+      AND ${packRips.rippedAt} > ${toEpochSeconds(weekAgo)}
   )`;
 
   const conditions = [
@@ -677,7 +664,7 @@ async function loadPackPublishedEvents(
       genreTags: packs.genreTags,
       publishedAt: packs.publishedAt,
       bookCount: sql<number>`(
-        SELECT COUNT(*)::int FROM ${packBooks}
+        SELECT COUNT(*) FROM ${packBooks}
         WHERE ${packBooks.packId} = ${packs.id}
       )`,
       actor: {
@@ -928,7 +915,7 @@ export const getSuggestedCreatorsFn = createServerFn({ method: "GET" })
         // every user in the system would tie at zero on a fresh DB.
         const excludeId = me?.id ?? null;
         // SQLite translation notes, same as loadLegendaryPullEvents:
-        //   COUNT(*)::int   → COUNT(*)          (no cast syntax; already int)
+        //   COUNT(*)   → COUNT(*)          (no cast syntax; already int)
         //   is_public = true→ is_public = 1     (booleans are 0/1 integers)
         //   LATERAL unnest  → json_each(...)    (pulled_book_ids is JSON now)
         const rows = await database.all<{
