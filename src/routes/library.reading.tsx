@@ -474,7 +474,7 @@ function LogSearchPanel({
         type="search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        className="input-field min-h-[40px] w-full rounded-full px-4 text-sm"
+        className="input-field min-h-[40px] w-full rounded-full px-4 text-base sm:text-sm"
         placeholder="Search by title or author…"
       />
       {localError && (
