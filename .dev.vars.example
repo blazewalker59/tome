@@ -8,8 +8,8 @@
 # specifically want `wrangler dev` to exercise a different set of values
 # than your vite-dev workflow.
 
-# Neon pooled connection string (host contains `-pooler`).
-DATABASE_URL=
+# No DATABASE_URL: the database is the D1 binding `env.DB` declared in
+# wrangler.jsonc, not a connection string.
 
 # Better Auth server secret. Generate with: openssl rand -base64 32
 BETTER_AUTH_SECRET=
