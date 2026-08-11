@@ -22,25 +22,27 @@
 
 import { useState } from "react";
 import {
-  createFileRoute,
   Link,
-  useNavigate,
+  createFileRoute,
   redirect,
+  useNavigate,
 } from "@tanstack/react-router";
 
+import type {
+  FollowFeedEvent,
+  FollowFeedPayload,
+  LegendaryPullEvent,
+  MyRipCard,
+  MyRipEvent,
+  MyRipsPayload,
+  PackPublishedEvent,
+  SuggestedCreator,
+  SuggestedCreatorsPayload,
+} from "@/server/social";
 import {
   getFollowFeedFn,
   getMyRipsFn,
   getSuggestedCreatorsFn,
-  type FollowFeedEvent,
-  type FollowFeedPayload,
-  type LegendaryPullEvent,
-  type MyRipEvent,
-  type MyRipsPayload,
-  type MyRipCard,
-  type PackPublishedEvent,
-  type SuggestedCreator,
-  type SuggestedCreatorsPayload,
 } from "@/server/social";
 import { CoverImage } from "@/components/CoverImage";
 import { FollowButton } from "@/components/FollowButton";
@@ -61,7 +63,10 @@ interface FeedSearch {
 function parseFeedSearch(raw: Record<string, unknown>): FeedSearch {
   const out: FeedSearch = {};
   const tab = raw.tab;
-  if (typeof tab === "string" && (TAB_VALUES as readonly string[]).includes(tab)) {
+  if (
+    typeof tab === "string" &&
+    (TAB_VALUES as ReadonlyArray<string>).includes(tab)
+  ) {
     out.tab = tab as FeedTab;
   }
   return out;
@@ -289,7 +294,10 @@ function SocialTab({
           few creators / packs to keep the social graph growing. Smaller
           headings here than the empty-state version. */}
       <div className="mt-12 space-y-8">
-        <SuggestedCreatorsSection creators={suggested.creators} variant="footer" />
+        <SuggestedCreatorsSection
+          creators={suggested.creators}
+          variant="footer"
+        />
       </div>
     </>
   );
@@ -436,7 +444,9 @@ function TrendingPacksSection({
 
 function YouTab({ myRips }: { myRips: MyRipsPayload }) {
   const navigate = useNavigate();
-  const [events, setEvents] = useState<ReadonlyArray<MyRipEvent>>(myRips.events);
+  const [events, setEvents] = useState<ReadonlyArray<MyRipEvent>>(
+    myRips.events,
+  );
   const [cursor, setCursor] = useState<number | null>(myRips.nextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -542,9 +552,7 @@ function RipHistoryCard({ event }: { event: MyRipEvent }) {
                 {event.duplicateCount === 1 ? "" : "s"}
               </>
             )}
-            {event.shardsAwarded > 0 && (
-              <> · +{event.shardsAwarded} shards</>
-            )}
+            {event.shardsAwarded > 0 && <> · +{event.shardsAwarded} shards</>}
           </p>
         </div>
       </div>
@@ -677,9 +685,7 @@ function PackPublishedCard({ event }: { event: PackPublishedEvent }) {
   return (
     <article className="island-shell flex flex-col gap-3 rounded-3xl p-4">
       <ActorRow event={event} />
-      <p className="text-xs text-[var(--sea-ink-soft)]">
-        Published a new pack
-      </p>
+      <p className="text-xs text-[var(--sea-ink-soft)]">Published a new pack</p>
       <Link
         to="/u/$username/$slug"
         params={{ username: actor.username, slug: pack.slug }}

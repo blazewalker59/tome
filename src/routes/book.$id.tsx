@@ -1,26 +1,23 @@
 import { useEffect, useState, useTransition } from "react";
 import {
-  createFileRoute,
   Link,
+  createFileRoute,
   notFound,
   useRouter,
 } from "@tanstack/react-router";
 import { BookOpen, Check, Star, Trash2 } from "lucide-react";
+import type { BookDetailPayload } from "@/server/collection";
+import type { ReadingEntry, ReadingStatus } from "@/server/reading";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
 import { Card } from "@/components/cards/Card";
 import { CoverImage } from "@/components/CoverImage";
 import { useToast } from "@/components/Toast";
 import { RARITY_STYLES, formatGenre } from "@/lib/cards/style";
-import {
-  getBookFn,
-  type BookDetailPayload,
-} from "@/server/collection";
+import { getBookFn } from "@/server/collection";
 import {
   deleteReadingEntryFn,
   getReadingEntryFn,
   upsertReadingEntryFn,
-  type ReadingEntry,
-  type ReadingStatus,
 } from "@/server/reading";
 
 /**
@@ -75,10 +72,7 @@ function BookDetailPage() {
       <BookHero detail={data} />
 
       {signedIn ? (
-        <ReadingPanel
-          bookId={data.book.id}
-          initialEntry={readingEntry}
-        />
+        <ReadingPanel bookId={data.book.id} initialEntry={readingEntry} />
       ) : (
         <UnlockCta signedIn={false} />
       )}
@@ -87,9 +81,7 @@ function BookDetailPage() {
         <OwnerMetaPanel ownership={data.ownership} />
       )}
 
-      {signedIn && !data.ownership?.owned && (
-        <UnlockCta signedIn={true} />
-      )}
+      {signedIn && !data.ownership?.owned && <UnlockCta signedIn={true} />}
 
       {/* Visual anchor — show the Card component itself so the detail
           page feels like an expanded version of what the user sees on
@@ -155,7 +147,9 @@ function BookHero({ detail }: { detail: BookDetailPayload }) {
 
           <dl className="mt-6 grid grid-cols-2 gap-3 text-xs uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] sm:grid-cols-4">
             <Meta label="Genre" value={genreLabel} />
-            {book.pageCount ? <Meta label="Pages" value={`${book.pageCount}`} /> : null}
+            {book.pageCount ? (
+              <Meta label="Pages" value={`${book.pageCount}`} />
+            ) : null}
             {book.publishedYear ? (
               <Meta label="Year" value={`${book.publishedYear}`} />
             ) : null}
@@ -316,10 +310,14 @@ function ReadingPanel({
           Log this book
         </h2>
         <p className="mt-2 max-w-prose text-sm text-[var(--sea-ink-soft)]">
-          Track your reading and earn shards — 5 when you start,
-          100 when you finish.
+          Track your reading and earn shards — 5 when you start, 100 when you
+          finish.
         </p>
-        <div role="radiogroup" aria-label="Reading status" className="mt-4 flex flex-wrap gap-2">
+        <div
+          role="radiogroup"
+          aria-label="Reading status"
+          className="mt-4 flex flex-wrap gap-2"
+        >
           {STATUS_OPTIONS.map((o) => (
             <button
               key={o.value}
@@ -334,7 +332,9 @@ function ReadingPanel({
           ))}
         </div>
         {error && (
-          <p className="mt-3 text-xs text-[color:var(--rarity-legendary)]">{error}</p>
+          <p className="mt-3 text-xs text-[color:var(--rarity-legendary)]">
+            {error}
+          </p>
         )}
       </section>
     );
@@ -359,7 +359,11 @@ function ReadingPanel({
         <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
           Status
         </p>
-        <div role="radiogroup" aria-label="Reading status" className="flex flex-wrap gap-2">
+        <div
+          role="radiogroup"
+          aria-label="Reading status"
+          className="flex flex-wrap gap-2"
+        >
           {STATUS_OPTIONS.map((o) => {
             const active = entry.status === o.value;
             return (
@@ -384,7 +388,11 @@ function ReadingPanel({
         <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
           Rating
         </p>
-        <div role="radiogroup" aria-label="Rating" className="flex items-center gap-1">
+        <div
+          role="radiogroup"
+          aria-label="Rating"
+          className="flex items-center gap-1"
+        >
           {[1, 2, 3, 4, 5].map((n) => {
             const filled = rating !== null && n <= rating;
             return (
@@ -538,7 +546,10 @@ function UnlockCta({ signedIn }: { signedIn: boolean }) {
           Rip a pack
         </Link>
         {!signedIn && (
-          <Link to="/sign-in" className="btn-secondary rounded-full px-5 text-sm">
+          <Link
+            to="/sign-in"
+            className="btn-secondary rounded-full px-5 text-sm"
+          >
             Sign in
           </Link>
         )}

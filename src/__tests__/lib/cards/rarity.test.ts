@@ -1,24 +1,34 @@
 import { describe, expect, it } from "vitest";
+import { createBookRanking, resetFactoryIds } from "@test/factories";
 import {
-  assignRarities,
   MIN_RATINGS_FOR_TOP_TIER,
+  assignRarities,
   scoreBook,
 } from "@/lib/cards/rarity";
-import { createBookRanking, resetFactoryIds } from "@test/factories";
 
 describe("scoreBook", () => {
   it("returns averageRating * ratingsCount", () => {
-    expect(scoreBook({ id: "x", ratingsCount: 1000, averageRating: 4.5 })).toBe(4500);
+    expect(scoreBook({ id: "x", ratingsCount: 1000, averageRating: 4.5 })).toBe(
+      4500,
+    );
   });
 
   it("parses string averageRating (DB numeric shape)", () => {
-    expect(scoreBook({ id: "x", ratingsCount: 1000, averageRating: "4.5" })).toBe(4500);
+    expect(
+      scoreBook({ id: "x", ratingsCount: 1000, averageRating: "4.5" }),
+    ).toBe(4500);
   });
 
   it("returns 0 for null/invalid averageRating (new or unrated book)", () => {
-    expect(scoreBook({ id: "x", ratingsCount: 1000, averageRating: null })).toBe(0);
-    expect(scoreBook({ id: "x", ratingsCount: 1000, averageRating: "nope" })).toBe(0);
-    expect(scoreBook({ id: "x", ratingsCount: 1000, averageRating: 0 })).toBe(0);
+    expect(
+      scoreBook({ id: "x", ratingsCount: 1000, averageRating: null }),
+    ).toBe(0);
+    expect(
+      scoreBook({ id: "x", ratingsCount: 1000, averageRating: "nope" }),
+    ).toBe(0);
+    expect(scoreBook({ id: "x", ratingsCount: 1000, averageRating: 0 })).toBe(
+      0,
+    );
   });
 });
 
@@ -51,7 +61,10 @@ describe("assignRarities", () => {
 
   it("puts the highest-scoring book at legendary and the lowest at common", () => {
     resetFactoryIds();
-    const top = createBookRanking({ ratingsCount: 1_000_000, averageRating: 4.8 });
+    const top = createBookRanking({
+      ratingsCount: 1_000_000,
+      averageRating: 4.8,
+    });
     const middle = Array.from({ length: 98 }, () =>
       createBookRanking({ ratingsCount: 1000, averageRating: 4.0 }),
     );

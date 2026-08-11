@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { Link, createFileRoute, redirect } from "@tanstack/react-router";
+import type {
+  HardcoverSearchHit,
+  HardcoverSearchResult,
+} from "@/server/hardcover";
+import type { IngestBookResult } from "@/server/ingest";
 import { CoverImage } from "@/components/CoverImage";
 import { demoteReasonLabel } from "@/lib/hardcover/rank";
-import {
-  checkAdminFn,
-  ingestBookFn,
-  searchHardcoverFn,
-  type IngestBookResult,
-} from "@/server/ingest";
-import type { HardcoverSearchHit, HardcoverSearchResult } from "@/server/hardcover";
+import { checkAdminFn, ingestBookFn, searchHardcoverFn } from "@/server/ingest";
 
 /**
  * Admin-only Hardcover ingestion route.
@@ -55,8 +54,9 @@ function AdminIngestPage() {
             Admin access required
           </h1>
           <p className="mt-3 text-sm text-[var(--sea-ink-soft)]">
-            Your account{status.email ? ` (${status.email})` : ""} isn&rsquo;t on the admin
-            allowlist. If that&rsquo;s a mistake, ping the operator to add you to
+            Your account{status.email ? ` (${status.email})` : ""} isn&rsquo;t
+            on the admin allowlist. If that&rsquo;s a mistake, ping the operator
+            to add you to
             <code className="mx-1 rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">
               ADMIN_EMAILS
             </code>
@@ -101,7 +101,9 @@ type SearchState =
   | {
       kind: "ready";
       query: string;
-      result: HardcoverSearchResult & { existingByHardcoverId: Record<number, string> };
+      result: HardcoverSearchResult & {
+        existingByHardcoverId: Record<number, string>;
+      };
     }
   | { kind: "error"; message: string };
 
@@ -112,7 +114,7 @@ type SearchState =
 function IngestWorkspace() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState<SearchState>({ kind: "idle" });
-  const [queue, setQueue] = useState<QueueEntry[]>([]);
+  const [queue, setQueue] = useState<Array<QueueEntry>>([]);
   const [bulkRunning, setBulkRunning] = useState(false);
 
   // Shared defaults the operator can pre-fill once and propagate to
@@ -132,7 +134,9 @@ function IngestWorkspace() {
     }
     const mySeq = ++reqSeqRef.current;
     const timer = setTimeout(() => {
-      setSearch((prev) => (prev.kind === "ready" && prev.query === q ? prev : { kind: "loading" }));
+      setSearch((prev) =>
+        prev.kind === "ready" && prev.query === q ? prev : { kind: "loading" },
+      );
       searchHardcoverFn({ data: { query: q, perPage: 20 } })
         .then((result) => {
           if (mySeq !== reqSeqRef.current) return; // stale
@@ -174,8 +178,13 @@ function IngestWorkspace() {
   }, []);
 
   const updateEntry = useCallback(
-    (hardcoverId: number, patch: Partial<Omit<QueueEntry, "hardcoverId" | "hit">>) => {
-      setQueue((q) => q.map((e) => (e.hardcoverId === hardcoverId ? { ...e, ...patch } : e)));
+    (
+      hardcoverId: number,
+      patch: Partial<Omit<QueueEntry, "hardcoverId" | "hit">>,
+    ) => {
+      setQueue((q) =>
+        q.map((e) => (e.hardcoverId === hardcoverId ? { ...e, ...patch } : e)),
+      );
     },
     [],
   );
@@ -212,7 +221,9 @@ function IngestWorkspace() {
 
       setQueue((q) =>
         q.map((e) =>
-          e.hardcoverId === entry.hardcoverId ? { ...e, state: { kind: "pending" } } : e,
+          e.hardcoverId === entry.hardcoverId
+            ? { ...e, state: { kind: "pending" } }
+            : e,
         ),
       );
       try {
@@ -230,7 +241,9 @@ function IngestWorkspace() {
         });
         setQueue((q) =>
           q.map((e) =>
-            e.hardcoverId === entry.hardcoverId ? { ...e, state: { kind: "done", result } } : e,
+            e.hardcoverId === entry.hardcoverId
+              ? { ...e, state: { kind: "done", result } }
+              : e,
           ),
         );
       } catch (err) {
@@ -241,7 +254,8 @@ function IngestWorkspace() {
                   ...e,
                   state: {
                     kind: "error",
-                    message: err instanceof Error ? err.message : "Ingest failed",
+                    message:
+                      err instanceof Error ? err.message : "Ingest failed",
                   },
                 }
               : e,
@@ -269,8 +283,9 @@ function IngestWorkspace() {
           Ingest from Hardcover
         </h1>
         <p className="mt-3 max-w-2xl text-sm text-[var(--sea-ink-soft)]">
-          Search Hardcover, queue books, then bulk-ingest. Re-ingesting a book updates editorial
-          fields (genre, moods) and refreshes metadata; rarity is untouched. Run{" "}
+          Search Hardcover, queue books, then bulk-ingest. Re-ingesting a book
+          updates editorial fields (genre, moods) and refreshes metadata; rarity
+          is untouched. Run{" "}
           <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">
             pnpm db:rebucket
           </code>{" "}
@@ -292,7 +307,10 @@ function IngestWorkspace() {
             placeholder="literary-fiction"
           />
         </Field>
-        <Field label="Default pack slug" hint="Optional. Applied to new queue entries.">
+        <Field
+          label="Default pack slug"
+          hint="Optional. Applied to new queue entries."
+        >
           <input
             type="text"
             value={defaultPackSlug}
@@ -356,7 +374,8 @@ function SearchPane({
         aria-label="Search Hardcover"
       />
       <p className="mt-2 text-[11px] text-[var(--sea-ink-soft)]">
-        3+ characters; debounced 400ms. Each search consumes a Hardcover rate-limit slot.
+        3+ characters; debounced 400ms. Each search consumes a Hardcover
+        rate-limit slot.
       </p>
 
       <div className="mt-4">
@@ -425,7 +444,8 @@ function SearchPane({
                     </p>
                     <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
                       {hit.rating != null ? `★ ${hit.rating.toFixed(2)}` : "—"}
-                      {hit.ratingsCount != null && ` · ${hit.ratingsCount.toLocaleString()} ratings`}
+                      {hit.ratingsCount != null &&
+                        ` · ${hit.ratingsCount.toLocaleString()} ratings`}
                       {" · hc#"}
                       {hit.id}
                     </p>
@@ -473,7 +493,7 @@ function QueuePane({
   onRunBulk,
   onClearDone,
 }: {
-  queue: QueueEntry[];
+  queue: Array<QueueEntry>;
   bulkRunning: boolean;
   pendingCount: number;
   doneCount: number;
@@ -545,7 +565,10 @@ function QueueRow({
   ) => void;
   onRemove: (id: number) => void;
 }) {
-  const disabled = bulkRunning || entry.state.kind === "pending" || entry.state.kind === "done";
+  const disabled =
+    bulkRunning ||
+    entry.state.kind === "pending" ||
+    entry.state.kind === "done";
 
   return (
     <li className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4">
@@ -563,7 +586,8 @@ function QueueRow({
             {entry.hit.title}
           </p>
           <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
-            {entry.hit.authorNames.join(", ") || "Unknown author"} · hc#{entry.hardcoverId}
+            {entry.hit.authorNames.join(", ") || "Unknown author"} · hc#
+            {entry.hardcoverId}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -585,7 +609,9 @@ function QueueRow({
           <input
             type="text"
             value={entry.genre}
-            onChange={(e) => onUpdate(entry.hardcoverId, { genre: e.target.value })}
+            onChange={(e) =>
+              onUpdate(entry.hardcoverId, { genre: e.target.value })
+            }
             disabled={disabled}
             pattern="[a-z0-9][a-z0-9-]*"
             className="input-field min-h-[36px] w-full rounded-full px-3 text-xs"
@@ -596,7 +622,9 @@ function QueueRow({
           <input
             type="text"
             value={entry.moodTagsRaw}
-            onChange={(e) => onUpdate(entry.hardcoverId, { moodTagsRaw: e.target.value })}
+            onChange={(e) =>
+              onUpdate(entry.hardcoverId, { moodTagsRaw: e.target.value })
+            }
             disabled={disabled}
             className="input-field min-h-[36px] w-full rounded-full px-3 text-xs"
             placeholder="atmospheric, slow-burn"
@@ -606,7 +634,9 @@ function QueueRow({
           <input
             type="text"
             value={entry.packSlug}
-            onChange={(e) => onUpdate(entry.hardcoverId, { packSlug: e.target.value })}
+            onChange={(e) =>
+              onUpdate(entry.hardcoverId, { packSlug: e.target.value })
+            }
             disabled={disabled}
             className="input-field min-h-[36px] w-full rounded-full px-3 text-xs"
             placeholder="optional"
@@ -689,7 +719,11 @@ function Field({
         {label}
       </span>
       {children}
-      {hint && <span className="mt-1.5 block text-[11px] text-[var(--sea-ink-soft)]">{hint}</span>}
+      {hint && (
+        <span className="mt-1.5 block text-[11px] text-[var(--sea-ink-soft)]">
+          {hint}
+        </span>
+      )}
     </label>
   );
 }

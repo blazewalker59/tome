@@ -1,23 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
+import {
+  Link,
+  createFileRoute,
+  redirect,
+  useNavigate,
+} from "@tanstack/react-router";
 import { ChevronDown, Info } from "lucide-react";
+import type { CardData } from "@/lib/cards/types";
+import type { PackManifestEntry } from "@/server/collection";
+import type { GroupBy } from "@/lib/cards/filter";
 import { Card } from "@/components/cards/Card";
 import { CoverImage } from "@/components/CoverImage";
 import { PackContentsSheet } from "@/components/PackContentsSheet";
 import { RarityGemRow } from "@/components/RarityGemRow";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
-import {
-  groupCards,
-  rarityCounts,
-  sortCards,
-  type GroupBy,
-} from "@/lib/cards/filter";
-import type { CardData } from "@/lib/cards/types";
-import {
-  getCollectionFn,
-  getPackBooksByIdsFn,
-  type PackManifestEntry,
-} from "@/server/collection";
+import { groupCards, rarityCounts, sortCards } from "@/lib/cards/filter";
+import { getCollectionFn, getPackBooksByIdsFn } from "@/server/collection";
 
 /**
  * Collection route.
@@ -78,12 +76,20 @@ function parseCollectionSearch(raw: Record<string, unknown>): CollectionSearch {
   const out: CollectionSearch = {};
 
   const view = raw.view;
-  if (typeof view === "string" && (VIEW_VALUES as readonly string[]).includes(view)) {
+  if (
+    typeof view === "string" &&
+    (VIEW_VALUES as ReadonlyArray<string>).includes(view)
+  ) {
     out.view = view as GroupBy;
   }
 
   const sort = raw.sort;
-  if (typeof sort === "string" && (["newest", "rarity", "title", "author"] as const as readonly string[]).includes(sort)) {
+  if (
+    typeof sort === "string" &&
+    (
+      ["newest", "rarity", "title", "author"] as const as ReadonlyArray<string>
+    ).includes(sort)
+  ) {
     out.sort = sort as "newest" | "rarity" | "title" | "author";
   }
 
@@ -325,7 +331,9 @@ function CollectionPage() {
             <span className="hidden sm:inline">Group</span>
             <select
               value={view}
-              onChange={(e) => updateSearch({ view: e.target.value as GroupBy })}
+              onChange={(e) =>
+                updateSearch({ view: e.target.value as GroupBy })
+              }
               className="input-field min-h-[44px] rounded-full px-3 text-xs font-semibold"
               aria-label="Group by"
             >
@@ -374,7 +382,11 @@ function GroupedView({
   packManifests,
   ownedBookIds,
 }: {
-  groups: ReadonlyArray<{ key: string; label: string; cards: ReadonlyArray<CardData> }>;
+  groups: ReadonlyArray<{
+    key: string;
+    label: string;
+    cards: ReadonlyArray<CardData>;
+  }>;
   view: GroupBy;
   cardById: ReadonlyMap<string, CardData>;
   packManifests: Record<string, PackManifestEntry>;
@@ -416,7 +428,9 @@ function GroupedView({
         // to look up the raw ID. Non-pack views pass undefined and
         // the group card hides its Info affordance.
         const packId =
-          view === "pack" && g.key.startsWith("pack:") ? g.key.slice("pack:".length) : null;
+          view === "pack" && g.key.startsWith("pack:")
+            ? g.key.slice("pack:".length)
+            : null;
         const manifest = packId ? packManifests[packId] : undefined;
         return (
           <CollapsibleGroup
@@ -597,7 +611,7 @@ function CardGrid({
   // so long collections don't hammer the network up-front.
   const ABOVE_THE_FOLD = 10;
   const preloadUrls = useMemo(() => {
-    const urls: string[] = [];
+    const urls: Array<string> = [];
     for (const c of cards) {
       if (urls.length >= ABOVE_THE_FOLD) break;
       const card = cardById.get(c.id);
@@ -680,7 +694,10 @@ function CardSkeleton() {
  * restart (cards prop changes mid-flight) doesn't leak or
  * race with stale resolutions from the prior URL set.
  */
-function useImagesReady(urls: ReadonlyArray<string>, timeoutMs: number): boolean {
+function useImagesReady(
+  urls: ReadonlyArray<string>,
+  timeoutMs: number,
+): boolean {
   const [ready, setReady] = useState(urls.length === 0);
   // Stabilise the dependency — a new array identity each render
   // would restart the effect every time even when the URLs are
@@ -695,7 +712,7 @@ function useImagesReady(urls: ReadonlyArray<string>, timeoutMs: number): boolean
     setReady(false);
     let remaining = urls.length;
     let cancelled = false;
-    const imgs: HTMLImageElement[] = [];
+    const imgs: Array<HTMLImageElement> = [];
     const done = () => {
       if (cancelled) return;
       remaining -= 1;
@@ -743,8 +760,8 @@ function EmptyState() {
           Your collection is empty
         </h1>
         <p className="mt-4 text-sm text-[var(--sea-ink-soft)]">
-          Rip your first pack to start building a library. Common books fill the shelf; legendaries
-          are vanishingly rare.
+          Rip your first pack to start building a library. Common books fill the
+          shelf; legendaries are vanishingly rare.
         </p>
         <Link
           to="/rip"

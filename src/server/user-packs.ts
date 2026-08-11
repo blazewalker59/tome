@@ -28,24 +28,32 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
-import { and, asc, desc, eq, gt, ilike, inArray, isNull, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  ilike,
+  inArray,
+  isNull,
+  or,
+  sql,
+} from "drizzle-orm";
 
+import { fetchBookById, searchBooks } from "./hardcover";
+import { normalizeKebab } from "./catalog";
+import { withErrorLogging } from "./_shared";
+import type { HardcoverSearchHit } from "./hardcover";
+import type { Rarity } from "@/lib/packs/composition";
+import type { DemoteReason } from "@/lib/hardcover/rank";
 import { getDb } from "@/db/client";
 import { books, packBooks, packRips, packs, users } from "@/db/schema";
 import { getSessionUser, requireSessionUser } from "@/lib/auth/session";
 import { getEconomy } from "@/lib/economy/config";
-import type { Rarity } from "@/lib/packs/composition";
 import { checkPackComposition } from "@/lib/packs/composition";
 import { getPublishUnlockStatus } from "@/lib/packs/unlock";
 import { bookResponseToRow } from "@/lib/cards/hardcover";
-import type { DemoteReason } from "@/lib/hardcover/rank";
-import {
-  fetchBookById,
-  searchBooks,
-  type HardcoverSearchHit,
-} from "./hardcover";
-import { normalizeKebab } from "./catalog";
-import { withErrorLogging } from "./_shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared shapes
@@ -115,10 +123,14 @@ function trimOptionalString(raw: unknown, max: number): string | undefined {
   return v;
 }
 
-function normalizeGenreTags(raw: unknown): string[] {
+function normalizeGenreTags(raw: unknown): Array<string> {
   if (!Array.isArray(raw)) return [];
   const tags = raw
-    .map((t) => String(t ?? "").trim().toLowerCase())
+    .map((t) =>
+      String(t ?? "")
+        .trim()
+        .toLowerCase(),
+    )
     .filter((t) => t.length > 0);
   for (const t of tags) {
     // Reuse the kebab validator — genre tags follow the same rule as
@@ -130,7 +142,7 @@ function normalizeGenreTags(raw: unknown): string[] {
   }
   // Dedupe, preserving first-seen order.
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: Array<string> = [];
   for (const t of tags) {
     if (!seen.has(t)) {
       seen.add(t);
@@ -153,7 +165,8 @@ function slugifyName(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, MAX_SLUG_LEN);
-  if (base.length === 0) throw new Error("Pack name must contain letters or digits");
+  if (base.length === 0)
+    throw new Error("Pack name must contain letters or digits");
   return base;
 }
 
@@ -171,7 +184,9 @@ async function reserveSlugForCreator(
   const existing = await database
     .select({ slug: packs.slug })
     .from(packs)
-    .where(and(eq(packs.creatorId, creatorId), ilike(packs.slug, `${candidate}%`)));
+    .where(
+      and(eq(packs.creatorId, creatorId), ilike(packs.slug, `${candidate}%`)),
+    );
   const taken = new Set(existing.map((r) => r.slug));
   if (!taken.has(candidate)) return candidate;
   for (let n = 2; n < 1000; n += 1) {
@@ -294,11 +309,13 @@ export const updatePackDraftFn = createServerFn({ method: "POST" })
       out.description =
         r.description === null
           ? null
-          : trimOptionalString(r.description, MAX_DESCRIPTION_LEN) ?? null;
+          : (trimOptionalString(r.description, MAX_DESCRIPTION_LEN) ?? null);
     }
     if ("coverImageUrl" in r) {
       out.coverImageUrl =
-        r.coverImageUrl === null ? null : trimOptionalString(r.coverImageUrl, 2048) ?? null;
+        r.coverImageUrl === null
+          ? null
+          : (trimOptionalString(r.coverImageUrl, 2048) ?? null);
     }
     if ("genreTags" in r) {
       out.genreTags = normalizeGenreTags(r.genreTags);
@@ -306,21 +323,27 @@ export const updatePackDraftFn = createServerFn({ method: "POST" })
     return out;
   })
   .handler(
-    withErrorLogging("updatePackDraftFn", async ({ data }): Promise<{ ok: true }> => {
-      const user = await requireSessionUser();
-      const database = await getDb();
-      await assertPackOwnedBy(database, data.packId, user.id);
+    withErrorLogging(
+      "updatePackDraftFn",
+      async ({ data }): Promise<{ ok: true }> => {
+        const user = await requireSessionUser();
+        const database = await getDb();
+        await assertPackOwnedBy(database, data.packId, user.id);
 
-      const patch: Record<string, unknown> = {};
-      if (data.name !== undefined) patch.name = data.name;
-      if ("description" in data) patch.description = data.description;
-      if ("coverImageUrl" in data) patch.coverImageUrl = data.coverImageUrl;
-      if (data.genreTags !== undefined) patch.genreTags = [...data.genreTags];
-      if (Object.keys(patch).length === 0) return { ok: true };
+        const patch: Record<string, unknown> = {};
+        if (data.name !== undefined) patch.name = data.name;
+        if ("description" in data) patch.description = data.description;
+        if ("coverImageUrl" in data) patch.coverImageUrl = data.coverImageUrl;
+        if (data.genreTags !== undefined) patch.genreTags = [...data.genreTags];
+        if (Object.keys(patch).length === 0) return { ok: true };
 
-      await database.update(packs).set(patch).where(eq(packs.id, data.packId));
-      return { ok: true };
-    }),
+        await database
+          .update(packs)
+          .set(patch)
+          .where(eq(packs.id, data.packId));
+        return { ok: true };
+      },
+    ),
   );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -337,50 +360,67 @@ export interface PackMembershipInput {
 }
 
 export const addBookToPackDraftFn = createServerFn({ method: "POST" })
-  .inputValidator((raw: unknown): PackMembershipInput => coercePackMembershipInput(raw))
+  .inputValidator((raw: unknown): PackMembershipInput =>
+    coercePackMembershipInput(raw),
+  )
   .handler(
-    withErrorLogging("addBookToPackDraftFn", async ({ data }): Promise<{ ok: true }> => {
-      const user = await requireSessionUser();
-      const database = await getDb();
-      const pack = await assertPackOwnedBy(database, data.packId, user.id);
-      if (pack.isPublic) {
-        throw new Error("Pack is published — unpublish before editing contents");
-      }
+    withErrorLogging(
+      "addBookToPackDraftFn",
+      async ({ data }): Promise<{ ok: true }> => {
+        const user = await requireSessionUser();
+        const database = await getDb();
+        const pack = await assertPackOwnedBy(database, data.packId, user.id);
+        if (pack.isPublic) {
+          throw new Error(
+            "Pack is published — unpublish before editing contents",
+          );
+        }
 
-      // Verify the book exists and is live before inserting. The FK
-      // would catch a missing row but not a soft-deleted one, and the
-      // resulting unique-constraint chatter would be opaque to the
-      // caller. Fail-fast with a real message instead.
-      const [book] = await database
-        .select({ id: books.id, deletedAt: books.deletedAt })
-        .from(books)
-        .where(eq(books.id, data.bookId))
-        .limit(1);
-      if (!book) throw new Error(`Book ${data.bookId} not found`);
-      if (book.deletedAt) {
-        throw new Error(
-          `Book ${data.bookId} has been removed from the catalog and cannot be added to a pack`,
-        );
-      }
+        // Verify the book exists and is live before inserting. The FK
+        // would catch a missing row but not a soft-deleted one, and the
+        // resulting unique-constraint chatter would be opaque to the
+        // caller. Fail-fast with a real message instead.
+        const [book] = await database
+          .select({ id: books.id, deletedAt: books.deletedAt })
+          .from(books)
+          .where(eq(books.id, data.bookId))
+          .limit(1);
+        if (!book) throw new Error(`Book ${data.bookId} not found`);
+        if (book.deletedAt) {
+          throw new Error(
+            `Book ${data.bookId} has been removed from the catalog and cannot be added to a pack`,
+          );
+        }
 
-      // Position = current max + 1, so the new book lands at the end of
-      // the builder's list. `MAX(position)` per pack is cheap via the
-      // composite PK + position column.
-      const [{ maxPos }] = await database
-        .select({ maxPos: sql<number>`COALESCE(MAX(${packBooks.position}), -1)::int` })
-        .from(packBooks)
-        .where(eq(packBooks.packId, data.packId));
+        // Position = current max + 1, so the new book lands at the end of
+        // the builder's list. `MAX(position)` per pack is cheap via the
+        // composite PK + position column.
+        const [{ maxPos }] = await database
+          .select({
+            maxPos: sql<number>`COALESCE(MAX(${packBooks.position}), -1)::int`,
+          })
+          .from(packBooks)
+          .where(eq(packBooks.packId, data.packId));
 
-      await database
-        .insert(packBooks)
-        .values({ packId: data.packId, bookId: data.bookId, position: maxPos + 1 })
-        .onConflictDoNothing({ target: [packBooks.packId, packBooks.bookId] });
-      return { ok: true };
-    }),
+        await database
+          .insert(packBooks)
+          .values({
+            packId: data.packId,
+            bookId: data.bookId,
+            position: maxPos + 1,
+          })
+          .onConflictDoNothing({
+            target: [packBooks.packId, packBooks.bookId],
+          });
+        return { ok: true };
+      },
+    ),
   );
 
 export const removeBookFromPackDraftFn = createServerFn({ method: "POST" })
-  .inputValidator((raw: unknown): PackMembershipInput => coercePackMembershipInput(raw))
+  .inputValidator((raw: unknown): PackMembershipInput =>
+    coercePackMembershipInput(raw),
+  )
   .handler(
     withErrorLogging(
       "removeBookFromPackDraftFn",
@@ -389,12 +429,17 @@ export const removeBookFromPackDraftFn = createServerFn({ method: "POST" })
         const database = await getDb();
         const pack = await assertPackOwnedBy(database, data.packId, user.id);
         if (pack.isPublic) {
-          throw new Error("Pack is published — unpublish before editing contents");
+          throw new Error(
+            "Pack is published — unpublish before editing contents",
+          );
         }
         await database
           .delete(packBooks)
           .where(
-            and(eq(packBooks.packId, data.packId), eq(packBooks.bookId, data.bookId)),
+            and(
+              eq(packBooks.packId, data.packId),
+              eq(packBooks.bookId, data.bookId),
+            ),
           );
         return { ok: true };
       },
@@ -413,77 +458,92 @@ export interface PublishPackResult {
 
 export const publishPackFn = createServerFn({ method: "POST" })
   .inputValidator((raw: unknown): { packId: string } => {
-    if (typeof raw !== "object" || raw === null) throw new Error("publishPackFn expects an object");
+    if (typeof raw !== "object" || raw === null)
+      throw new Error("publishPackFn expects an object");
     const r = raw as Record<string, unknown>;
     const packId = String(r.packId ?? "");
     if (packId.length === 0) throw new Error("packId is required");
     return { packId };
   })
   .handler(
-    withErrorLogging("publishPackFn", async ({ data }): Promise<PublishPackResult> => {
-      const user = await requireSessionUser();
-      const database = await getDb();
+    withErrorLogging(
+      "publishPackFn",
+      async ({ data }): Promise<PublishPackResult> => {
+        const user = await requireSessionUser();
+        const database = await getDb();
 
-      // 1) Soft unlock: N finished books. Surface a specific error so
-      //    the UI can show the meter rather than a generic failure.
-      const unlock = await getPublishUnlockStatus(user.id);
-      if (!unlock.eligible) {
-        throw new Error(
-          `PUBLISH_UNLOCK:have=${unlock.finishedBooks} need=${unlock.threshold}`,
+        // 1) Soft unlock: N finished books. Surface a specific error so
+        //    the UI can show the meter rather than a generic failure.
+        const unlock = await getPublishUnlockStatus(user.id);
+        if (!unlock.eligible) {
+          throw new Error(
+            `PUBLISH_UNLOCK:have=${unlock.finishedBooks} need=${unlock.threshold}`,
+          );
+        }
+
+        // 2) Ownership.
+        const pack = await assertPackOwnedBy(database, data.packId, user.id);
+        if (pack.isPublic)
+          return {
+            slug: pack.slug,
+            path: buildUserPackPath(user.username, pack.slug),
+          };
+
+        // 3) Composition: load rarities of member books and run the pure
+        //    validator. Even though the builder UI blocks publish while
+        //    composition fails, re-checking server-side closes the tamper
+        //    gap.
+        const rarities = await database
+          .select({ rarity: books.rarity })
+          .from(packBooks)
+          .innerJoin(books, eq(packBooks.bookId, books.id))
+          .where(eq(packBooks.packId, data.packId));
+        const cfg = await getEconomy();
+        const check = checkPackComposition(
+          rarities.map((r) => r.rarity as Rarity),
+          cfg.packComposition,
         );
-      }
+        if (!check.ok) {
+          const reasons = check.errors.map((e) => e.code).join(",");
+          throw new Error(`PUBLISH_COMPOSITION:${reasons}`);
+        }
 
-      // 2) Ownership.
-      const pack = await assertPackOwnedBy(database, data.packId, user.id);
-      if (pack.isPublic) return { slug: pack.slug, path: buildUserPackPath(user.username, pack.slug) };
+        await database
+          .update(packs)
+          .set({ isPublic: true, publishedAt: new Date() })
+          .where(eq(packs.id, data.packId));
 
-      // 3) Composition: load rarities of member books and run the pure
-      //    validator. Even though the builder UI blocks publish while
-      //    composition fails, re-checking server-side closes the tamper
-      //    gap.
-      const rarities = await database
-        .select({ rarity: books.rarity })
-        .from(packBooks)
-        .innerJoin(books, eq(packBooks.bookId, books.id))
-        .where(eq(packBooks.packId, data.packId));
-      const cfg = await getEconomy();
-      const check = checkPackComposition(
-        rarities.map((r) => r.rarity as Rarity),
-        cfg.packComposition,
-      );
-      if (!check.ok) {
-        const reasons = check.errors.map((e) => e.code).join(",");
-        throw new Error(`PUBLISH_COMPOSITION:${reasons}`);
-      }
-
-      await database
-        .update(packs)
-        .set({ isPublic: true, publishedAt: new Date() })
-        .where(eq(packs.id, data.packId));
-
-      return { slug: pack.slug, path: buildUserPackPath(user.username, pack.slug) };
-    }),
+        return {
+          slug: pack.slug,
+          path: buildUserPackPath(user.username, pack.slug),
+        };
+      },
+    ),
   );
 
 export const unpublishPackFn = createServerFn({ method: "POST" })
   .inputValidator((raw: unknown): { packId: string } => {
-    if (typeof raw !== "object" || raw === null) throw new Error("unpublishPackFn expects an object");
+    if (typeof raw !== "object" || raw === null)
+      throw new Error("unpublishPackFn expects an object");
     const r = raw as Record<string, unknown>;
     const packId = String(r.packId ?? "");
     if (packId.length === 0) throw new Error("packId is required");
     return { packId };
   })
   .handler(
-    withErrorLogging("unpublishPackFn", async ({ data }): Promise<{ ok: true }> => {
-      const user = await requireSessionUser();
-      const database = await getDb();
-      await assertPackOwnedBy(database, data.packId, user.id);
-      await database
-        .update(packs)
-        .set({ isPublic: false, publishedAt: null })
-        .where(eq(packs.id, data.packId));
-      return { ok: true };
-    }),
+    withErrorLogging(
+      "unpublishPackFn",
+      async ({ data }): Promise<{ ok: true }> => {
+        const user = await requireSessionUser();
+        const database = await getDb();
+        await assertPackOwnedBy(database, data.packId, user.id);
+        await database
+          .update(packs)
+          .set({ isPublic: false, publishedAt: null })
+          .where(eq(packs.id, data.packId));
+        return { ok: true };
+      },
+    ),
   );
 
 /**
@@ -549,7 +609,8 @@ export const deletePackDraftFn = createServerFn({ method: "POST" })
  */
 export const getMyPackFn = createServerFn({ method: "GET" })
   .inputValidator((raw: unknown): { packId: string } => {
-    if (typeof raw !== "object" || raw === null) throw new Error("getMyPackFn expects an object");
+    if (typeof raw !== "object" || raw === null)
+      throw new Error("getMyPackFn expects an object");
     const r = raw as Record<string, unknown>;
     const packId = String(r.packId ?? "");
     if (packId.length === 0) throw new Error("packId is required");
@@ -606,28 +667,31 @@ export interface MyPackSummary {
  * builder landing page.
  */
 export const listMyPacksFn = createServerFn({ method: "GET" }).handler(
-  withErrorLogging("listMyPacksFn", async (): Promise<ReadonlyArray<MyPackSummary>> => {
-    const user = await requireSessionUser();
-    const database = await getDb();
-    const rows = await database
-      .select({
-        id: packs.id,
-        slug: packs.slug,
-        name: packs.name,
-        isPublic: packs.isPublic,
-        publishedAt: packs.publishedAt,
-        bookCount: sql<number>`(
+  withErrorLogging(
+    "listMyPacksFn",
+    async (): Promise<ReadonlyArray<MyPackSummary>> => {
+      const user = await requireSessionUser();
+      const database = await getDb();
+      const rows = await database
+        .select({
+          id: packs.id,
+          slug: packs.slug,
+          name: packs.name,
+          isPublic: packs.isPublic,
+          publishedAt: packs.publishedAt,
+          bookCount: sql<number>`(
           SELECT COUNT(*)::int FROM ${packBooks} WHERE ${packBooks.packId} = ${packs.id}
         )`,
-      })
-      .from(packs)
-      .where(eq(packs.creatorId, user.id))
-      .orderBy(desc(packs.createdAt));
-    return rows.map((r) => ({
-      ...r,
-      publishedAt: r.publishedAt?.getTime() ?? null,
-    }));
-  }),
+        })
+        .from(packs)
+        .where(eq(packs.creatorId, user.id))
+        .orderBy(desc(packs.createdAt));
+      return rows.map((r) => ({
+        ...r,
+        publishedAt: r.publishedAt?.getTime() ?? null,
+      }));
+    },
+  ),
 );
 
 /**
@@ -662,60 +726,68 @@ export const getPublicPackFn = createServerFn({ method: "GET" })
     return { username, slug };
   })
   .handler(
-    withErrorLogging("getPublicPackFn", async ({ data }): Promise<PublicPackPayload> => {
-      const database = await getDb();
-      const [row] = await database
-        .select({
-          pack: {
-            id: packs.id,
-            slug: packs.slug,
-            name: packs.name,
-            description: packs.description,
-            coverImageUrl: packs.coverImageUrl,
-            genreTags: packs.genreTags,
-            publishedAt: packs.publishedAt,
-          },
-          creator: {
-            id: users.id,
-            username: users.username,
-            displayName: users.displayName,
-            avatarUrl: users.avatarUrl,
-          },
-        })
-        .from(packs)
-        .innerJoin(users, eq(packs.creatorId, users.id))
-        .where(
-          and(eq(users.username, data.username), eq(packs.slug, data.slug), eq(packs.isPublic, true)),
-        )
-        .limit(1);
-      if (!row) throw new Error(`Pack @${data.username}/${data.slug} not found`);
+    withErrorLogging(
+      "getPublicPackFn",
+      async ({ data }): Promise<PublicPackPayload> => {
+        const database = await getDb();
+        const [row] = await database
+          .select({
+            pack: {
+              id: packs.id,
+              slug: packs.slug,
+              name: packs.name,
+              description: packs.description,
+              coverImageUrl: packs.coverImageUrl,
+              genreTags: packs.genreTags,
+              publishedAt: packs.publishedAt,
+            },
+            creator: {
+              id: users.id,
+              username: users.username,
+              displayName: users.displayName,
+              avatarUrl: users.avatarUrl,
+            },
+          })
+          .from(packs)
+          .innerJoin(users, eq(packs.creatorId, users.id))
+          .where(
+            and(
+              eq(users.username, data.username),
+              eq(packs.slug, data.slug),
+              eq(packs.isPublic, true),
+            ),
+          )
+          .limit(1);
+        if (!row)
+          throw new Error(`Pack @${data.username}/${data.slug} not found`);
 
-      const bookRows = await database
-        .select({
-          id: books.id,
-          title: books.title,
-          authors: books.authors,
-          coverUrl: books.coverUrl,
-          genre: books.genre,
-          rarity: books.rarity,
-        })
-        .from(packBooks)
-        .innerJoin(books, eq(packBooks.bookId, books.id))
-        .where(eq(packBooks.packId, row.pack.id))
-        .orderBy(asc(packBooks.position), asc(books.title));
+        const bookRows = await database
+          .select({
+            id: books.id,
+            title: books.title,
+            authors: books.authors,
+            coverUrl: books.coverUrl,
+            genre: books.genre,
+            rarity: books.rarity,
+          })
+          .from(packBooks)
+          .innerJoin(books, eq(packBooks.bookId, books.id))
+          .where(eq(packBooks.packId, row.pack.id))
+          .orderBy(asc(packBooks.position), asc(books.title));
 
-      return {
-        id: row.pack.id,
-        slug: row.pack.slug,
-        name: row.pack.name,
-        description: row.pack.description,
-        coverImageUrl: row.pack.coverImageUrl,
-        genreTags: row.pack.genreTags,
-        publishedAt: row.pack.publishedAt?.getTime() ?? null,
-        creator: row.creator,
-        books: bookRows.map((b) => ({ ...b, rarity: b.rarity as Rarity })),
-      };
-    }),
+        return {
+          id: row.pack.id,
+          slug: row.pack.slug,
+          name: row.pack.name,
+          description: row.pack.description,
+          coverImageUrl: row.pack.coverImageUrl,
+          genreTags: row.pack.genreTags,
+          publishedAt: row.pack.publishedAt?.getTime() ?? null,
+          creator: row.creator,
+          books: bookRows.map((b) => ({ ...b, rarity: b.rarity as Rarity })),
+        };
+      },
+    ),
   );
 
 /**
@@ -743,7 +815,9 @@ export const searchBooksForBuilderFn = createServerFn({ method: "GET" })
   .handler(
     withErrorLogging(
       "searchBooksForBuilderFn",
-      async ({ data }): Promise<
+      async ({
+        data,
+      }): Promise<
         ReadonlyArray<{
           id: string;
           title: string;
@@ -760,7 +834,7 @@ export const searchBooksForBuilderFn = createServerFn({ method: "GET" })
         // If we're excluding a pack's current members, fetch those ids
         // first. Kept as a separate query so the main search plan
         // stays simple (ilike + optional NOT IN).
-        let excludedIds: string[] = [];
+        let excludedIds: Array<string> = [];
         if (data.excludePackId) {
           const rows = await database
             .select({ id: packBooks.bookId })
@@ -943,7 +1017,9 @@ export interface IngestHardcoverForBuilderResult {
  *     we skip the Hardcover fetch entirely and just link to the existing
  *     row. This also means repeated clicks on a hit don't double-ingest.
  */
-export const ingestHardcoverBookForBuilderFn = createServerFn({ method: "POST" })
+export const ingestHardcoverBookForBuilderFn = createServerFn({
+  method: "POST",
+})
   .inputValidator((raw: unknown): { packId: string; hardcoverId: number } => {
     if (typeof raw !== "object" || raw === null) {
       throw new Error("ingestHardcoverBookForBuilderFn expects an object");
@@ -970,7 +1046,9 @@ export const ingestHardcoverBookForBuilderFn = createServerFn({ method: "POST" }
         if (pack.isPublic) {
           // Published packs are content-frozen (see plan). Matches the
           // guard in `addBookToPackDraftFn`.
-          throw new Error("Cannot add books to a published pack; unpublish first");
+          throw new Error(
+            "Cannot add books to a published pack; unpublish first",
+          );
         }
 
         // Dedup short-circuit: if we already have this hardcover_id, just
@@ -1343,7 +1421,7 @@ interface OwnedPackRow {
   name: string;
   description: string | null;
   coverImageUrl: string | null;
-  genreTags: string[];
+  genreTags: Array<string>;
   isPublic: boolean;
   publishedAt: Date | null;
   createdAt: Date;

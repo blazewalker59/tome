@@ -63,12 +63,7 @@ export const RERANK_MIN_HITS = 5;
  * multiple patterns, the first matching one wins.
  */
 export type DemoteReason =
-  | "summary"
-  | "workbook"
-  | "study_guide"
-  | "analysis"
-  | "guide"
-  | "review";
+  "summary" | "workbook" | "study_guide" | "analysis" | "guide" | "review";
 
 /**
  * Author-name fragments that indicate a junk publisher posing as an
@@ -175,7 +170,7 @@ export interface RankedHit {
  */
 export function rankSearchHits(
   hits: ReadonlyArray<HardcoverSearchHit>,
-): RankedHit[] {
+): Array<RankedHit> {
   // Always drop publisher-author hits — even on small result sets.
   // The denylist is a pure data-quality filter, independent of the
   // re-rank threshold. A 1-hit query that returns "BookRags Editors"

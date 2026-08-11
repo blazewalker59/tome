@@ -1,4 +1,9 @@
-import { createFileRoute, Link, Outlet, useLocation } from "@tanstack/react-router";
+import {
+  Link,
+  Outlet,
+  createFileRoute,
+  useLocation,
+} from "@tanstack/react-router";
 
 /**
  * /library layout route.
@@ -21,7 +26,10 @@ export const Route = createFileRoute("/library")({
   component: LibraryLayout,
 });
 
-const TABS: ReadonlyArray<{ to: "/library/collection" | "/library/reading"; label: string }> = [
+const TABS: ReadonlyArray<{
+  to: "/library/collection" | "/library/reading";
+  label: string;
+}> = [
   // Order is intentional: Collection is the default landing tab
   // (it's the denser surface and what most returning users want to
   // see), with Log as the quieter companion. library.index.tsx
@@ -53,7 +61,11 @@ function LibraryLayout() {
           used elsewhere for segmented controls (collection view
           switcher, reading status tabs). role=tablist / aria-
           selected keep it accessible as a tab panel pivot. */}
-      <nav role="tablist" aria-label="Library tabs" className="view-tabs mb-4 flex gap-2 sm:mb-6">
+      <nav
+        role="tablist"
+        aria-label="Library tabs"
+        className="view-tabs mb-4 flex gap-2 sm:mb-6"
+      >
         {TABS.map((tab) => {
           const active = pathname.startsWith(tab.to);
           return (

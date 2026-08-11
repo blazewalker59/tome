@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { HardcoverBook } from "@/lib/cards/hardcover";
 import {
   bookResponseToRow,
   extractAuthors,
   extractCoverUrl,
   normalizeAverageRating,
-  type HardcoverBook,
 } from "@/lib/cards/hardcover";
 
 /**
@@ -90,7 +90,9 @@ describe("extractCoverUrl", () => {
   });
 
   it("returns null when both are missing", () => {
-    expect(extractCoverUrl(fixture({ cached_image: null, image: null }))).toBeNull();
+    expect(
+      extractCoverUrl(fixture({ cached_image: null, image: null })),
+    ).toBeNull();
   });
 });
 
@@ -116,7 +118,10 @@ describe("normalizeAverageRating", () => {
 });
 
 describe("bookResponseToRow", () => {
-  const curation = { genre: "science-fiction", moodTags: ["literary", "slow-burn"] as const };
+  const curation = {
+    genre: "science-fiction",
+    moodTags: ["literary", "slow-burn"] as const,
+  };
 
   it("produces a well-formed insert row", () => {
     const row = bookResponseToRow(fixture(), curation);
@@ -149,7 +154,9 @@ describe("bookResponseToRow", () => {
   });
 
   it("honors an explicit initialRarity override", () => {
-    const row = bookResponseToRow(fixture(), curation, { initialRarity: "legendary" });
+    const row = bookResponseToRow(fixture(), curation, {
+      initialRarity: "legendary",
+    });
     expect(row.rarity).toBe("legendary");
   });
 
@@ -180,14 +187,18 @@ describe("bookResponseToRow", () => {
     expect(() => bookResponseToRow(fixture({ title: null }), curation)).toThrow(
       /no title/,
     );
-    expect(() => bookResponseToRow(fixture({ title: "   " }), curation)).toThrow(
-      /no title/,
-    );
+    expect(() =>
+      bookResponseToRow(fixture({ title: "   " }), curation),
+    ).toThrow(/no title/);
   });
 
   it("rejects an invalid Hardcover id", () => {
-    expect(() => bookResponseToRow(fixture({ id: 0 }), curation)).toThrow(/Invalid/);
-    expect(() => bookResponseToRow(fixture({ id: -1 }), curation)).toThrow(/Invalid/);
+    expect(() => bookResponseToRow(fixture({ id: 0 }), curation)).toThrow(
+      /Invalid/,
+    );
+    expect(() => bookResponseToRow(fixture({ id: -1 }), curation)).toThrow(
+      /Invalid/,
+    );
   });
 
   it("rejects more than 3 mood tags (SPEC §2)", () => {

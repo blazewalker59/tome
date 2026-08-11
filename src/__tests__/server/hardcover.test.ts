@@ -1,10 +1,10 @@
-import { graphql, HttpResponse } from "msw";
+import { HttpResponse, graphql } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { server } from "@test/msw/server";
 import {
+  HardcoverError,
   __resetRateLimitForTests,
   fetchBookById,
-  HardcoverError,
   parseSearchResults,
   searchBooks,
 } from "@/server/hardcover";
@@ -56,7 +56,9 @@ describe("fetchBookById", () => {
     server.use(
       graphql.link(HARDCOVER_GRAPHQL).query("GetBook", async ({ request }) => {
         capturedAuth = request.headers.get("authorization") ?? undefined;
-        const body = (await request.clone().json()) as unknown as { operationName?: string };
+        const body = (await request.clone().json()) as unknown as {
+          operationName?: string;
+        };
         capturedOperation = body.operationName;
         return HttpResponse.json({
           data: {
@@ -107,7 +109,9 @@ describe("fetchBookById", () => {
         });
       }),
     );
-    await expect(fetchBookById(12345)).rejects.toThrow(/field 'rating' disabled/);
+    await expect(fetchBookById(12345)).rejects.toThrow(
+      /field 'rating' disabled/,
+    );
   });
 
   it("surfaces HTTP 429 distinctly so callers can back off", async () => {
@@ -166,13 +170,17 @@ describe("searchBooks", () => {
   it("clamps perPage to the 1..50 range", async () => {
     let capturedVars: Record<string, unknown> | undefined;
     server.use(
-      graphql.link(HARDCOVER_GRAPHQL).query("SearchBooks", async ({ request }) => {
-        const body = (await request.clone().json()) as unknown as {
-          variables?: Record<string, unknown>;
-        };
-        capturedVars = body.variables;
-        return HttpResponse.json({ data: { search: { results: { found: 0, hits: [] } } } });
-      }),
+      graphql
+        .link(HARDCOVER_GRAPHQL)
+        .query("SearchBooks", async ({ request }) => {
+          const body = (await request.clone().json()) as unknown as {
+            variables?: Record<string, unknown>;
+          };
+          capturedVars = body.variables;
+          return HttpResponse.json({
+            data: { search: { results: { found: 0, hits: [] } } },
+          });
+        }),
     );
     await searchBooks("octavia butler", { perPage: 9999 });
     expect(capturedVars?.perPage).toBe(50);
@@ -184,13 +192,17 @@ describe("searchBooks", () => {
   it("forwards query, page, and perPage as GraphQL variables", async () => {
     let capturedVars: Record<string, unknown> | undefined;
     server.use(
-      graphql.link(HARDCOVER_GRAPHQL).query("SearchBooks", async ({ request }) => {
-        const body = (await request.clone().json()) as unknown as {
-          variables?: Record<string, unknown>;
-        };
-        capturedVars = body.variables;
-        return HttpResponse.json({ data: { search: { results: { found: 0, hits: [] } } } });
-      }),
+      graphql
+        .link(HARDCOVER_GRAPHQL)
+        .query("SearchBooks", async ({ request }) => {
+          const body = (await request.clone().json()) as unknown as {
+            variables?: Record<string, unknown>;
+          };
+          capturedVars = body.variables;
+          return HttpResponse.json({
+            data: { search: { results: { found: 0, hits: [] } } },
+          });
+        }),
     );
     await searchBooks("  le guin  ", { page: 3, perPage: 5 });
     expect(capturedVars).toEqual({ query: "le guin", page: 3, perPage: 5 });
@@ -242,7 +254,9 @@ describe("parseSearchResults", () => {
         },
       ],
     };
-    expect(parseSearchResults(envelope, 1, 20).hits[0].coverUrl).toBe("https://x/cached.jpg");
+    expect(parseSearchResults(envelope, 1, 20).hits[0].coverUrl).toBe(
+      "https://x/cached.jpg",
+    );
   });
 
   it("tolerates missing optional fields", () => {

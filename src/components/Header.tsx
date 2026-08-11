@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { LogIn, LogOut, Package, ShieldCheck, Sparkles, User, BookOpen } from "lucide-react";
+import {
+  BookOpen,
+  LogIn,
+  LogOut,
+  Package,
+  ShieldCheck,
+  Sparkles,
+  User,
+} from "lucide-react";
 import ThemeToggle, { ThemeSegmented } from "./ThemeToggle";
 import { signOut, useAuth, useIsAdmin } from "@/lib/auth/hooks";
 import { getShardBalanceFn } from "@/server/collection";
@@ -59,19 +67,34 @@ export default function Header() {
           aria-label="Tome — home"
           className="inline-flex items-center gap-2 rounded-full text-sm font-semibold text-[var(--sea-ink)] no-underline sm:h-11 sm:border sm:border-[var(--chip-line)] sm:bg-[var(--chip-bg)] sm:px-4"
         >
-          <BookOpen aria-hidden className="h-7 w-7 text-[var(--lagoon)] sm:h-5 sm:w-5" />
+          <BookOpen
+            aria-hidden
+            className="h-7 w-7 text-[var(--lagoon)] sm:h-5 sm:w-5"
+          />
           <span className="hidden sm:inline">Tome</span>
         </Link>
 
         {/* Desktop-only inline nav */}
         <div className="ml-4 hidden items-center gap-x-5 text-sm font-semibold sm:flex">
-          <Link to="/" className="nav-link" activeProps={{ className: "nav-link is-active" }}>
+          <Link
+            to="/"
+            className="nav-link"
+            activeProps={{ className: "nav-link is-active" }}
+          >
             Home
           </Link>
-          <Link to="/rip" className="nav-link" activeProps={{ className: "nav-link is-active" }}>
+          <Link
+            to="/rip"
+            className="nav-link"
+            activeProps={{ className: "nav-link is-active" }}
+          >
             Rip
           </Link>
-          <Link to="/feed" className="nav-link" activeProps={{ className: "nav-link is-active" }}>
+          <Link
+            to="/feed"
+            className="nav-link"
+            activeProps={{ className: "nav-link is-active" }}
+          >
             Feed
           </Link>
           <Link
@@ -110,11 +133,7 @@ function AccountSlot() {
     return <AccountMenu isAdmin={false} />;
   }
 
-  const label =
-    user?.displayName ??
-    user?.name ??
-    user?.email ??
-    "Signed in";
+  const label = user?.displayName ?? user?.name ?? user?.email ?? "Signed in";
   const initial = label.trim().charAt(0).toUpperCase() || "?";
   const avatarUrl = user?.avatarUrl ?? user?.image ?? undefined;
 
@@ -191,7 +210,8 @@ function AccountMenu({
     }
     function onClick(e: MouseEvent) {
       const t = e.target as Node;
-      if (buttonRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      if (buttonRef.current?.contains(t) || menuRef.current?.contains(t))
+        return;
       setOpen(false);
     }
     document.addEventListener("keydown", onKey);
@@ -247,9 +267,13 @@ function AccountMenu({
         >
           {authed && (
             <div className="border-b border-[var(--line)] px-4 py-3">
-              <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">{label}</p>
+              <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
+                {label}
+              </p>
               {email && email !== label && (
-                <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">{email}</p>
+                <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
+                  {email}
+                </p>
               )}
               {/* Shards live in the profile block: they're a per-user
                   stat, not navigation, and the block already has the
@@ -258,7 +282,10 @@ function AccountMenu({
                   dash placeholder avoids the "0 → real value" flash
                   for users with any balance. */}
               <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-[var(--sea-ink-soft)]">
-                <Sparkles aria-hidden className="h-3.5 w-3.5 text-[var(--lagoon)]" />
+                <Sparkles
+                  aria-hidden
+                  className="h-3.5 w-3.5 text-[var(--lagoon)]"
+                />
                 <span className="tabular-nums text-[var(--sea-ink)]">
                   {shards === null ? "—" : shards}
                 </span>
@@ -274,7 +301,10 @@ function AccountMenu({
               onClick={() => setOpen(false)}
               className="flex items-center gap-2 border-b border-[var(--line)] px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] no-underline hover:bg-[var(--link-bg-hover)]"
             >
-              <ShieldCheck aria-hidden className="h-4 w-4 text-[var(--lagoon)]" />
+              <ShieldCheck
+                aria-hidden
+                className="h-4 w-4 text-[var(--lagoon)]"
+              />
               <span>Admin</span>
             </Link>
           )}

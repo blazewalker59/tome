@@ -17,11 +17,11 @@
 
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { deriveUsername } from "./username";
 import { getDb } from "@/db/client";
 import { getEnv } from "@/lib/env";
 import { getEconomy } from "@/lib/economy/config";
 import { grantShards } from "@/lib/economy/ledger";
-import { deriveUsername } from "./username";
 
 async function requireEnv(name: string): Promise<string> {
   const v = await getEnv(name);
@@ -37,12 +37,13 @@ async function requireEnv(name: string): Promise<string> {
 
 export async function getAuth() {
   const db = await getDb();
-  const [secret, baseURL, googleClientId, googleClientSecret] = await Promise.all([
-    requireEnv("BETTER_AUTH_SECRET"),
-    requireEnv("BETTER_AUTH_URL"),
-    requireEnv("GOOGLE_CLIENT_ID"),
-    requireEnv("GOOGLE_CLIENT_SECRET"),
-  ]);
+  const [secret, baseURL, googleClientId, googleClientSecret] =
+    await Promise.all([
+      requireEnv("BETTER_AUTH_SECRET"),
+      requireEnv("BETTER_AUTH_URL"),
+      requireEnv("GOOGLE_CLIENT_ID"),
+      requireEnv("GOOGLE_CLIENT_SECRET"),
+    ]);
 
   return betterAuth({
     // Our Drizzle schema uses plural table names (users, sessions, …).
@@ -61,10 +62,7 @@ export async function getAuth() {
     // while `vite dev` serves on :3000 — we allow both so either entry
     // point works without editing env between runs. Production only ever
     // hits `BETTER_AUTH_URL`, so the extra localhost entries are harmless.
-    trustedOrigins: [
-      "http://localhost:3000",
-      "http://localhost:8787",
-    ],
+    trustedOrigins: ["http://localhost:3000", "http://localhost:8787"],
     socialProviders: {
       google: {
         clientId: googleClientId,
@@ -135,7 +133,12 @@ export async function getAuth() {
             // up); a failed user create because of a grant error is not.
             try {
               await db.transaction(async (tx) => {
-                await grantShards(tx, user.id, "welcome_grant", cfg.welcomeGrant);
+                await grantShards(
+                  tx,
+                  user.id,
+                  "welcome_grant",
+                  cfg.welcomeGrant,
+                );
               });
             } catch (err) {
               console.error("[tome/auth] welcome grant failed", {

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { Card } from "@/components/cards/Card";
 import { renderWithProviders, screen } from "@test/utils";
 import type { CardData } from "@/lib/cards/types";
+import { Card } from "@/components/cards/Card";
 
 const sampleCard: CardData = {
   id: "test-card",
@@ -30,7 +30,9 @@ describe("<Card>", () => {
     // The title is checked twice, by role and by text: the role query pins it
     // as a real heading, while the text query is element-agnostic and so also
     // catches a duplicate rendered as a plain <p>.
-    expect(screen.getByRole("heading", { name: /piranesi/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /piranesi/i }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Piranesi")).toBeInTheDocument();
     expect(screen.getByText("Susanna Clarke")).toBeInTheDocument();
     expect(screen.getByText("Legendary")).toBeInTheDocument();
@@ -52,7 +54,10 @@ describe("<Card>", () => {
   it("has an accessible name describing the card", () => {
     renderWithProviders(<Card card={sampleCard} />);
     const button = screen.getByRole("button", { name: /piranesi/i });
-    expect(button).toHaveAttribute("aria-label", expect.stringContaining("Legendary"));
+    expect(button).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining("Legendary"),
+    );
     expect(button.getAttribute("aria-label")).toContain("Susanna Clarke");
   });
 

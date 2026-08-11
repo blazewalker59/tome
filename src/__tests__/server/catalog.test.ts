@@ -71,9 +71,7 @@ describe("normalizeMoodTags", () => {
   });
 
   it("rejects more than three tags", () => {
-    expect(() => normalizeMoodTags(["a", "b", "c", "d"])).toThrow(
-      /At most 3/,
-    );
+    expect(() => normalizeMoodTags(["a", "b", "c", "d"])).toThrow(/At most 3/);
   });
 
   it("coerces non-string entries via String()", () => {

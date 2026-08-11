@@ -29,22 +29,23 @@
  */
 import { config as loadEnv } from "dotenv";
 
-loadEnv({ path: ".env.local" });
-loadEnv();
-
 import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
-import { bookResponseToRow, type IngestCuration } from "../src/lib/cards/hardcover";
+import { bookResponseToRow } from "../src/lib/cards/hardcover";
 import { books, packBooks, packs } from "../src/db/schema";
 import {
+  HardcoverError,
   __resetRateLimitForTests,
   fetchBookById,
-  HardcoverError,
   searchBooks,
-  type HardcoverSearchHit,
 } from "../src/server/hardcover";
+import type { IngestCuration } from "../src/lib/cards/hardcover";
+import type { HardcoverSearchHit } from "../src/server/hardcover";
+
+loadEnv({ path: ".env.local" });
+loadEnv();
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -93,7 +94,14 @@ const PACKS: ReadonlyArray<PackDef> = [
       "A snapshot of fantasy since 2015 — from doorstopper epics to tightly-wound novellas. Start here to build a shelf that spans dragons, sorcerers, and stranger things.",
     genre: "fantasy",
     genreTags: ["fantasy", "starter"],
-    moodTagPool: ["epic", "magical", "atmospheric", "character-driven", "dark", "lush"],
+    moodTagPool: [
+      "epic",
+      "magical",
+      "atmospheric",
+      "character-driven",
+      "dark",
+      "lush",
+    ],
     titles: [
       { title: "The Fifth Season", author: "N. K. Jemisin" },
       { title: "Uprooted", author: "Naomi Novik" },
@@ -200,14 +208,7 @@ const PACKS: ReadonlyArray<PackDef> = [
       "Contemporary romance across the spectrum — slow burns, workplace rivals, second chances, and found family. Twenty books that defined the genre's current moment.",
     genre: "romance",
     genreTags: ["romance", "starter"],
-    moodTagPool: [
-      "romantic",
-      "cozy",
-      "swoony",
-      "escapist",
-      "tender",
-      "witty",
-    ],
+    moodTagPool: ["romantic", "cozy", "swoony", "escapist", "tender", "witty"],
     titles: [
       { title: "The Hating Game", author: "Sally Thorne" },
       { title: "Beach Read", author: "Emily Henry" },
@@ -262,7 +263,10 @@ const PACKS: ReadonlyArray<PackDef> = [
       { title: "The Overstory", author: "Richard Powers" },
       { title: "Exit West", author: "Mohsin Hamid" },
       { title: "An American Marriage", author: "Tayari Jones" },
-      { title: "Tomorrow, and Tomorrow, and Tomorrow", author: "Gabrielle Zevin" },
+      {
+        title: "Tomorrow, and Tomorrow, and Tomorrow",
+        author: "Gabrielle Zevin",
+      },
       { title: "Trust", author: "Hernan Diaz" },
       { title: "The Nickel Boys", author: "Colson Whitehead" },
       { title: "Demon Copperhead", author: "Barbara Kingsolver" },
@@ -288,8 +292,14 @@ const PACKS: ReadonlyArray<PackDef> = [
  * search relevance is generally trustworthy, and name variants
  * ("V. E. Schwab" vs "Victoria Schwab") would cause false negatives.
  */
-async function resolveTitle(q: TitleQuery): Promise<
-  | { ok: true; hit: HardcoverSearchHit; book: Awaited<ReturnType<typeof fetchBookById>> }
+async function resolveTitle(
+  q: TitleQuery,
+): Promise<
+  | {
+      ok: true;
+      hit: HardcoverSearchHit;
+      book: Awaited<ReturnType<typeof fetchBookById>>;
+    }
   | { ok: false; reason: string }
 > {
   const query = q.author ? `${q.title} ${q.author}` : q.title;
@@ -361,13 +371,15 @@ const startedAt = Date.now();
 try {
   const packResults: Array<{
     def: PackDef;
-    resolved: ResolvedBook[];
+    resolved: Array<ResolvedBook>;
     missed: Array<{ query: TitleQuery; reason: string }>;
   }> = [];
 
   for (const def of PACKS) {
-    console.log(`\n[editor-packs] ── ${def.name} (${def.titles.length} titles) ──`);
-    const resolved: ResolvedBook[] = [];
+    console.log(
+      `\n[editor-packs] ── ${def.name} (${def.titles.length} titles) ──`,
+    );
+    const resolved: Array<ResolvedBook> = [];
     const missed: Array<{ query: TitleQuery; reason: string }> = [];
 
     for (let i = 0; i < def.titles.length; i++) {
@@ -443,7 +455,7 @@ try {
   // ────────────────────────────────────────────────────────────────
   for (const result of packResults) {
     const seen = new Set<string>();
-    const deduped: ResolvedBook[] = [];
+    const deduped: Array<ResolvedBook> = [];
     const rejected: Array<{ query: TitleQuery; reason: string }> = [];
     for (let i = 0; i < result.resolved.length; i++) {
       const r = result.resolved[i];
@@ -474,7 +486,9 @@ try {
   // Upsert packs + reset membership. Single transaction so a failure
   // halfway through doesn't leave a pack with half its books.
   // ────────────────────────────────────────────────────────────────
-  console.log(`\n[editor-packs] upserting ${packResults.length} editorial packs…`);
+  console.log(
+    `\n[editor-packs] upserting ${packResults.length} editorial packs…`,
+  );
   await db.transaction(async (tx) => {
     for (const { def, resolved } of packResults) {
       const [pack] = await tx
@@ -523,12 +537,16 @@ try {
 
   const totalMissed = packResults.reduce((n, r) => n + r.missed.length, 0);
   if (totalMissed > 0) {
-    console.log(`\n[editor-packs] ${totalMissed} title(s) could not be resolved:`);
+    console.log(
+      `\n[editor-packs] ${totalMissed} title(s) could not be resolved:`,
+    );
     for (const { def, missed } of packResults) {
       if (missed.length === 0) continue;
       console.log(`[editor-packs]   ${def.slug}:`);
       for (const { query, reason } of missed) {
-        const label = query.author ? `${query.title} — ${query.author}` : query.title;
+        const label = query.author
+          ? `${query.title} — ${query.author}`
+          : query.title;
         console.log(`[editor-packs]     • ${label}  (${reason})`);
       }
     }
@@ -538,7 +556,9 @@ try {
     );
   }
 
-  console.log("\n[editor-packs] Next: run `pnpm db:rebucket` to redistribute rarity buckets.");
+  console.log(
+    "\n[editor-packs] Next: run `pnpm db:rebucket` to redistribute rarity buckets.",
+  );
 } catch (err) {
   console.error("[editor-packs] ✗ failed:", err);
   process.exitCode = 1;

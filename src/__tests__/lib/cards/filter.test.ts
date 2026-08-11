@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { CardData } from "@/lib/cards/types";
 import {
   filterCards,
   groupByGenre,
@@ -8,9 +9,8 @@ import {
   uniqueGenres,
   uniqueMoods,
 } from "@/lib/cards/filter";
-import type { CardData } from "@/lib/cards/types";
 
-const cards: CardData[] = [
+const cards: Array<CardData> = [
   {
     id: "c1",
     title: "Beach Read",
@@ -104,12 +104,18 @@ describe("filterCards", () => {
   });
 
   it("does case-insensitive substring search on title and author", () => {
-    expect(filterCards(cards, { search: "MARY" }).map((c) => c.id)).toEqual(["c3"]);
-    expect(filterCards(cards, { search: "cozy" }).map((c) => c.id)).toEqual(["c5"]);
+    expect(filterCards(cards, { search: "MARY" }).map((c) => c.id)).toEqual([
+      "c3",
+    ]);
+    expect(filterCards(cards, { search: "cozy" }).map((c) => c.id)).toEqual([
+      "c5",
+    ]);
   });
 
   it("treats empty filter sets as 'no filter on that dimension'", () => {
-    expect(filterCards(cards, { genres: new Set() })).toHaveLength(cards.length);
+    expect(filterCards(cards, { genres: new Set() })).toHaveLength(
+      cards.length,
+    );
   });
 });
 
@@ -152,13 +158,9 @@ describe("sortCards", () => {
       ["c4", 800],
       ["c5", 300],
     ]);
-    expect(sortCards(cards, "newest", { acquiredAt }).map((c) => c.id)).toEqual([
-      "c4",
-      "c2",
-      "c5",
-      "c1",
-      "c3",
-    ]);
+    expect(sortCards(cards, "newest", { acquiredAt }).map((c) => c.id)).toEqual(
+      ["c4", "c2", "c5", "c1", "c3"],
+    );
   });
 
   it("does not mutate the input array", () => {
@@ -172,7 +174,12 @@ describe("groupByGenre", () => {
   it("groups by genre, ordered by descending count then alphabetically", () => {
     const result = groupByGenre(cards);
     // romance has 2; the rest have 1 → romance first, then alpha order.
-    expect(result.map((g) => g.genre)).toEqual(["romance", "graphic-novel", "poetry", "science"]);
+    expect(result.map((g) => g.genre)).toEqual([
+      "romance",
+      "graphic-novel",
+      "poetry",
+      "science",
+    ]);
     expect(result[0].cards.map((c) => c.id)).toEqual(["c1", "c5"]);
   });
 
@@ -203,7 +210,9 @@ describe("groupCards", () => {
       "Common",
     ]);
     // Restrict to two rarities to verify empty buckets are dropped.
-    const subset = cards.filter((c) => c.rarity === "common" || c.rarity === "legendary");
+    const subset = cards.filter(
+      (c) => c.rarity === "common" || c.rarity === "legendary",
+    );
     const trimmed = groupCards(subset, "rarity");
     expect(trimmed.map((g) => g.label)).toEqual(["Legendary", "Common"]);
   });
@@ -220,7 +229,7 @@ describe("groupCards", () => {
   });
 
   it("groups by author, duplicating books under every co-author", () => {
-    const coAuthored: CardData[] = [
+    const coAuthored: Array<CardData> = [
       ...cards,
       {
         id: "c6",
@@ -239,13 +248,18 @@ describe("groupCards", () => {
     const byLabel = new Map(result.map((g) => [g.label, g]));
     // Good Omens must appear under both authors.
     expect(byLabel.get("Neil Gaiman")?.cards.map((c) => c.id)).toEqual(["c6"]);
-    expect(byLabel.get("Terry Pratchett")?.cards.map((c) => c.id)).toEqual(["c6"]);
+    expect(byLabel.get("Terry Pratchett")?.cards.map((c) => c.id)).toEqual([
+      "c6",
+    ]);
     // Every other card still appears exactly once.
     expect(byLabel.get("Emily Henry")?.cards.map((c) => c.id)).toEqual(["c1"]);
   });
 
   it("groups by pack using the acquisition map, falling back to label key when packId is missing", () => {
-    const acquisitions = new Map<string, { packId: string | null; packName: string }>([
+    const acquisitions = new Map<
+      string,
+      { packId: string | null; packName: string }
+    >([
       ["c1", { packId: "p1", packName: "Editorial Pack" }],
       ["c2", { packId: "p1", packName: "Editorial Pack" }],
       ["c3", { packId: "p2", packName: "Starter 2025" }],
@@ -253,9 +267,19 @@ describe("groupCards", () => {
     ]);
     const result = groupCards(cards, "pack", { acquisitions });
     const byLabel = new Map(result.map((g) => [g.label, g]));
-    expect(byLabel.get("Editorial Pack")?.cards.map((c) => c.id).sort()).toEqual(["c1", "c2"]);
+    expect(
+      byLabel
+        .get("Editorial Pack")
+        ?.cards.map((c) => c.id)
+        .sort(),
+    ).toEqual(["c1", "c2"]);
     expect(byLabel.get("Starter 2025")?.cards.map((c) => c.id)).toEqual(["c3"]);
-    expect(byLabel.get("Unknown")?.cards.map((c) => c.id).sort()).toEqual(["c4", "c5"]);
+    expect(
+      byLabel
+        .get("Unknown")
+        ?.cards.map((c) => c.id)
+        .sort(),
+    ).toEqual(["c4", "c5"]);
   });
 
   it("orders groups by count desc, then alphabetically by label", () => {
@@ -297,6 +321,11 @@ describe("uniqueMoods", () => {
 
 describe("uniqueGenres", () => {
   it("returns a deduplicated, alphabetized list of genres", () => {
-    expect(uniqueGenres(cards)).toEqual(["graphic-novel", "poetry", "romance", "science"]);
+    expect(uniqueGenres(cards)).toEqual([
+      "graphic-novel",
+      "poetry",
+      "romance",
+      "science",
+    ]);
   });
 });

@@ -37,10 +37,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 
+import { withErrorLogging } from "./_shared";
 import { getDb } from "@/db/client";
 import { follows, packBooks, packRips, packs, users } from "@/db/schema";
 import { getSessionUser, requireSessionUser } from "@/lib/auth/session";
-import { withErrorLogging } from "./_shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error sentinels
@@ -126,36 +126,39 @@ export const followUserFn = createServerFn({ method: "POST" })
     coerceUsernameInput(raw, "followUserFn"),
   )
   .handler(
-    withErrorLogging("followUserFn", async ({ data }): Promise<FollowResult> => {
-      const me = await requireSessionUser();
-      const database = await getDb();
-      const targetId = await resolveUsernameToId(database, data.username);
+    withErrorLogging(
+      "followUserFn",
+      async ({ data }): Promise<FollowResult> => {
+        const me = await requireSessionUser();
+        const database = await getDb();
+        const targetId = await resolveUsernameToId(database, data.username);
 
-      if (targetId === me.id) {
-        throw new Error(`${SELF_FOLLOW_PREFIX} cannot follow yourself`);
-      }
+        if (targetId === me.id) {
+          throw new Error(`${SELF_FOLLOW_PREFIX} cannot follow yourself`);
+        }
 
-      // Idempotent insert: if the row already exists, do nothing.
-      // The PK on (follower_id, followee_id) is the dedup key; we
-      // rely on it rather than a pre-check to avoid the read-then-
-      // write race in concurrent taps.
-      await database
-        .insert(follows)
-        .values({ followerId: me.id, followeeId: targetId })
-        .onConflictDoNothing();
+        // Idempotent insert: if the row already exists, do nothing.
+        // The PK on (follower_id, followee_id) is the dedup key; we
+        // rely on it rather than a pre-check to avoid the read-then-
+        // write race in concurrent taps.
+        await database
+          .insert(follows)
+          .values({ followerId: me.id, followeeId: targetId })
+          .onConflictDoNothing();
 
-      // Fresh count after the write. The aggregate is cheap given the
-      // PK index on (follower_id, followee_id) and a future
-      // (followee_id) index — for now Postgres scans the followee
-      // column directly. Acceptable while the table is small; if it
-      // grows we'll add `index("follows_followee_idx").on(t.followeeId)`.
-      const [{ count }] = await database
-        .select({ count: sql<number>`count(*)::int` })
-        .from(follows)
-        .where(eq(follows.followeeId, targetId));
+        // Fresh count after the write. The aggregate is cheap given the
+        // PK index on (follower_id, followee_id) and a future
+        // (followee_id) index — for now Postgres scans the followee
+        // column directly. Acceptable while the table is small; if it
+        // grows we'll add `index("follows_followee_idx").on(t.followeeId)`.
+        const [{ count }] = await database
+          .select({ count: sql<number>`count(*)::int` })
+          .from(follows)
+          .where(eq(follows.followeeId, targetId));
 
-      return { following: true, followerCount: count };
-    }),
+        return { following: true, followerCount: count };
+      },
+    ),
   );
 
 export interface UnfollowResult {
@@ -444,7 +447,7 @@ function mergeFeedEvents(
   publishes: ReadonlyArray<FollowFeedEvent>,
   pulls: ReadonlyArray<FollowFeedEvent>,
   limit: number,
-): FollowFeedEvent[] {
+): Array<FollowFeedEvent> {
   const merged = [...publishes, ...pulls];
   merged.sort((a, b) => {
     if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
@@ -564,7 +567,7 @@ export const getFollowFeedFn = createServerFn({ method: "GET" })
 async function loadFeedSuggestions(
   database: Awaited<ReturnType<typeof getDb>>,
   myId: string | null,
-): Promise<FeedSuggestion[]> {
+): Promise<Array<FeedSuggestion>> {
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const trendingExpr = sql<number>`(
     SELECT COUNT(*)::int
@@ -609,7 +612,7 @@ async function loadPackPublishedEvents(
   followeeIds: ReadonlyArray<string>,
   before: Date | null,
   limit: number,
-): Promise<PackPublishedEvent[]> {
+): Promise<Array<PackPublishedEvent>> {
   const conditions = [
     inArray(packs.creatorId, [...followeeIds]),
     eq(packs.isPublic, true),
@@ -679,7 +682,7 @@ async function loadLegendaryPullEvents(
   followeeIds: ReadonlyArray<string>,
   before: Date | null,
   limit: number,
-): Promise<LegendaryPullEvent[]> {
+): Promise<Array<LegendaryPullEvent>> {
   // Subquery: per-rip aggregation of legendary cards. We select the
   // rip + actor + pack columns, then aggregate the legendary book
   // metadata via array_agg. The HAVING clause drops rips with zero
@@ -717,7 +720,7 @@ async function loadLegendaryPullEvents(
       book_id: string;
       title: string;
       cover_url: string | null;
-      authors: string[];
+      authors: Array<string>;
     }>;
   }>(sql`
     SELECT
@@ -772,7 +775,7 @@ async function loadLegendaryPullEvents(
       book_id: string;
       title: string;
       cover_url: string | null;
-      authors: string[];
+      authors: Array<string>;
     }>;
   }>;
 
@@ -1040,7 +1043,7 @@ const RARITY_ORDER: Record<MyRipCard["rarity"], number> = {
  * Returns the input slice in highlight-first order so the caller
  * doesn't need a second sort pass.
  */
-function sortRipCards(cards: ReadonlyArray<MyRipCard>): MyRipCard[] {
+function sortRipCards(cards: ReadonlyArray<MyRipCard>): Array<MyRipCard> {
   return [...cards].sort((a, b) => {
     const ra = RARITY_ORDER[a.rarity];
     const rb = RARITY_ORDER[b.rarity];
@@ -1106,7 +1109,7 @@ export const getMyRipsFn = createServerFn({ method: "GET" })
             book_id: string;
             title: string;
             cover_url: string | null;
-            authors: string[];
+            authors: Array<string>;
             rarity: MyRipCard["rarity"];
           }> | null;
         }>(sql`
@@ -1168,12 +1171,12 @@ export const getMyRipsFn = createServerFn({ method: "GET" })
             book_id: string;
             title: string;
             cover_url: string | null;
-            authors: string[];
+            authors: Array<string>;
             rarity: MyRipCard["rarity"];
           }> | null;
         }>;
 
-        const events: MyRipEvent[] = [];
+        const events: Array<MyRipEvent> = [];
         for (const r of rows) {
           const rawCards = (r.cards ?? []).map((c) => ({
             bookId: c.book_id,

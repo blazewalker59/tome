@@ -93,7 +93,9 @@ export function scoreBook(book: BookRanking): number {
  * by book id for easy `UPDATE books SET rarity = ? WHERE id = ?` loops.
  * Pure function; no I/O.
  */
-export function assignRarities(books: ReadonlyArray<BookRanking>): Map<string, Rarity> {
+export function assignRarities(
+  books: ReadonlyArray<BookRanking>,
+): Map<string, Rarity> {
   const result = new Map<string, Rarity>();
   if (books.length === 0) return result;
 

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type * as EconomyConfig from "@/lib/economy/config";
+import { grantShards, spendShards } from "@/lib/economy/ledger";
+
 /**
  * Ledger helper tests.
  *
@@ -69,7 +72,7 @@ function makeTx(o: FakeTxOverrides = {}) {
 
 // Keep the economy config deterministic for cap-related tests.
 vi.mock("@/lib/economy/config", async (orig) => {
-  const actual = (await orig()) as typeof import("@/lib/economy/config");
+  const actual = (await orig()) as typeof EconomyConfig;
   return {
     ...actual,
     getEconomy: async () => actual.DEFAULTS,
@@ -79,7 +82,11 @@ vi.mock("@/lib/economy/config", async (orig) => {
 // Schema import resolves column references inside the builder chain;
 // the fake tx ignores them, so this mock just needs to be importable.
 vi.mock("@/db/schema", () => ({
-  shardBalances: { userId: "user_id", shards: "shards", updatedAt: "updated_at" },
+  shardBalances: {
+    userId: "user_id",
+    shards: "shards",
+    updatedAt: "updated_at",
+  },
   shardEvents: {
     id: "id",
     userId: "user_id",
@@ -93,8 +100,6 @@ vi.mock("@/db/schema", () => ({
 }));
 
 vi.mock("@/db/client", () => ({ getDb: async () => ({}) }));
-
-import { grantShards, spendShards } from "@/lib/economy/ledger";
 
 describe("grantShards", () => {
   it("throws when amount is zero or negative", async () => {
@@ -116,7 +121,9 @@ describe("grantShards", () => {
       capCountRows: [{ count: 0 }], // under the daily cap
       readBalanceRows: [{ shards: 42 }],
     });
-    const res = await grantShards(tx, "u1", "start_reading", 5, { bookId: "b1" });
+    const res = await grantShards(tx, "u1", "start_reading", 5, {
+      bookId: "b1",
+    });
     expect(res.applied).toBe(false);
     expect(res.reason).toBe("already_granted_for_book");
     expect(res.newBalance).toBe(42);
@@ -156,8 +163,12 @@ describe("grantShards", () => {
 describe("spendShards", () => {
   it("throws when amount is zero or negative", async () => {
     const tx = makeTx();
-    await expect(spendShards(tx, "u1", 0)).rejects.toThrow(/amount must be positive/);
-    await expect(spendShards(tx, "u1", -10)).rejects.toThrow(/amount must be positive/);
+    await expect(spendShards(tx, "u1", 0)).rejects.toThrow(
+      /amount must be positive/,
+    );
+    await expect(spendShards(tx, "u1", -10)).rejects.toThrow(
+      /amount must be positive/,
+    );
   });
 
   it("refuses the spend when the locked balance is below the amount", async () => {

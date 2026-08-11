@@ -33,16 +33,18 @@
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, gt, ilike, inArray, or, sql } from "drizzle-orm";
 
+import { fetchBookById, searchBooks } from "./hardcover";
+import { withErrorLogging } from "./_shared";
+import type { HardcoverSearchHit } from "./hardcover";
+import type { Rarity } from "@/lib/packs/composition";
+import type { DemoteReason } from "@/lib/hardcover/rank";
+import type { ShardChangeResult } from "@/lib/economy/ledger";
 import { getDb } from "@/db/client";
 import { books, readingEntries, shardEvents } from "@/db/schema";
 import { getEconomy } from "@/lib/economy/config";
-import { grantShards, type ShardChangeResult } from "@/lib/economy/ledger";
+import { grantShards } from "@/lib/economy/ledger";
 import { requireSessionUser } from "@/lib/auth/session";
 import { bookResponseToRow } from "@/lib/cards/hardcover";
-import type { Rarity } from "@/lib/packs/composition";
-import { fetchBookById, searchBooks, type HardcoverSearchHit } from "./hardcover";
-import type { DemoteReason } from "@/lib/hardcover/rank";
-import { withErrorLogging } from "./_shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared types
@@ -222,7 +224,7 @@ export const listReadingEntriesFn = createServerFn({ method: "GET" })
     if (r.status === undefined) return {};
     if (
       typeof r.status !== "string" ||
-      !(READING_STATUSES as readonly string[]).includes(r.status)
+      !(READING_STATUSES as ReadonlyArray<string>).includes(r.status)
     ) {
       throw new Error("listReadingEntriesFn: invalid status");
     }
@@ -380,7 +382,7 @@ export const upsertReadingEntryFn = createServerFn({ method: "POST" })
     if (r.status !== undefined) {
       if (
         typeof r.status !== "string" ||
-        !(READING_STATUSES as readonly string[]).includes(r.status)
+        !(READING_STATUSES as ReadonlyArray<string>).includes(r.status)
       ) {
         throw new Error("upsertReadingEntryFn: invalid status");
       }
@@ -461,7 +463,9 @@ export const upsertReadingEntryFn = createServerFn({ method: "POST" })
 
           const now = new Date();
           const desiredStatus: ReadingStatus =
-            data.status ?? (prior?.status as ReadingStatus | undefined) ?? "tbr";
+            data.status ??
+            (prior?.status as ReadingStatus | undefined) ??
+            "tbr";
 
           // Stamp transitions via the pure helper so the test suite
           // can exercise the same rule in isolation.
@@ -541,11 +545,7 @@ export const upsertReadingEntryFn = createServerFn({ method: "POST" })
             // (different table than the one being written), so the
             // transaction's snapshot gives us a consistent view
             // without any lock contention.
-            const allowed = await shouldGrantFinish(
-              tx,
-              user.id,
-              data.bookId,
-            );
+            const allowed = await shouldGrantFinish(tx, user.id, data.bookId);
             if (allowed) {
               const r = await grantShards(
                 tx,
@@ -777,7 +777,9 @@ export interface ReadingHardcoverHit {
 export const searchHardcoverForReadingLogFn = createServerFn({ method: "GET" })
   .inputValidator((raw: unknown): { query: string } => {
     if (typeof raw !== "object" || raw === null) {
-      throw new Error("searchHardcoverForReadingLogFn: input must be an object");
+      throw new Error(
+        "searchHardcoverForReadingLogFn: input must be an object",
+      );
     }
     const r = raw as Record<string, unknown>;
     const query = typeof r.query === "string" ? r.query.trim() : "";
@@ -845,7 +847,9 @@ export interface IngestHardcoverForReadingLogResult {
 export const ingestHardcoverForReadingLogFn = createServerFn({ method: "POST" })
   .inputValidator((raw: unknown): { hardcoverId: number } => {
     if (typeof raw !== "object" || raw === null) {
-      throw new Error("ingestHardcoverForReadingLogFn: input must be an object");
+      throw new Error(
+        "ingestHardcoverForReadingLogFn: input must be an object",
+      );
     }
     const r = raw as Record<string, unknown>;
     const hardcoverId = Number(r.hardcoverId);

@@ -1,18 +1,15 @@
 import { useMemo, useState } from "react";
 import { Link, useRouter } from "@tanstack/react-router";
 import { BookOpen, ChevronLeft, Info, Sparkles } from "lucide-react";
+import type { CardData } from "@/lib/cards/types";
+import type { PoolEntry, RipOutcome } from "@/lib/cards/pull";
+import type { CollectionPayload, PackPayload } from "@/server/collection";
 import { PackRip } from "@/components/cards/PackRip";
 import { PackContentsSheet } from "@/components/PackContentsSheet";
 import { useToast } from "@/components/Toast";
 import { bookRowToCardData } from "@/lib/cards/book-to-card";
-import { applyRip, pullPack, type PoolEntry, type RipOutcome } from "@/lib/cards/pull";
-import {
-  INSUFFICIENT_SHARDS_PREFIX,
-  recordRipFn,
-  type CollectionPayload,
-  type PackPayload,
-} from "@/server/collection";
-import type { CardData } from "@/lib/cards/types";
+import { applyRip, pullPack } from "@/lib/cards/pull";
+import { INSUFFICIENT_SHARDS_PREFIX, recordRipFn } from "@/server/collection";
 
 /**
  * Shared rip-flow UI. Rendered by both `/rip/$slug` (editorial) and
@@ -44,7 +41,7 @@ export interface RipPackShellProps {
 }
 
 interface RipState {
-  pulledCards: CardData[];
+  pulledCards: Array<CardData>;
   outcome: RipOutcome;
 }
 
@@ -85,7 +82,10 @@ export function RipPackShell({
     };
   }, [pack.books]);
 
-  const ownedBookIds = useMemo(() => new Set(collection.ownedBookIds), [collection.ownedBookIds]);
+  const ownedBookIds = useMemo(
+    () => new Set(collection.ownedBookIds),
+    [collection.ownedBookIds],
+  );
 
   // Gate the rip flow entirely when the user can't afford a pack.
   // Rolling cards only to have the server reject the commit would
@@ -213,7 +213,10 @@ export function RipPackShell({
             Cost
             <span className="inline-flex items-center gap-1 text-[var(--sea-ink)]">
               {economy.packCost}
-              <Sparkles aria-hidden className="h-3.5 w-3.5 text-[var(--lagoon)]" />
+              <Sparkles
+                aria-hidden
+                className="h-3.5 w-3.5 text-[var(--lagoon)]"
+              />
             </span>
           </span>
           <span aria-hidden>·</span>
@@ -305,21 +308,28 @@ function InsufficientShardsState({
             You need {shortfall} more to rip this pack
           </h2>
           <p className="mt-3 text-sm text-[var(--sea-ink-soft)]">
-            Shards are earned by reading. Mark a book as{" "}
-            <em>reading</em> for a small boost, and finishing a book
-            pays out a full pack's worth.
+            Shards are earned by reading. Mark a book as <em>reading</em> for a
+            small boost, and finishing a book pays out a full pack's worth.
           </p>
 
           {/* Balance vs cost, shown numerically so the gap isn't
               ambiguous. Tabular numerals so the two rows line up. */}
           <dl className="mt-5 grid grid-cols-2 gap-3 text-xs tabular-nums">
             <div className="rounded-xl border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-2">
-              <dt className="uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">You have</dt>
-              <dd className="mt-1 text-lg font-semibold text-[var(--sea-ink)]">{shardBalance}</dd>
+              <dt className="uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+                You have
+              </dt>
+              <dd className="mt-1 text-lg font-semibold text-[var(--sea-ink)]">
+                {shardBalance}
+              </dd>
             </div>
             <div className="rounded-xl border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-2">
-              <dt className="uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">Pack cost</dt>
-              <dd className="mt-1 text-lg font-semibold text-[var(--sea-ink)]">{packCost}</dd>
+              <dt className="uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
+                Pack cost
+              </dt>
+              <dd className="mt-1 text-lg font-semibold text-[var(--sea-ink)]">
+                {packCost}
+              </dd>
             </div>
           </dl>
 

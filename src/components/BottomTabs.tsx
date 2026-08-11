@@ -82,22 +82,46 @@ export default function BottomTabs() {
       className="fixed inset-x-0 bottom-0 z-50 border-t border-[var(--line)] bg-[var(--bg-base)] pb-[env(safe-area-inset-bottom)] sm:hidden"
     >
       <ul className="mx-auto flex max-w-md items-stretch justify-around">
-        <Tab to="/" label="Home" icon={<Home aria-hidden className="h-5 w-5" />} />
-        <Tab to="/rip" label="Rip" icon={<Sparkles aria-hidden className="h-5 w-5" />} />
+        <Tab
+          to="/"
+          label="Home"
+          icon={<Home aria-hidden className="h-5 w-5" />}
+        />
+        <Tab
+          to="/rip"
+          label="Rip"
+          icon={<Sparkles aria-hidden className="h-5 w-5" />}
+        />
         {/* Feed is fourth so the rip CTA stays visually centered in
             a 3-icon mental model — Home + Rip + Library remain the
             primary loop, with Feed an adjacent surface. Order tested
             against thumb reachability: Feed at the right edge keeps
             the chord on the dominant hand for right-handed users
             (the majority) without crowding the rip tap target. */}
-        <Tab to="/feed" label="Feed" icon={<Rss aria-hidden className="h-5 w-5" />} />
-        <Tab to="/library/collection" label="Library" icon={<BookOpen aria-hidden className="h-5 w-5" />} />
+        <Tab
+          to="/feed"
+          label="Feed"
+          icon={<Rss aria-hidden className="h-5 w-5" />}
+        />
+        <Tab
+          to="/library/collection"
+          label="Library"
+          icon={<BookOpen aria-hidden className="h-5 w-5" />}
+        />
       </ul>
     </nav>
   );
 }
 
-function Tab({ to, label, icon }: { to: string; label: string; icon: React.ReactNode }) {
+function Tab({
+  to,
+  label,
+  icon,
+}: {
+  to: string;
+  label: string;
+  icon: React.ReactNode;
+}) {
   return (
     <li className="flex-1">
       <Link
@@ -109,7 +133,9 @@ function Tab({ to, label, icon }: { to: string; label: string; icon: React.React
         activeProps={{ className: "bottom-tab is-active" }}
       >
         {icon}
-        <span className="text-[10px] font-semibold uppercase tracking-[0.12em]">{label}</span>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.12em]">
+          {label}
+        </span>
       </Link>
     </li>
   );

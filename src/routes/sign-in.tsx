@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { signInWithGoogle, useAuth } from "@/lib/auth/hooks";
 
 export const Route = createFileRoute("/sign-in")({
@@ -37,8 +37,8 @@ function SignInPage() {
           Sign in to start collecting
         </h1>
         <p className="mt-3 text-sm text-[var(--sea-ink-soft)]">
-          Your collection, packs, and reading log live in your account so you can rip from any
-          device.
+          Your collection, packs, and reading log live in your account so you
+          can rip from any device.
         </p>
 
         <button

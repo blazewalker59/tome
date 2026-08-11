@@ -11,10 +11,12 @@
  * return `null` for anonymous callers so the UI can render a sign-in CTA.
  */
 
-import { createServerFn } from '@tanstack/react-start'
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { createServerFn } from "@tanstack/react-start";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
-import { getDb } from '@/db/client'
+import { withErrorLogging } from "./_shared";
+import type { BookRow } from "@/lib/cards/book-to-card";
+import { getDb } from "@/db/client";
 import {
   books,
   collectionCards,
@@ -23,13 +25,11 @@ import {
   packs,
   shardBalances,
   users,
-} from '@/db/schema'
-import { getSessionUser } from '@/lib/auth/session'
-import { getEconomy } from '@/lib/economy/config'
-import { grantShards, spendShards } from '@/lib/economy/ledger'
-import type { BookRow } from '@/lib/cards/book-to-card'
-import { classifyRip } from '@/lib/cards/classify-rip'
-import { withErrorLogging } from './_shared'
+} from "@/db/schema";
+import { getSessionUser } from "@/lib/auth/session";
+import { getEconomy } from "@/lib/economy/config";
+import { grantShards, spendShards } from "@/lib/economy/ledger";
+import { classifyRip } from "@/lib/cards/classify-rip";
 
 /**
  * Wrapper removed — moved to `./_shared` so both `collection.ts` and
@@ -41,20 +41,20 @@ import { withErrorLogging } from './_shared'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PackPayload {
-  packId: string
-  slug: string
-  name: string
-  description: string | null
+  packId: string;
+  slug: string;
+  name: string;
+  description: string | null;
   /** Optional bespoke cover art. When set, the rip seal renders this
    *  as the seal face instead of the genre gradient. */
-  coverImageUrl: string | null
+  coverImageUrl: string | null;
   /** Editorial genre tags (kebab-case, max 3). The first entry drives
    *  the rip wrapper gradient — see `packGradient` in
    *  src/lib/packs/gradient.ts. Empty array for legacy packs that
    *  haven't been tagged yet; the gradient helper falls back to the
    *  slug map and then the default. */
-  genreTags: ReadonlyArray<string>
-  books: ReadonlyArray<BookRow>
+  genreTags: ReadonlyArray<string>;
+  books: ReadonlyArray<BookRow>;
 }
 
 /**
@@ -64,82 +64,82 @@ export interface PackPayload {
  * fetched lazily when the user drills into /rip/$slug.
  */
 export interface PackSummary {
-  id: string
-  slug: string
-  name: string
-  description: string | null
-  coverImageUrl: string | null
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  coverImageUrl: string | null;
   /** Editorial genre tags (kebab-case, max 3). First entry drives the
    *  pack-tile gradient on /rip and the home grid. */
-  genreTags: ReadonlyArray<string>
-  bookCount: number
+  genreTags: ReadonlyArray<string>;
+  bookCount: number;
 }
 
 export interface AcquisitionEntry {
-  bookId: string
+  bookId: string;
   /** ID of the pack this book was first acquired from, or null if
    *  attribution is missing (legacy rows, manual imports). Stable key
    *  suitable for grouping in the UI. */
-  packId: string | null
+  packId: string | null;
   /** URL-safe pack identifier; same nullability as `packId`. */
-  packSlug: string | null
+  packSlug: string | null;
   /** Human label — e.g. "Modern Fantasy Starter" — falls back to
    *  "Editorial pack" when attribution is missing so the UI never has
    *  to render an empty string. */
-  packName: string
-  acquiredAt: number // epoch ms
+  packName: string;
+  acquiredAt: number; // epoch ms
 }
 
 export interface RecentPullEntry {
-  bookId: string
-  title: string
+  bookId: string;
+  title: string;
   /** Nullable because `books.cover_url` is nullable (not every imported
    *  book has art yet). UI renders a rarity-tinted placeholder when
    *  missing rather than a broken `<img>`. */
-  coverUrl: string | null
-  rarity: string
-  acquiredAt: number
+  coverUrl: string | null;
+  rarity: string;
+  acquiredAt: number;
 }
 
 export interface CollectionPayload {
-  ownedBookIds: ReadonlyArray<string>
+  ownedBookIds: ReadonlyArray<string>;
   /** Full catalog rows for every owned book. The collection page needs
    *  `BookRow` data (title, authors, cover, rarity, mood tags) to render
    *  its grid; inlining the join here lets the page drop a second
    *  round-trip to a pack-contents fetcher. Kept ordered by
    *  first-acquired desc so the page's default "newest first" sort
    *  falls out naturally. */
-  ownedBooks: ReadonlyArray<BookRow>
-  acquisitions: ReadonlyArray<AcquisitionEntry>
-  shardBalance: number
+  ownedBooks: ReadonlyArray<BookRow>;
+  acquisitions: ReadonlyArray<AcquisitionEntry>;
+  shardBalance: number;
   /** Newest-first snapshot of the last 5 unique books the user pulled.
    *  Enough metadata (title + cover + rarity) so the Home "recent rips"
    *  row can render without an extra query. Kept short — the Home card
    *  just needs a glance, and more rows would crowd the viewport. */
-  recentPulls: ReadonlyArray<RecentPullEntry>
+  recentPulls: ReadonlyArray<RecentPullEntry>;
 }
 
 export interface RecordRipInput {
-  packId: string
-  pulledBookIds: ReadonlyArray<string>
+  packId: string;
+  pulledBookIds: ReadonlyArray<string>;
 }
 
 export interface RecordRipResult {
   /** Book IDs the user didn't already own (first-time acquisitions). */
-  newBookIds: ReadonlyArray<string>
+  newBookIds: ReadonlyArray<string>;
   /** Book IDs already in the collection — converted to shards. */
-  duplicateBookIds: ReadonlyArray<string>
+  duplicateBookIds: ReadonlyArray<string>;
   /**
    * Total shards credited by this rip — sum of dupe refunds only.
    * Does NOT include the pack cost debit (which reduces balance).
    * UI can compute net change as `shardsAwarded - packCost` if it
    * wants to show "-25 net" on a bad rip.
    */
-  shardsAwarded: number
+  shardsAwarded: number;
   /** Shards deducted for the rip itself. */
-  packCost: number
+  packCost: number;
   /** User's balance after the entire rip (debit + refunds). */
-  newShardBalance: number
+  newShardBalance: number;
 }
 
 /**
@@ -150,7 +150,7 @@ export interface RecordRipResult {
  * union result so existing callers don't have to change their
  * throw/catch shape.
  */
-export const INSUFFICIENT_SHARDS_PREFIX = 'INSUFFICIENT_SHARDS:'
+export const INSUFFICIENT_SHARDS_PREFIX = "INSUFFICIENT_SHARDS:";
 
 /**
  * Thrown by `recordRipFn` when the caller tries to rip a pack they
@@ -159,7 +159,7 @@ export const INSUFFICIENT_SHARDS_PREFIX = 'INSUFFICIENT_SHARDS:'
  * failure. Self-rips would otherwise let creators farm dupe refunds
  * on the books they curated into the pack.
  */
-export const SELF_RIP_PREFIX = 'SELF_RIP:'
+export const SELF_RIP_PREFIX = "SELF_RIP:";
 
 /**
  * Thrown by `recordRipFn` when the client posts pulled book IDs that
@@ -168,7 +168,7 @@ export const SELF_RIP_PREFIX = 'SELF_RIP:'
  * server is the authority on what books a pack contains; the client-
  * side roll is just an animation seed.
  */
-export const INVALID_PULL_PREFIX = 'INVALID_PULL:'
+export const INVALID_PULL_PREFIX = "INVALID_PULL:";
 
 // Shard payout is derived from the economy config (CORE_LOOP_PLAN §1).
 // Flat per-dupe in v1; the config shape allows per-rarity overrides
@@ -187,7 +187,7 @@ export const INVALID_PULL_PREFIX = 'INVALID_PULL:'
  * creator's namespace.
  */
 async function loadPackBySlug(slug: string): Promise<PackPayload> {
-  const database = await getDb()
+  const database = await getDb();
 
   const [pack] = await database
     .select({
@@ -201,10 +201,10 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
     .from(packs)
     // Editorial namespace only: creator_id IS NULL.
     .where(and(eq(packs.slug, slug), isNull(packs.creatorId)))
-    .limit(1)
+    .limit(1);
 
   if (!pack) {
-    throw new Error(`[server/collection] pack "${slug}" not found.`)
+    throw new Error(`[server/collection] pack "${slug}" not found.`);
   }
 
   const rows = await database
@@ -222,7 +222,7 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
     })
     .from(packBooks)
     .innerJoin(books, eq(packBooks.bookId, books.id))
-    .where(eq(packBooks.packId, pack.id))
+    .where(eq(packBooks.packId, pack.id));
 
   return {
     packId: pack.id,
@@ -232,7 +232,7 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
     coverImageUrl: pack.coverImageUrl,
     genreTags: pack.genreTags ?? [],
     books: rows,
-  }
+  };
 }
 
 /**
@@ -243,8 +243,11 @@ async function loadPackBySlug(slug: string): Promise<PackPayload> {
  * Drafts (`is_public = false`) are rejected — only published packs
  * are rippable.
  */
-async function loadUserPack(username: string, slug: string): Promise<PackPayload> {
-  const database = await getDb()
+async function loadUserPack(
+  username: string,
+  slug: string,
+): Promise<PackPayload> {
+  const database = await getDb();
 
   const [pack] = await database
     .select({
@@ -264,10 +267,12 @@ async function loadUserPack(username: string, slug: string): Promise<PackPayload
         eq(packs.isPublic, true),
       ),
     )
-    .limit(1)
+    .limit(1);
 
   if (!pack) {
-    throw new Error(`[server/collection] user pack @${username}/${slug} not found.`)
+    throw new Error(
+      `[server/collection] user pack @${username}/${slug} not found.`,
+    );
   }
 
   const rows = await database
@@ -286,8 +291,8 @@ async function loadUserPack(username: string, slug: string): Promise<PackPayload
     .from(packBooks)
     .innerJoin(books, eq(packBooks.bookId, books.id))
     .where(eq(packBooks.packId, pack.id))
-    .orderBy(desc(packBooks.packId)) // stable order — actual position sort
-    // handled in the rip roller via its own pool weighting
+    .orderBy(desc(packBooks.packId)); // stable order — actual position sort
+  // handled in the rip roller via its own pool weighting
 
   return {
     packId: pack.id,
@@ -297,7 +302,7 @@ async function loadUserPack(username: string, slug: string): Promise<PackPayload
     coverImageUrl: pack.coverImageUrl,
     genreTags: pack.genreTags ?? [],
     books: rows,
-  }
+  };
 }
 
 /**
@@ -305,22 +310,25 @@ async function loadUserPack(username: string, slug: string): Promise<PackPayload
  * picks a pack from the carousel. Public so anonymous users can
  * preview; auth is enforced only when they actually commit a rip.
  */
-export const getPackBySlugFn = createServerFn({ method: 'GET' })
+export const getPackBySlugFn = createServerFn({ method: "GET" })
   .inputValidator((raw: unknown) => {
-    if (typeof raw !== 'object' || raw === null) {
-      throw new Error('getPackBySlugFn: expected { slug: string }')
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("getPackBySlugFn: expected { slug: string }");
     }
-    const { slug } = raw as { slug?: unknown }
-    if (typeof slug !== 'string' || slug.length === 0) {
-      throw new Error('getPackBySlugFn: slug must be a non-empty string')
+    const { slug } = raw as { slug?: unknown };
+    if (typeof slug !== "string" || slug.length === 0) {
+      throw new Error("getPackBySlugFn: slug must be a non-empty string");
     }
-    return { slug }
+    return { slug };
   })
   .handler(
-    withErrorLogging('getPackBySlugFn', async ({ data }): Promise<PackPayload> => {
-      return loadPackBySlug(data.slug)
-    }),
-  )
+    withErrorLogging(
+      "getPackBySlugFn",
+      async ({ data }): Promise<PackPayload> => {
+        return loadPackBySlug(data.slug);
+      },
+    ),
+  );
 
 /**
  * Shape returned by `getPackBooksByIdsFn`. A flat map keyed by pack
@@ -332,11 +340,11 @@ export const getPackBySlugFn = createServerFn({ method: 'GET' })
  * component works uniformly across both surfaces.
  */
 export interface PackManifestEntry {
-  name: string
-  books: ReadonlyArray<BookRow>
+  name: string;
+  books: ReadonlyArray<BookRow>;
 }
 
-export type PackManifestMap = ReadonlyMap<string, PackManifestEntry>
+export type PackManifestMap = ReadonlyMap<string, PackManifestEntry>;
 
 /**
  * Batch-fetch the book manifests for a set of packs. Used by
@@ -354,31 +362,34 @@ export type PackManifestMap = ReadonlyMap<string, PackManifestEntry>
  * doesn't round-trip Map values cleanly; the client rehydrates into
  * a Map on arrival.
  */
-export const getPackBooksByIdsFn = createServerFn({ method: 'GET' })
+export const getPackBooksByIdsFn = createServerFn({ method: "GET" })
   .inputValidator((raw: unknown) => {
-    if (typeof raw !== 'object' || raw === null) {
-      throw new Error('getPackBooksByIdsFn: expected { packIds: string[] }')
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("getPackBooksByIdsFn: expected { packIds: string[] }");
     }
-    const { packIds } = raw as { packIds?: unknown }
-    if (!Array.isArray(packIds) || !packIds.every((id) => typeof id === 'string')) {
-      throw new Error('getPackBooksByIdsFn: packIds must be string[]')
+    const { packIds } = raw as { packIds?: unknown };
+    if (
+      !Array.isArray(packIds) ||
+      !packIds.every((id) => typeof id === "string")
+    ) {
+      throw new Error("getPackBooksByIdsFn: packIds must be string[]");
     }
     // Dedup up-front so we don't send redundant IDs to the DB and
     // also so the map we return has a predictable size regardless of
     // caller hygiene.
-    return { packIds: Array.from(new Set(packIds as string[])) }
+    return { packIds: Array.from(new Set(packIds as Array<string>)) };
   })
   .handler(
     withErrorLogging(
-      'getPackBooksByIdsFn',
+      "getPackBooksByIdsFn",
       async ({ data }): Promise<Record<string, PackManifestEntry>> => {
-        const { packIds } = data
+        const { packIds } = data;
         // Short-circuit on empty input — otherwise `inArray(col, [])`
         // generates `col IN ()` on some drivers which is a syntax
         // error. Also saves a round-trip.
-        if (packIds.length === 0) return {}
+        if (packIds.length === 0) return {};
 
-        const database = await getDb()
+        const database = await getDb();
 
         // One query that pulls every (pack, book) pair. Filtering by
         // `isPublic = true OR creator_id IS NULL` permits editorial
@@ -408,19 +419,19 @@ export const getPackBooksByIdsFn = createServerFn({ method: 'GET' })
               // Editorial (null creator) or explicitly published.
               sql`${packs.creatorId} is null or ${packs.isPublic} = true`,
             ),
-          )
+          );
 
         // Bucket by packId. We keep the pack's name alongside the
         // books so the sheet can render its header without a separate
         // lookup.
-        const out: Record<string, PackManifestEntry> = {}
+        const out: Record<string, PackManifestEntry> = {};
         for (const r of rows) {
-          let entry = out[r.packId]
+          let entry = out[r.packId];
           if (!entry) {
-            entry = { name: r.packName, books: [] }
-            out[r.packId] = entry
+            entry = { name: r.packName, books: [] };
+            out[r.packId] = entry;
           }
-          ;(entry.books as BookRow[]).push({
+          (entry.books as Array<BookRow>).push({
             id: r.id,
             title: r.title,
             authors: r.authors,
@@ -431,12 +442,12 @@ export const getPackBooksByIdsFn = createServerFn({ method: 'GET' })
             genre: r.genre,
             rarity: r.rarity,
             moodTags: r.moodTags,
-          })
+          });
         }
-        return out
+        return out;
       },
     ),
-  )
+  );
 
 /**
  * Fetch a published user pack by (username, slug). Used by the
@@ -446,25 +457,28 @@ export const getPackBooksByIdsFn = createServerFn({ method: 'GET' })
  * (`rollRip`, `applyRip`) don't care whether a pack is editorial or
  * user-made.
  */
-export const getUserPackFn = createServerFn({ method: 'GET' })
+export const getUserPackFn = createServerFn({ method: "GET" })
   .inputValidator((raw: unknown) => {
-    if (typeof raw !== 'object' || raw === null) {
-      throw new Error('getUserPackFn: expected { username, slug }')
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("getUserPackFn: expected { username, slug }");
     }
-    const { username, slug } = raw as { username?: unknown; slug?: unknown }
-    if (typeof username !== 'string' || username.length === 0) {
-      throw new Error('getUserPackFn: username must be a non-empty string')
+    const { username, slug } = raw as { username?: unknown; slug?: unknown };
+    if (typeof username !== "string" || username.length === 0) {
+      throw new Error("getUserPackFn: username must be a non-empty string");
     }
-    if (typeof slug !== 'string' || slug.length === 0) {
-      throw new Error('getUserPackFn: slug must be a non-empty string')
+    if (typeof slug !== "string" || slug.length === 0) {
+      throw new Error("getUserPackFn: slug must be a non-empty string");
     }
-    return { username, slug }
+    return { username, slug };
   })
   .handler(
-    withErrorLogging('getUserPackFn', async ({ data }): Promise<PackPayload> => {
-      return loadUserPack(data.username, data.slug)
-    }),
-  )
+    withErrorLogging(
+      "getUserPackFn",
+      async ({ data }): Promise<PackPayload> => {
+        return loadUserPack(data.username, data.slug);
+      },
+    ),
+  );
 
 /**
  * List every editorial pack in the catalog, newest first, with a book
@@ -472,36 +486,39 @@ export const getUserPackFn = createServerFn({ method: 'GET' })
  * `getPackBySlugFn` so the carousel doesn't pay the cost of pulling
  * every book in every pack just to show cover thumbnails. Public.
  */
-export const getRipPacksFn = createServerFn({ method: 'GET' }).handler(
-  withErrorLogging('getRipPacksFn', async (): Promise<ReadonlyArray<PackSummary>> => {
-    const database = await getDb()
-    const rows = await database
-      .select({
-        id: packs.id,
-        slug: packs.slug,
-        name: packs.name,
-        description: packs.description,
-        coverImageUrl: packs.coverImageUrl,
-        genreTags: packs.genreTags,
-        // Per-pack book count via a correlated aggregate. Avoids a
-        // separate N+1 pass and keeps the payload compact for the
-        // carousel.
-        bookCount: sql<number>`(
+export const getRipPacksFn = createServerFn({ method: "GET" }).handler(
+  withErrorLogging(
+    "getRipPacksFn",
+    async (): Promise<ReadonlyArray<PackSummary>> => {
+      const database = await getDb();
+      const rows = await database
+        .select({
+          id: packs.id,
+          slug: packs.slug,
+          name: packs.name,
+          description: packs.description,
+          coverImageUrl: packs.coverImageUrl,
+          genreTags: packs.genreTags,
+          // Per-pack book count via a correlated aggregate. Avoids a
+          // separate N+1 pass and keeps the payload compact for the
+          // carousel.
+          bookCount: sql<number>`(
           SELECT COUNT(*)::int
           FROM ${packBooks}
           WHERE ${packBooks.packId} = ${packs.id}
         )`,
-      })
-      .from(packs)
-      // Editorial packs are defined by a NULL creator_id. They share the
-      // global "Tome-authored" namespace; user-built packs have creator_id
-      // set and surface on user profiles instead.
-      .where(and(isNull(packs.creatorId), eq(packs.isPublic, true)))
-      .orderBy(desc(packs.createdAt))
+        })
+        .from(packs)
+        // Editorial packs are defined by a NULL creator_id. They share the
+        // global "Tome-authored" namespace; user-built packs have creator_id
+        // set and surface on user profiles instead.
+        .where(and(isNull(packs.creatorId), eq(packs.isPublic, true)))
+        .orderBy(desc(packs.createdAt));
 
-    return rows.map((r) => ({ ...r, genreTags: r.genreTags ?? [] }))
-  }),
-)
+      return rows.map((r) => ({ ...r, genreTags: r.genreTags ?? [] }));
+    },
+  ),
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read: user collection
@@ -514,118 +531,124 @@ export const getRipPacksFn = createServerFn({ method: 'GET' }).handler(
  * anonymous callers so the caller can decide whether to render a
  * placeholder or skip rendering entirely.
  */
-export const getShardBalanceFn = createServerFn({ method: 'GET' }).handler(
-  withErrorLogging('getShardBalanceFn', async (): Promise<{ shards: number } | null> => {
-    const user = await getSessionUser()
-    if (!user) return null
+export const getShardBalanceFn = createServerFn({ method: "GET" }).handler(
+  withErrorLogging(
+    "getShardBalanceFn",
+    async (): Promise<{ shards: number } | null> => {
+      const user = await getSessionUser();
+      if (!user) return null;
 
-    const database = await getDb()
-    const [row] = await database
-      .select({ shards: shardBalances.shards })
-      .from(shardBalances)
-      .where(eq(shardBalances.userId, user.id))
-      .limit(1)
+      const database = await getDb();
+      const [row] = await database
+        .select({ shards: shardBalances.shards })
+        .from(shardBalances)
+        .where(eq(shardBalances.userId, user.id))
+        .limit(1);
 
-    return { shards: row?.shards ?? 0 }
-  }),
-)
+      return { shards: row?.shards ?? 0 };
+    },
+  ),
+);
 
 /**
  * Return the signed-in user's collection. Returns `null` for anonymous
  * callers so the UI can render a sign-in prompt instead of an empty state.
  */
-export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
-  withErrorLogging('getCollectionFn', async (): Promise<CollectionPayload | null> => {
-    const user = await getSessionUser()
-    if (!user) return null
+export const getCollectionFn = createServerFn({ method: "GET" }).handler(
+  withErrorLogging(
+    "getCollectionFn",
+    async (): Promise<CollectionPayload | null> => {
+      const user = await getSessionUser();
+      if (!user) return null;
 
-    const database = await getDb()
+      const database = await getDb();
 
-    // Pull collection rows + the pack-name snapshot used for "Found in pack: …".
-    // LEFT JOIN because `first_acquired_from_pack_id` is nullable (rows
-    // inserted manually, future imports, etc).
-    const rows = await database
-      .select({
-        bookId: collectionCards.bookId,
-        firstAcquiredAt: collectionCards.firstAcquiredAt,
-        packId: packs.id,
-        packSlug: packs.slug,
-        packName: packs.name,
-      })
-      .from(collectionCards)
-      .leftJoin(packs, eq(collectionCards.firstAcquiredFromPackId, packs.id))
-      .where(eq(collectionCards.userId, user.id))
+      // Pull collection rows + the pack-name snapshot used for "Found in pack: …".
+      // LEFT JOIN because `first_acquired_from_pack_id` is nullable (rows
+      // inserted manually, future imports, etc).
+      const rows = await database
+        .select({
+          bookId: collectionCards.bookId,
+          firstAcquiredAt: collectionCards.firstAcquiredAt,
+          packId: packs.id,
+          packSlug: packs.slug,
+          packName: packs.name,
+        })
+        .from(collectionCards)
+        .leftJoin(packs, eq(collectionCards.firstAcquiredFromPackId, packs.id))
+        .where(eq(collectionCards.userId, user.id));
 
-    const [balance] = await database
-      .select({ shards: shardBalances.shards })
-      .from(shardBalances)
-      .where(eq(shardBalances.userId, user.id))
-      .limit(1)
+      const [balance] = await database
+        .select({ shards: shardBalances.shards })
+        .from(shardBalances)
+        .where(eq(shardBalances.userId, user.id))
+        .limit(1);
 
-    // Full book metadata for every owned book. The collection page
-    // renders a grid of cards and needs `BookRow`-shaped data (title,
-    // authors, cover, rarity, mood tags) for every entry; joining here
-    // lets the page avoid a second round-trip through a pack manifest
-    // fetcher. Ordered newest-first so the page's default sort (most
-    // recent acquisitions first) falls out without further work.
-    const ownedBookRows = await database
-      .select({
-        id: books.id,
-        title: books.title,
-        authors: books.authors,
-        coverUrl: books.coverUrl,
-        description: books.description,
-        pageCount: books.pageCount,
-        publishedYear: books.publishedYear,
-        genre: books.genre,
-        rarity: books.rarity,
-        moodTags: books.moodTags,
-      })
-      .from(collectionCards)
-      .innerJoin(books, eq(collectionCards.bookId, books.id))
-      .where(eq(collectionCards.userId, user.id))
-      .orderBy(sql`${collectionCards.firstAcquiredAt} desc`)
+      // Full book metadata for every owned book. The collection page
+      // renders a grid of cards and needs `BookRow`-shaped data (title,
+      // authors, cover, rarity, mood tags) for every entry; joining here
+      // lets the page avoid a second round-trip through a pack manifest
+      // fetcher. Ordered newest-first so the page's default sort (most
+      // recent acquisitions first) falls out without further work.
+      const ownedBookRows = await database
+        .select({
+          id: books.id,
+          title: books.title,
+          authors: books.authors,
+          coverUrl: books.coverUrl,
+          description: books.description,
+          pageCount: books.pageCount,
+          publishedYear: books.publishedYear,
+          genre: books.genre,
+          rarity: books.rarity,
+          moodTags: books.moodTags,
+        })
+        .from(collectionCards)
+        .innerJoin(books, eq(collectionCards.bookId, books.id))
+        .where(eq(collectionCards.userId, user.id))
+        .orderBy(sql`${collectionCards.firstAcquiredAt} desc`);
 
-    // Recent pulls: 5 newest unique books by first-acquisition time.
-    // Separate query (rather than shaping from `rows`) so we can INNER
-    // JOIN `books` for the card preview metadata and cap server-side
-    // via LIMIT — pulling every row to slice in JS wouldn't scale once
-    // collections grow past a few hundred books.
-    const recentRows = await database
-      .select({
-        bookId: collectionCards.bookId,
-        firstAcquiredAt: collectionCards.firstAcquiredAt,
-        title: books.title,
-        coverUrl: books.coverUrl,
-        rarity: books.rarity,
-      })
-      .from(collectionCards)
-      .innerJoin(books, eq(collectionCards.bookId, books.id))
-      .where(eq(collectionCards.userId, user.id))
-      .orderBy(sql`${collectionCards.firstAcquiredAt} desc`)
-      .limit(5)
+      // Recent pulls: 5 newest unique books by first-acquisition time.
+      // Separate query (rather than shaping from `rows`) so we can INNER
+      // JOIN `books` for the card preview metadata and cap server-side
+      // via LIMIT — pulling every row to slice in JS wouldn't scale once
+      // collections grow past a few hundred books.
+      const recentRows = await database
+        .select({
+          bookId: collectionCards.bookId,
+          firstAcquiredAt: collectionCards.firstAcquiredAt,
+          title: books.title,
+          coverUrl: books.coverUrl,
+          rarity: books.rarity,
+        })
+        .from(collectionCards)
+        .innerJoin(books, eq(collectionCards.bookId, books.id))
+        .where(eq(collectionCards.userId, user.id))
+        .orderBy(sql`${collectionCards.firstAcquiredAt} desc`)
+        .limit(5);
 
-    return {
-      ownedBookIds: rows.map((r) => r.bookId),
-      ownedBooks: ownedBookRows,
-      acquisitions: rows.map((r) => ({
-        bookId: r.bookId,
-        packId: r.packId ?? null,
-        packSlug: r.packSlug ?? null,
-        packName: r.packName ?? 'Editorial pack',
-        acquiredAt: r.firstAcquiredAt.getTime(),
-      })),
-      shardBalance: balance?.shards ?? 0,
-      recentPulls: recentRows.map((r) => ({
-        bookId: r.bookId,
-        title: r.title,
-        coverUrl: r.coverUrl,
-        rarity: r.rarity,
-        acquiredAt: r.firstAcquiredAt.getTime(),
-      })),
-    }
-  }),
-)
+      return {
+        ownedBookIds: rows.map((r) => r.bookId),
+        ownedBooks: ownedBookRows,
+        acquisitions: rows.map((r) => ({
+          bookId: r.bookId,
+          packId: r.packId ?? null,
+          packSlug: r.packSlug ?? null,
+          packName: r.packName ?? "Editorial pack",
+          acquiredAt: r.firstAcquiredAt.getTime(),
+        })),
+        shardBalance: balance?.shards ?? 0,
+        recentPulls: recentRows.map((r) => ({
+          bookId: r.bookId,
+          title: r.title,
+          coverUrl: r.coverUrl,
+          rarity: r.rarity,
+          acquiredAt: r.firstAcquiredAt.getTime(),
+        })),
+      };
+    },
+  ),
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Write: record a pack rip
@@ -643,226 +666,235 @@ export const getCollectionFn = createServerFn({ method: 'GET' }).handler(
  * Everything happens inside a single transaction so a mid-rip crash can't
  * leave the economy in an inconsistent state.
  */
-export const recordRipFn = createServerFn({ method: 'POST' })
+export const recordRipFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown): RecordRipInput => {
     // Hand-rolled validation to avoid a zod dependency for one call site.
-    if (typeof data !== 'object' || data === null) {
-      throw new Error('recordRip: body must be an object')
+    if (typeof data !== "object" || data === null) {
+      throw new Error("recordRip: body must be an object");
     }
-    const { packId, pulledBookIds } = data as Record<string, unknown>
-    if (typeof packId !== 'string') {
-      throw new Error('recordRip: packId must be a string')
+    const { packId, pulledBookIds } = data as Record<string, unknown>;
+    if (typeof packId !== "string") {
+      throw new Error("recordRip: packId must be a string");
     }
-    if (!Array.isArray(pulledBookIds) || pulledBookIds.some((id) => typeof id !== 'string')) {
-      throw new Error('recordRip: pulledBookIds must be an array of strings')
+    if (
+      !Array.isArray(pulledBookIds) ||
+      pulledBookIds.some((id) => typeof id !== "string")
+    ) {
+      throw new Error("recordRip: pulledBookIds must be an array of strings");
     }
     if (pulledBookIds.length === 0) {
-      throw new Error('recordRip: pulledBookIds must be non-empty')
+      throw new Error("recordRip: pulledBookIds must be non-empty");
     }
-    return { packId, pulledBookIds: pulledBookIds as string[] }
+    return { packId, pulledBookIds: pulledBookIds as Array<string> };
   })
-  .handler(withErrorLogging('recordRipFn', async ({ data }): Promise<RecordRipResult> => {
-    const user = await getSessionUser()
-    if (!user) {
-      throw new Error('recordRip: not authenticated')
-    }
-
-    const database = await getDb()
-    const { packId, pulledBookIds } = data
-
-    const cfg = await getEconomy()
-    const packCost = cfg.packCost
-    const perDupe = cfg.dupeRefund.shardsPerDupe
-
-    return await database.transaction(async (tx) => {
-      // 1. Resolve the pack and its membership in one shot. The pack
-      //    row gives us `creator_id` for the self-rip guard; the join
-      //    against `pack_books` gives us the authoritative book set
-      //    so we can reject pulls that include any book outside the
-      //    pack. Doing this BEFORE the shard debit means a tampered
-      //    request never costs the user anything.
-      const packRows = await tx
-        .select({
-          packId: packs.id,
-          creatorId: packs.creatorId,
-          bookId: packBooks.bookId,
-        })
-        .from(packs)
-        .innerJoin(packBooks, eq(packBooks.packId, packs.id))
-        .where(eq(packs.id, packId))
-
-      if (packRows.length === 0) {
-        throw new Error(`recordRip: pack ${packId} not found or empty`)
-      }
-
-      const creatorId = packRows[0].creatorId
-      if (creatorId && creatorId === user.id) {
-        // Creators can't rip their own packs. Without this check a
-        // creator could spend 50 shards on a pack of books they
-        // already own and bank the dupe refunds — a low-effort grind
-        // and an obvious self-deal once user packs ship publicly.
-        throw new Error(
-          `${SELF_RIP_PREFIX}cannot rip a pack you authored`,
-        )
-      }
-
-      const packBookIds = new Set(packRows.map((r) => r.bookId))
-      for (const id of pulledBookIds) {
-        if (!packBookIds.has(id)) {
-          // The client computed `pullPack` and is reporting which
-          // books to commit. We trust the count (5 in v1) but not
-          // the identities — every committed id must belong to the
-          // pack. Anything else is a tampered request.
-          throw new Error(
-            `${INVALID_PULL_PREFIX}book ${id} is not a member of pack ${packId}`,
-          )
+  .handler(
+    withErrorLogging(
+      "recordRipFn",
+      async ({ data }): Promise<RecordRipResult> => {
+        const user = await getSessionUser();
+        if (!user) {
+          throw new Error("recordRip: not authenticated");
         }
-      }
 
-      // 2. Charge the pack cost. If the user can't afford it we bail
-      //    before touching anything else — no collection insert, no
-      //    audit row, no dupe refunds. `spendShards` row-locks the
-      //    balance so two concurrent rips can't both drain the
-      //    account below zero.
-      //
-      //    Note: we used to defensively upsert a `users` row here to cover
-      //    the case where the Supabase-era `handle_new_user` trigger hadn't
-      //    fired. That's no longer needed: Better Auth's
-      //    `databaseHooks.user.create.before` (see `src/lib/auth/server.ts`)
-      //    runs synchronously inside the OAuth callback and guarantees the
-      //    `users` row exists before any server fn can be called.
-      const debit = await spendShards(tx, user.id, packCost, { packId })
-      if (!debit.applied) {
-        throw new Error(
-          `${INSUFFICIENT_SHARDS_PREFIX}have=${debit.newBalance} need=${packCost}`,
-        )
-      }
+        const database = await getDb();
+        const { packId, pulledBookIds } = data;
 
-      // 3. Find which of the pulled books the user already owned BEFORE
-      //    this rip. Combined with the in-rip dedup the classifier
-      //    handles, this gives us correct new/dupe buckets even when
-      //    the same book appears multiple times in one pull.
-      const existing = await tx
-        .select({ bookId: collectionCards.bookId })
-        .from(collectionCards)
-        .where(
-          and(
-            eq(collectionCards.userId, user.id),
-            inArray(collectionCards.bookId, pulledBookIds as string[]),
-          ),
-        )
-      const ownedSet = new Set(existing.map((e) => e.bookId))
+        const cfg = await getEconomy();
+        const packCost = cfg.packCost;
+        const perDupe = cfg.dupeRefund.shardsPerDupe;
 
-      // 4. Classify pulls. `classifyRip` is a pure helper covered by
-      //    `src/__tests__/lib/cards/classify-rip.test.ts`; the
-      //    previous inline version mixed index spaces between the
-      //    filtered-new array and the original pull, mis-classifying
-      //    pulls like [ownedB, unownedA, unownedA].
-      const { newBookIds: dedupedNewIds, duplicateBookIds } = classifyRip(
-        pulledBookIds,
-        ownedSet,
-      )
+        return await database.transaction(async (tx) => {
+          // 1. Resolve the pack and its membership in one shot. The pack
+          //    row gives us `creator_id` for the self-rip guard; the join
+          //    against `pack_books` gives us the authoritative book set
+          //    so we can reject pulls that include any book outside the
+          //    pack. Doing this BEFORE the shard debit means a tampered
+          //    request never costs the user anything.
+          const packRows = await tx
+            .select({
+              packId: packs.id,
+              creatorId: packs.creatorId,
+              bookId: packBooks.bookId,
+            })
+            .from(packs)
+            .innerJoin(packBooks, eq(packBooks.packId, packs.id))
+            .where(eq(packs.id, packId));
 
-      // 5. Insert fresh collection rows. ON CONFLICT handles the
-      //    theoretical race where a concurrent rip inserts the same row.
-      if (dedupedNewIds.length > 0) {
-        await tx
-          .insert(collectionCards)
-          .values(
-            dedupedNewIds.map((bookId) => ({
+          if (packRows.length === 0) {
+            throw new Error(`recordRip: pack ${packId} not found or empty`);
+          }
+
+          const creatorId = packRows[0].creatorId;
+          if (creatorId && creatorId === user.id) {
+            // Creators can't rip their own packs. Without this check a
+            // creator could spend 50 shards on a pack of books they
+            // already own and bank the dupe refunds — a low-effort grind
+            // and an obvious self-deal once user packs ship publicly.
+            throw new Error(`${SELF_RIP_PREFIX}cannot rip a pack you authored`);
+          }
+
+          const packBookIds = new Set(packRows.map((r) => r.bookId));
+          for (const id of pulledBookIds) {
+            if (!packBookIds.has(id)) {
+              // The client computed `pullPack` and is reporting which
+              // books to commit. We trust the count (5 in v1) but not
+              // the identities — every committed id must belong to the
+              // pack. Anything else is a tampered request.
+              throw new Error(
+                `${INVALID_PULL_PREFIX}book ${id} is not a member of pack ${packId}`,
+              );
+            }
+          }
+
+          // 2. Charge the pack cost. If the user can't afford it we bail
+          //    before touching anything else — no collection insert, no
+          //    audit row, no dupe refunds. `spendShards` row-locks the
+          //    balance so two concurrent rips can't both drain the
+          //    account below zero.
+          //
+          //    Note: we used to defensively upsert a `users` row here to cover
+          //    the case where the Supabase-era `handle_new_user` trigger hadn't
+          //    fired. That's no longer needed: Better Auth's
+          //    `databaseHooks.user.create.before` (see `src/lib/auth/server.ts`)
+          //    runs synchronously inside the OAuth callback and guarantees the
+          //    `users` row exists before any server fn can be called.
+          const debit = await spendShards(tx, user.id, packCost, { packId });
+          if (!debit.applied) {
+            throw new Error(
+              `${INSUFFICIENT_SHARDS_PREFIX}have=${debit.newBalance} need=${packCost}`,
+            );
+          }
+
+          // 3. Find which of the pulled books the user already owned BEFORE
+          //    this rip. Combined with the in-rip dedup the classifier
+          //    handles, this gives us correct new/dupe buckets even when
+          //    the same book appears multiple times in one pull.
+          const existing = await tx
+            .select({ bookId: collectionCards.bookId })
+            .from(collectionCards)
+            .where(
+              and(
+                eq(collectionCards.userId, user.id),
+                inArray(collectionCards.bookId, pulledBookIds as Array<string>),
+              ),
+            );
+          const ownedSet = new Set(existing.map((e) => e.bookId));
+
+          // 4. Classify pulls. `classifyRip` is a pure helper covered by
+          //    `src/__tests__/lib/cards/classify-rip.test.ts`; the
+          //    previous inline version mixed index spaces between the
+          //    filtered-new array and the original pull, mis-classifying
+          //    pulls like [ownedB, unownedA, unownedA].
+          const { newBookIds: dedupedNewIds, duplicateBookIds } = classifyRip(
+            pulledBookIds,
+            ownedSet,
+          );
+
+          // 5. Insert fresh collection rows. ON CONFLICT handles the
+          //    theoretical race where a concurrent rip inserts the same row.
+          if (dedupedNewIds.length > 0) {
+            await tx
+              .insert(collectionCards)
+              .values(
+                dedupedNewIds.map((bookId) => ({
+                  userId: user.id,
+                  bookId,
+                  quantity: 1,
+                  firstAcquiredFromPackId: packId,
+                })),
+              )
+              .onConflictDoNothing({
+                target: [collectionCards.userId, collectionCards.bookId],
+              });
+          }
+
+          // 6. Bump quantities for duplicates. A single SQL update per unique
+          //    dupe id; quantity is +N where N is how many times the id appeared.
+          const dupeCounts = new Map<string, number>();
+          for (const id of duplicateBookIds) {
+            dupeCounts.set(id, (dupeCounts.get(id) ?? 0) + 1);
+          }
+          for (const [bookId, count] of dupeCounts) {
+            await tx
+              .update(collectionCards)
+              .set({
+                quantity: sql`${collectionCards.quantity} + ${count}`,
+                updatedAt: sql`now()`,
+              })
+              .where(
+                and(
+                  eq(collectionCards.userId, user.id),
+                  eq(collectionCards.bookId, bookId),
+                ),
+              );
+          }
+
+          // 7. Insert the audit row first so the dupe refunds can reference
+          //    it. `duplicates` stores the COUNT of dupes, not the ids.
+          //    `shardsAwarded` is filled in after the refunds; initial 0
+          //    is replaced below.
+          const [rip] = await tx
+            .insert(packRips)
+            .values({
               userId: user.id,
+              packId,
+              pulledBookIds: pulledBookIds as Array<string>,
+              duplicates: duplicateBookIds.length,
+              shardsAwarded: 0,
+            })
+            .returning({ id: packRips.id });
+
+          // 8. Grant flat dupe refunds via the ledger — one `dupe_refund`
+          //    row per dupe instance, each tied back to the rip id so we
+          //    can reconstruct "this rip yielded 2 dupes worth 10 shards"
+          //    later. `grantShards` updates the balance cache for us.
+          let shardsAwarded = 0;
+          let newShardBalance = debit.newBalance;
+          for (const bookId of duplicateBookIds) {
+            if (perDupe <= 0) break;
+            const r = await grantShards(tx, user.id, "dupe_refund", perDupe, {
               bookId,
-              quantity: 1,
-              firstAcquiredFromPackId: packId,
-            })),
-          )
-          .onConflictDoNothing({
-            target: [collectionCards.userId, collectionCards.bookId],
-          })
-      }
+              packId,
+              ripId: rip.id,
+            });
+            if (r.applied) {
+              shardsAwarded += r.delta;
+              newShardBalance = r.newBalance;
+            }
+          }
 
-      // 6. Bump quantities for duplicates. A single SQL update per unique
-      //    dupe id; quantity is +N where N is how many times the id appeared.
-      const dupeCounts = new Map<string, number>()
-      for (const id of duplicateBookIds) {
-        dupeCounts.set(id, (dupeCounts.get(id) ?? 0) + 1)
-      }
-      for (const [bookId, count] of dupeCounts) {
-        await tx
-          .update(collectionCards)
-          .set({
-            quantity: sql`${collectionCards.quantity} + ${count}`,
-            updatedAt: sql`now()`,
-          })
-          .where(
-            and(eq(collectionCards.userId, user.id), eq(collectionCards.bookId, bookId)),
-          )
-      }
+          // 9. Backfill the rip row's shardsAwarded now that we know the
+          //    total. Keeping it denormalized on pack_rips makes "biggest
+          //    rip ever" and similar queries cheap.
+          if (shardsAwarded > 0) {
+            await tx
+              .update(packRips)
+              .set({ shardsAwarded })
+              .where(eq(packRips.id, rip.id));
+          }
 
-      // 7. Insert the audit row first so the dupe refunds can reference
-      //    it. `duplicates` stores the COUNT of dupes, not the ids.
-      //    `shardsAwarded` is filled in after the refunds; initial 0
-      //    is replaced below.
-      const [rip] = await tx
-        .insert(packRips)
-        .values({
-          userId: user.id,
-          packId,
-          pulledBookIds: pulledBookIds as string[],
-          duplicates: duplicateBookIds.length,
-          shardsAwarded: 0,
-        })
-        .returning({ id: packRips.id })
+          // 10. Bump the pack's denormalized weekly-rip counter. Used as a
+          //     trending signal on the discovery surface. The counter is now
+          //     also re-derived on read by `listPublicPacksFn` from
+          //     `pack_rips` over a rolling 7-day window, so this denorm is
+          //     a hot-path cache rather than the source of truth — drift
+          //     resolves itself the next time the read query runs.
+          await tx
+            .update(packs)
+            .set({ ripCountWeek: sql`${packs.ripCountWeek} + 1` })
+            .where(eq(packs.id, packId));
 
-      // 8. Grant flat dupe refunds via the ledger — one `dupe_refund`
-      //    row per dupe instance, each tied back to the rip id so we
-      //    can reconstruct "this rip yielded 2 dupes worth 10 shards"
-      //    later. `grantShards` updates the balance cache for us.
-      let shardsAwarded = 0
-      let newShardBalance = debit.newBalance
-      for (const bookId of duplicateBookIds) {
-        if (perDupe <= 0) break
-        const r = await grantShards(tx, user.id, 'dupe_refund', perDupe, {
-          bookId,
-          packId,
-          ripId: rip.id,
-        })
-        if (r.applied) {
-          shardsAwarded += r.delta
-          newShardBalance = r.newBalance
-        }
-      }
-
-      // 9. Backfill the rip row's shardsAwarded now that we know the
-      //    total. Keeping it denormalized on pack_rips makes "biggest
-      //    rip ever" and similar queries cheap.
-      if (shardsAwarded > 0) {
-        await tx
-          .update(packRips)
-          .set({ shardsAwarded })
-          .where(eq(packRips.id, rip.id))
-      }
-
-      // 10. Bump the pack's denormalized weekly-rip counter. Used as a
-      //     trending signal on the discovery surface. The counter is now
-      //     also re-derived on read by `listPublicPacksFn` from
-      //     `pack_rips` over a rolling 7-day window, so this denorm is
-      //     a hot-path cache rather than the source of truth — drift
-      //     resolves itself the next time the read query runs.
-      await tx
-        .update(packs)
-        .set({ ripCountWeek: sql`${packs.ripCountWeek} + 1` })
-        .where(eq(packs.id, packId))
-
-      return {
-        newBookIds: dedupedNewIds,
-        duplicateBookIds,
-        shardsAwarded,
-        packCost,
-        newShardBalance,
-      }
-    })
-  }))
+          return {
+            newBookIds: dedupedNewIds,
+            duplicateBookIds,
+            shardsAwarded,
+            packCost,
+            newShardBalance,
+          };
+        });
+      },
+    ),
+  );
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read: single book detail
@@ -870,10 +902,10 @@ export const recordRipFn = createServerFn({ method: 'POST' })
 
 export interface BookDetailPayload {
   /** Full public book metadata — same shape as `BookRow` with the id. */
-  book: BookRow
+  book: BookRow;
   /** Packs this book appears in, for "Found in" breadcrumbs. Unordered;
    *  the UI can sort by name if we ever ship many packs per book. */
-  packs: ReadonlyArray<{ id: string; slug: string; name: string }>
+  packs: ReadonlyArray<{ id: string; slug: string; name: string }>;
   /** The signed-in user's card-ownership state for this book, or null
    *  when anonymous. This is ownership only — reading-log state (status
    *  / rating / note) lives on `reading_entries` and is fetched via
@@ -881,11 +913,11 @@ export interface BookDetailPayload {
    *  domains separate in the payload mirrors how they're separate in
    *  the schema. */
   ownership: {
-    owned: boolean
-    quantity: number
-    firstAcquiredAt: number | null
-    firstAcquiredFromPackId: string | null
-  } | null
+    owned: boolean;
+    quantity: number;
+    firstAcquiredAt: number | null;
+    firstAcquiredFromPackId: string | null;
+  } | null;
 }
 
 /**
@@ -893,91 +925,93 @@ export interface BookDetailPayload {
  * book + pack list but `ownership` is always null. The catalog itself
  * is never secret; only the per-user overlay is.
  */
-export const getBookFn = createServerFn({ method: 'GET' })
+export const getBookFn = createServerFn({ method: "GET" })
   .inputValidator((raw: unknown): { bookId: string } => {
-    if (typeof raw !== 'object' || raw === null) {
-      throw new Error('getBookFn: input must be an object')
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("getBookFn: input must be an object");
     }
-    const { bookId } = raw as Record<string, unknown>
-    if (typeof bookId !== 'string' || bookId.length === 0) {
-      throw new Error('getBookFn: bookId is required')
+    const { bookId } = raw as Record<string, unknown>;
+    if (typeof bookId !== "string" || bookId.length === 0) {
+      throw new Error("getBookFn: bookId is required");
     }
-    return { bookId }
+    return { bookId };
   })
   .handler(
-    withErrorLogging('getBookFn', async ({ data }): Promise<BookDetailPayload | null> => {
-      const database = await getDb()
+    withErrorLogging(
+      "getBookFn",
+      async ({ data }): Promise<BookDetailPayload | null> => {
+        const database = await getDb();
 
-      const [row] = await database
-        .select({
-          id: books.id,
-          title: books.title,
-          authors: books.authors,
-          coverUrl: books.coverUrl,
-          description: books.description,
-          pageCount: books.pageCount,
-          publishedYear: books.publishedYear,
-          genre: books.genre,
-          rarity: books.rarity,
-          moodTags: books.moodTags,
-        })
-        .from(books)
-        .where(eq(books.id, data.bookId))
-        .limit(1)
-
-      if (!row) return null
-
-      // Pack memberships — used for "Found in: Modern Fantasy Starter".
-      // Safe to expose publicly since packs themselves are public.
-      const packRows = await database
-        .select({ id: packs.id, slug: packs.slug, name: packs.name })
-        .from(packBooks)
-        .innerJoin(packs, eq(packBooks.packId, packs.id))
-        .where(eq(packBooks.bookId, data.bookId))
-
-      // Owner overlay — only present when signed in AND the row exists.
-      // Reading-log overlay (status / rating / note) is NOT loaded here;
-      // the book detail page fetches that separately via
-      // `getReadingEntryFn` so non-owners can still log books they
-      // haven't ripped.
-      const user = await getSessionUser()
-      let ownership: BookDetailPayload['ownership'] = null
-      if (user) {
-        const [entry] = await database
+        const [row] = await database
           .select({
-            quantity: collectionCards.quantity,
-            firstAcquiredAt: collectionCards.firstAcquiredAt,
-            firstAcquiredFromPackId: collectionCards.firstAcquiredFromPackId,
+            id: books.id,
+            title: books.title,
+            authors: books.authors,
+            coverUrl: books.coverUrl,
+            description: books.description,
+            pageCount: books.pageCount,
+            publishedYear: books.publishedYear,
+            genre: books.genre,
+            rarity: books.rarity,
+            moodTags: books.moodTags,
           })
-          .from(collectionCards)
-          .where(
-            and(
-              eq(collectionCards.userId, user.id),
-              eq(collectionCards.bookId, data.bookId),
-            ),
-          )
-          .limit(1)
+          .from(books)
+          .where(eq(books.id, data.bookId))
+          .limit(1);
 
-        ownership = entry
-          ? {
-              owned: true,
-              quantity: entry.quantity,
-              firstAcquiredAt: entry.firstAcquiredAt.getTime(),
-              firstAcquiredFromPackId: entry.firstAcquiredFromPackId ?? null,
-            }
-          : {
-              owned: false,
-              quantity: 0,
-              firstAcquiredAt: null,
-              firstAcquiredFromPackId: null,
-            }
-      }
+        if (!row) return null;
 
-      return {
-        book: row,
-        packs: packRows,
-        ownership,
-      }
-    }),
-  )
+        // Pack memberships — used for "Found in: Modern Fantasy Starter".
+        // Safe to expose publicly since packs themselves are public.
+        const packRows = await database
+          .select({ id: packs.id, slug: packs.slug, name: packs.name })
+          .from(packBooks)
+          .innerJoin(packs, eq(packBooks.packId, packs.id))
+          .where(eq(packBooks.bookId, data.bookId));
 
+        // Owner overlay — only present when signed in AND the row exists.
+        // Reading-log overlay (status / rating / note) is NOT loaded here;
+        // the book detail page fetches that separately via
+        // `getReadingEntryFn` so non-owners can still log books they
+        // haven't ripped.
+        const user = await getSessionUser();
+        let ownership: BookDetailPayload["ownership"] = null;
+        if (user) {
+          const [entry] = await database
+            .select({
+              quantity: collectionCards.quantity,
+              firstAcquiredAt: collectionCards.firstAcquiredAt,
+              firstAcquiredFromPackId: collectionCards.firstAcquiredFromPackId,
+            })
+            .from(collectionCards)
+            .where(
+              and(
+                eq(collectionCards.userId, user.id),
+                eq(collectionCards.bookId, data.bookId),
+              ),
+            )
+            .limit(1);
+
+          ownership = entry
+            ? {
+                owned: true,
+                quantity: entry.quantity,
+                firstAcquiredAt: entry.firstAcquiredAt.getTime(),
+                firstAcquiredFromPackId: entry.firstAcquiredFromPackId ?? null,
+              }
+            : {
+                owned: false,
+                quantity: 0,
+                firstAcquiredAt: null,
+                firstAcquiredFromPackId: null,
+              };
+        }
+
+        return {
+          book: row,
+          packs: packRows,
+          ownership,
+        };
+      },
+    ),
+  );

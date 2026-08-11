@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { checkPackComposition, type Rarity } from "@/lib/packs/composition";
+import type { Rarity } from "@/lib/packs/composition";
+import { checkPackComposition } from "@/lib/packs/composition";
 
 /**
  * Pure composition-validator tests.
@@ -18,7 +19,7 @@ const RULES = {
 } as const;
 
 /** Helper: build a rarity array of a given length, padding with `common`. */
-function rarities(mix: ReadonlyArray<Rarity>, padTo = 0): Rarity[] {
+function rarities(mix: ReadonlyArray<Rarity>, padTo = 0): Array<Rarity> {
   const out = [...mix];
   while (out.length < padTo) out.push("common");
   return out;
@@ -71,19 +72,31 @@ describe("checkPackComposition", () => {
   });
 
   it("rejects a 10-book pack with only commons (no uncommon+, no rare+)", () => {
-    const result = checkPackComposition(Array<Rarity>(10).fill("common"), RULES);
+    const result = checkPackComposition(
+      Array<Rarity>(10).fill("common"),
+      RULES,
+    );
     expect(result.ok).toBe(false);
     const codes = result.errors.map((e) => e.code).sort();
-    expect(codes).toEqual(["too_few_rare_or_above", "too_few_uncommon_or_above"]);
+    expect(codes).toEqual([
+      "too_few_rare_or_above",
+      "too_few_uncommon_or_above",
+    ]);
   });
 
   it("reports have/need on each error for UI progress meters", () => {
     // 8 books, 2 uncommon+, 0 rare+. All three thresholds fail and we
     // expect the structured have/need numbers to be accurate.
-    const result = checkPackComposition(rarities(["uncommon", "uncommon"], 8), RULES);
+    const result = checkPackComposition(
+      rarities(["uncommon", "uncommon"], 8),
+      RULES,
+    );
     const byCode = Object.fromEntries(result.errors.map((e) => [e.code, e]));
     expect(byCode.too_few_books).toMatchObject({ have: 8, need: 10 });
-    expect(byCode.too_few_uncommon_or_above).toMatchObject({ have: 2, need: 3 });
+    expect(byCode.too_few_uncommon_or_above).toMatchObject({
+      have: 2,
+      need: 3,
+    });
     expect(byCode.too_few_rare_or_above).toMatchObject({ have: 0, need: 1 });
   });
 

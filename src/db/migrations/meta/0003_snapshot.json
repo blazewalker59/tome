@@ -112,12 +112,8 @@
           "name": "accounts_user_id_users_id_fk",
           "tableFrom": "accounts",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -127,10 +123,7 @@
         "accounts_provider_uq": {
           "name": "accounts_provider_uq",
           "nullsNotDistinct": false,
-          "columns": [
-            "provider_id",
-            "account_id"
-          ]
+          "columns": ["provider_id", "account_id"]
         }
       },
       "policies": {},
@@ -283,9 +276,7 @@
         "books_hardcover_id_unique": {
           "name": "books_hardcover_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "hardcover_id"
-          ]
+          "columns": ["hardcover_id"]
         }
       },
       "policies": {},
@@ -369,12 +360,8 @@
           "name": "collection_cards_user_id_users_id_fk",
           "tableFrom": "collection_cards",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -382,12 +369,8 @@
           "name": "collection_cards_book_id_books_id_fk",
           "tableFrom": "collection_cards",
           "tableTo": "books",
-          "columnsFrom": [
-            "book_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["book_id"],
+          "columnsTo": ["id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
@@ -395,12 +378,8 @@
           "name": "collection_cards_first_acquired_from_pack_id_packs_id_fk",
           "tableFrom": "collection_cards",
           "tableTo": "packs",
-          "columnsFrom": [
-            "first_acquired_from_pack_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["first_acquired_from_pack_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -410,10 +389,7 @@
         "collection_user_book_uq": {
           "name": "collection_user_book_uq",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id",
-            "book_id"
-          ]
+          "columns": ["user_id", "book_id"]
         }
       },
       "policies": {},
@@ -482,12 +458,8 @@
           "name": "follows_follower_id_users_id_fk",
           "tableFrom": "follows",
           "tableTo": "users",
-          "columnsFrom": [
-            "follower_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["follower_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -495,12 +467,8 @@
           "name": "follows_followee_id_users_id_fk",
           "tableFrom": "follows",
           "tableTo": "users",
-          "columnsFrom": [
-            "followee_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["followee_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -508,10 +476,7 @@
       "compositePrimaryKeys": {
         "follows_follower_id_followee_id_pk": {
           "name": "follows_follower_id_followee_id_pk",
-          "columns": [
-            "follower_id",
-            "followee_id"
-          ]
+          "columns": ["follower_id", "followee_id"]
         }
       },
       "uniqueConstraints": {},
@@ -549,12 +514,8 @@
           "name": "pack_books_pack_id_packs_id_fk",
           "tableFrom": "pack_books",
           "tableTo": "packs",
-          "columnsFrom": [
-            "pack_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["pack_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -562,12 +523,8 @@
           "name": "pack_books_book_id_books_id_fk",
           "tableFrom": "pack_books",
           "tableTo": "books",
-          "columnsFrom": [
-            "book_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["book_id"],
+          "columnsTo": ["id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -575,10 +532,7 @@
       "compositePrimaryKeys": {
         "pack_books_pack_id_book_id_pk": {
           "name": "pack_books_pack_id_book_id_pk",
-          "columns": [
-            "pack_id",
-            "book_id"
-          ]
+          "columns": ["pack_id", "book_id"]
         }
       },
       "uniqueConstraints": {},
@@ -665,12 +619,8 @@
           "name": "pack_rips_user_id_users_id_fk",
           "tableFrom": "pack_rips",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -678,12 +628,8 @@
           "name": "pack_rips_pack_id_packs_id_fk",
           "tableFrom": "pack_rips",
           "tableTo": "packs",
-          "columnsFrom": [
-            "pack_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["pack_id"],
+          "columnsTo": ["id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -845,12 +791,8 @@
           "name": "packs_creator_id_users_id_fk",
           "tableFrom": "packs",
           "tableTo": "users",
-          "columnsFrom": [
-            "creator_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["creator_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -939,12 +881,8 @@
           "name": "sessions_user_id_users_id_fk",
           "tableFrom": "sessions",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -954,9 +892,7 @@
         "sessions_token_unique": {
           "name": "sessions_token_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token"
-          ]
+          "columns": ["token"]
         }
       },
       "policies": {},
@@ -994,12 +930,8 @@
           "name": "shard_balances_user_id_users_id_fk",
           "tableFrom": "shard_balances",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1127,12 +1059,8 @@
           "name": "shard_events_user_id_users_id_fk",
           "tableFrom": "shard_events",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1140,12 +1068,8 @@
           "name": "shard_events_ref_book_id_books_id_fk",
           "tableFrom": "shard_events",
           "tableTo": "books",
-          "columnsFrom": [
-            "ref_book_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["ref_book_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -1153,12 +1077,8 @@
           "name": "shard_events_ref_pack_id_packs_id_fk",
           "tableFrom": "shard_events",
           "tableTo": "packs",
-          "columnsFrom": [
-            "ref_pack_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["ref_pack_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -1166,12 +1086,8 @@
           "name": "shard_events_ref_rip_id_pack_rips_id_fk",
           "tableFrom": "shard_events",
           "tableTo": "pack_rips",
-          "columnsFrom": [
-            "ref_rip_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["ref_rip_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -1258,16 +1174,12 @@
         "users_email_unique": {
           "name": "users_email_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "email"
-          ]
+          "columns": ["email"]
         },
         "users_username_unique": {
           "name": "users_username_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "username"
-          ]
+          "columns": ["username"]
         }
       },
       "policies": {},
@@ -1347,22 +1259,12 @@
     "public.card_rarity": {
       "name": "card_rarity",
       "schema": "public",
-      "values": [
-        "common",
-        "uncommon",
-        "rare",
-        "foil",
-        "legendary"
-      ]
+      "values": ["common", "uncommon", "rare", "foil", "legendary"]
     },
     "public.read_status": {
       "name": "read_status",
       "schema": "public",
-      "values": [
-        "unread",
-        "reading",
-        "read"
-      ]
+      "values": ["unread", "reading", "read"]
     }
   },
   "schemas": {},

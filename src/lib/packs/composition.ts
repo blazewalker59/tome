@@ -78,7 +78,7 @@ export function checkPackComposition(
     if (rank >= RARITY_RANK.rare) rareOrAbove += 1;
   }
 
-  const errors: CompositionError[] = [];
+  const errors: Array<CompositionError> = [];
   if (total < rules.minBooks) {
     errors.push({
       code: "too_few_books",

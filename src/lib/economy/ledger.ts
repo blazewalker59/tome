@@ -1,7 +1,7 @@
 import { and, eq, gte, sql } from "drizzle-orm";
-import { getDb } from "@/db/client";
-import { shardBalances, shardEvents } from "@/db/schema";
 import { getEconomy } from "./config";
+import type { getDb } from "@/db/client";
+import { shardBalances, shardEvents } from "@/db/schema";
 
 /**
  * Shard ledger helpers.
@@ -38,11 +38,7 @@ export type Tx = Awaited<ReturnType<typeof getDb>>;
  * validation keeps the set tight.
  */
 export type ShardReason =
-  | "welcome_grant"
-  | "start_reading"
-  | "finish_reading"
-  | "dupe_refund"
-  | "rip";
+  "welcome_grant" | "start_reading" | "finish_reading" | "dupe_refund" | "rip";
 
 export interface ShardEventRefs {
   bookId?: string;
@@ -121,7 +117,8 @@ export async function grantShards(
   // specification" at the db level — Postgres matches the target
   // against the literal index definition, not against which rows it
   // would have covered.
-  const isIndexCovered = reason === "start_reading" || reason === "finish_reading";
+  const isIndexCovered =
+    reason === "start_reading" || reason === "finish_reading";
   const insertValues = {
     userId,
     delta: amount,
@@ -135,7 +132,11 @@ export async function grantShards(
         .insert(shardEvents)
         .values(insertValues)
         .onConflictDoNothing({
-          target: [shardEvents.userId, shardEvents.reason, shardEvents.refBookId],
+          target: [
+            shardEvents.userId,
+            shardEvents.reason,
+            shardEvents.refBookId,
+          ],
           // Repeat the partial index predicate so Postgres can match
           // the ON CONFLICT target against the right index. Without
           // this the planner refuses with "no unique or exclusion
@@ -149,7 +150,10 @@ export async function grantShards(
           where: sql`${shardEvents.reason} in ('start_reading', 'finish_reading')`,
         })
         .returning({ id: shardEvents.id })
-    : await tx.insert(shardEvents).values(insertValues).returning({ id: shardEvents.id });
+    : await tx
+        .insert(shardEvents)
+        .values(insertValues)
+        .returning({ id: shardEvents.id });
 
   if (inserted.length === 0) {
     const balance = await readBalance(tx, userId);
@@ -209,7 +213,8 @@ export async function spendShards(
   );
   // neon-serverless returns `{ rows: [...] }` for raw execute; guard
   // shape differences between driver versions.
-  const rows = (locked as unknown as { rows?: Array<{ shards: number }> }).rows ?? [];
+  const rows =
+    (locked as unknown as { rows?: Array<{ shards: number }> }).rows ?? [];
   const current = rows[0]?.shards ?? 0;
 
   if (current < amount) {

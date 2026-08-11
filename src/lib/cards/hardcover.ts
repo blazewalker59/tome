@@ -69,10 +69,10 @@ type BookInsertRow = InferInsertModel<typeof books>;
  */
 export function extractAuthors(
   contributions: HardcoverBook["contributions"],
-): string[] {
+): Array<string> {
   if (!contributions) return [];
   const seen = new Set<string>();
-  const authors: string[] = [];
+  const authors: Array<string> = [];
   for (const c of contributions) {
     const role = c.contribution ?? "Author";
     if (role !== "Author") continue;
@@ -150,6 +150,10 @@ export function bookResponseToRow(
     averageRating: normalizeAverageRating(book.rating ?? null),
     // Full original payload for debugging / future reprocessing without
     // re-hitting the API. Bounded in practice (a book record is < 4KB).
-    rawMetadata: { source: "hardcover", fetchedAt: new Date().toISOString(), book },
+    rawMetadata: {
+      source: "hardcover",
+      fetchedAt: new Date().toISOString(),
+      book,
+    },
   };
 }

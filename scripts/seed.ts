@@ -12,5 +12,5 @@
  */
 
 console.log(
-  '[seed] This script is a no-op. The catalog is seeded from real data via `pnpm db:seed-editor-packs`.',
-)
+  "[seed] This script is a no-op. The catalog is seeded from real data via `pnpm db:seed-editor-packs`.",
+);

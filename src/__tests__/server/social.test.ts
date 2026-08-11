@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import type { FollowFeedEvent } from "@/server/social";
 import {
   FOLLOW_TARGET_NOT_FOUND_PREFIX,
   SELF_FOLLOW_PREFIX,
   _internals,
-  type FollowFeedEvent,
 } from "@/server/social";
 
 /**
@@ -20,7 +20,13 @@ import {
  * here makes a rename impossible to land silently.
  */
 
-const { coerceUsernameInput, mergeFeedEvents, sortRipCards, RARITY_ORDER, SUGGESTED_CREATOR_LOOKBACK_DAYS } = _internals;
+const {
+  coerceUsernameInput,
+  mergeFeedEvents,
+  sortRipCards,
+  RARITY_ORDER,
+  SUGGESTED_CREATOR_LOOKBACK_DAYS,
+} = _internals;
 
 describe("coerceUsernameInput", () => {
   it("returns trimmed username", () => {

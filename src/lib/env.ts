@@ -24,9 +24,10 @@
 let cachedCfEnv: Record<string, string | undefined> | null | undefined =
   undefined;
 
-async function loadCloudflareEnv(): Promise<
-  Record<string, string | undefined> | null
-> {
+async function loadCloudflareEnv(): Promise<Record<
+  string,
+  string | undefined
+> | null> {
   if (cachedCfEnv !== undefined) return cachedCfEnv;
   try {
     // @ts-expect-error — virtual module, only resolvable on Workers runtime

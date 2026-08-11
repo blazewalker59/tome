@@ -19,15 +19,25 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
-import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNull,
+  or,
+  sql,
+} from "drizzle-orm";
 
+import { fetchBookById } from "./hardcover";
+import { withErrorLogging } from "./_shared";
+import type { Rarity } from "@/lib/cards/rarity";
 import { getDb } from "@/db/client";
 import { books, packBooks, packs } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth/session";
 import { bookResponseToRow } from "@/lib/cards/hardcover";
-import type { Rarity } from "@/lib/cards/rarity";
-import { fetchBookById } from "./hardcover";
-import { withErrorLogging } from "./_shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error-logging wrapper (mirrors src/server/collection.ts)
@@ -58,9 +68,13 @@ export function normalizeKebab(value: string, label: string): string {
   return v;
 }
 
-export function normalizeMoodTags(raw: ReadonlyArray<unknown>): string[] {
+export function normalizeMoodTags(raw: ReadonlyArray<unknown>): Array<string> {
   const tags = raw
-    .map((t) => String(t ?? "").trim().toLowerCase())
+    .map((t) =>
+      String(t ?? "")
+        .trim()
+        .toLowerCase(),
+    )
     .filter((t) => t.length > 0);
   for (const t of tags) {
     if (!KEBAB.test(t)) {
@@ -72,7 +86,7 @@ export function normalizeMoodTags(raw: ReadonlyArray<unknown>): string[] {
   }
   // Dedupe preserving first occurrence.
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: Array<string> = [];
   for (const t of tags) {
     if (!seen.has(t)) {
       seen.add(t);
@@ -90,9 +104,15 @@ export function normalizeMoodTags(raw: ReadonlyArray<unknown>): string[] {
  * server modules to keep `catalog.ts` independent of user-pack code
  * paths — both validators are tiny and unlikely to drift.
  */
-export function normalizePackGenreTags(raw: ReadonlyArray<unknown>): string[] {
+export function normalizePackGenreTags(
+  raw: ReadonlyArray<unknown>,
+): Array<string> {
   const tags = raw
-    .map((t) => String(t ?? "").trim().toLowerCase())
+    .map((t) =>
+      String(t ?? "")
+        .trim()
+        .toLowerCase(),
+    )
     .filter((t) => t.length > 0);
   for (const t of tags) {
     if (!KEBAB.test(t)) {
@@ -103,7 +123,7 @@ export function normalizePackGenreTags(raw: ReadonlyArray<unknown>): string[] {
     throw new Error(`At most 3 genre tags allowed; got ${tags.length}`);
   }
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: Array<string> = [];
   for (const t of tags) {
     if (!seen.has(t)) {
       seen.add(t);
@@ -207,130 +227,141 @@ export const listBooksFn = createServerFn({ method: "GET" })
     };
   })
   .handler(
-    withErrorLogging("listBooksFn", async ({ data }): Promise<ListBooksResult> => {
-      await requireAdmin();
-      const database = await getDb();
+    withErrorLogging(
+      "listBooksFn",
+      async ({ data }): Promise<ListBooksResult> => {
+        await requireAdmin();
+        const database = await getDb();
 
-      const limit = Math.min(Math.max(data.limit ?? 50, 1), 200);
-      const offset = Math.max(data.offset ?? 0, 0);
-      const search = data.search?.trim() ?? "";
-      const sort: AdminBooksSortKey = data.sort ?? "ingested";
-      // Sensible default direction per column: newest-first for ingested,
-      // A→Z for the alphabetical columns.
-      const dir: SortDir =
-        data.dir ?? (sort === "ingested" ? "desc" : "asc");
+        const limit = Math.min(Math.max(data.limit ?? 50, 1), 200);
+        const offset = Math.max(data.offset ?? 0, 0);
+        const search = data.search?.trim() ?? "";
+        const sort: AdminBooksSortKey = data.sort ?? "ingested";
+        // Sensible default direction per column: newest-first for ingested,
+        // A→Z for the alphabetical columns.
+        const dir: SortDir = data.dir ?? (sort === "ingested" ? "desc" : "asc");
 
-      // `authors` is `text[]`; we search it by unnesting into a single
-      // whitespace-separated string via `array_to_string` + `ilike`. Not
-      // index-friendly but fine at our scale (a few hundred books).
-      const searchClause = search
-        ? or(
-            ilike(books.title, `%${search}%`),
-            sql`array_to_string(${books.authors}, ' ') ilike ${"%" + search + "%"}`,
-          )
-        : undefined;
+        // `authors` is `text[]`; we search it by unnesting into a single
+        // whitespace-separated string via `array_to_string` + `ilike`. Not
+        // index-friendly but fine at our scale (a few hundred books).
+        const searchClause = search
+          ? or(
+              ilike(books.title, `%${search}%`),
+              sql`array_to_string(${books.authors}, ' ') ilike ${"%" + search + "%"}`,
+            )
+          : undefined;
 
-      // Soft-delete filter. The default (live-only) hits the partial
-      // index `books_live_created_idx` declared in the schema. Toggling
-      // `includeDeleted` drops the predicate so the admin can audit
-      // tombstoned rows and restore them.
-      const liveClause = data.includeDeleted ? undefined : isNull(books.deletedAt);
+        // Soft-delete filter. The default (live-only) hits the partial
+        // index `books_live_created_idx` declared in the schema. Toggling
+        // `includeDeleted` drops the predicate so the admin can audit
+        // tombstoned rows and restore them.
+        const liveClause = data.includeDeleted
+          ? undefined
+          : isNull(books.deletedAt);
 
-      const whereClause =
-        searchClause && liveClause
-          ? and(searchClause, liveClause)
-          : (searchClause ?? liveClause);
+        const whereClause =
+          searchClause && liveClause
+            ? and(searchClause, liveClause)
+            : (searchClause ?? liveClause);
 
-      // Sorting.
-      //
-      //   * `ingested` → `books.created_at`. Straightforward timestamp sort.
-      //   * `title`    → plain text sort on `books.title`.
-      //   * `author`   → sort on the *first* author only. `authors` is a
-      //     `text[]`; `authors[1]` in SQL (1-indexed) collapses the array
-      //     to a single sortable text value. Books with no authors (empty
-      //     array) get NULL there; `NULLS LAST` pushes them to the bottom
-      //     regardless of direction so they don't hog the top of A→Z.
-      //
-      // We always add `books.id` as a secondary tiebreaker so paging is
-      // stable across calls even when primary-sort values collide.
-      const primary =
-        sort === "ingested"
-          ? books.createdAt
-          : sort === "title"
-          ? books.title
-          : sql`${books.authors}[1]`;
-      const orderExpr =
-        sort === "author"
-          ? dir === "asc"
-            ? sql`${primary} asc nulls last, ${books.id} asc`
-            : sql`${primary} desc nulls last, ${books.id} desc`
-          : dir === "asc"
-          ? sql`${primary} asc, ${books.id} asc`
-          : sql`${primary} desc, ${books.id} desc`;
+        // Sorting.
+        //
+        //   * `ingested` → `books.created_at`. Straightforward timestamp sort.
+        //   * `title`    → plain text sort on `books.title`.
+        //   * `author`   → sort on the *first* author only. `authors` is a
+        //     `text[]`; `authors[1]` in SQL (1-indexed) collapses the array
+        //     to a single sortable text value. Books with no authors (empty
+        //     array) get NULL there; `NULLS LAST` pushes them to the bottom
+        //     regardless of direction so they don't hog the top of A→Z.
+        //
+        // We always add `books.id` as a secondary tiebreaker so paging is
+        // stable across calls even when primary-sort values collide.
+        const primary =
+          sort === "ingested"
+            ? books.createdAt
+            : sort === "title"
+              ? books.title
+              : sql`${books.authors}[1]`;
+        const orderExpr =
+          sort === "author"
+            ? dir === "asc"
+              ? sql`${primary} asc nulls last, ${books.id} asc`
+              : sql`${primary} desc nulls last, ${books.id} desc`
+            : dir === "asc"
+              ? sql`${primary} asc, ${books.id} asc`
+              : sql`${primary} desc, ${books.id} desc`;
 
-      const baseQuery = database
-        .select({
-          id: books.id,
-          hardcoverId: books.hardcoverId,
-          title: books.title,
-          authors: books.authors,
-          coverUrl: books.coverUrl,
-          genre: books.genre,
-          rarity: books.rarity,
-          moodTags: books.moodTags,
-          ratingsCount: books.ratingsCount,
-          averageRating: books.averageRating,
-          publishedYear: books.publishedYear,
-          createdAt: books.createdAt,
-          deletedAt: books.deletedAt,
-        })
-        .from(books);
+        const baseQuery = database
+          .select({
+            id: books.id,
+            hardcoverId: books.hardcoverId,
+            title: books.title,
+            authors: books.authors,
+            coverUrl: books.coverUrl,
+            genre: books.genre,
+            rarity: books.rarity,
+            moodTags: books.moodTags,
+            ratingsCount: books.ratingsCount,
+            averageRating: books.averageRating,
+            publishedYear: books.publishedYear,
+            createdAt: books.createdAt,
+            deletedAt: books.deletedAt,
+          })
+          .from(books);
 
-      const rows = await (whereClause ? baseQuery.where(whereClause) : baseQuery)
-        .orderBy(orderExpr)
-        .limit(limit)
-        .offset(offset);
+        const rows = await (
+          whereClause ? baseQuery.where(whereClause) : baseQuery
+        )
+          .orderBy(orderExpr)
+          .limit(limit)
+          .offset(offset);
 
-      const [{ total }] = whereClause
-        ? await database
-            .select({ total: sql<number>`count(*)::int` })
-            .from(books)
-            .where(whereClause)
-        : await database.select({ total: sql<number>`count(*)::int` }).from(books);
-
-      // Pack memberships for the returned page only.
-      const bookIds = rows.map((r) => r.id);
-      const memberships =
-        bookIds.length === 0
-          ? []
+        const [{ total }] = whereClause
+          ? await database
+              .select({ total: sql<number>`count(*)::int` })
+              .from(books)
+              .where(whereClause)
           : await database
-              .select({
-                bookId: packBooks.bookId,
-                packId: packs.id,
-                slug: packs.slug,
-                name: packs.name,
-              })
-              .from(packBooks)
-              .innerJoin(packs, eq(packBooks.packId, packs.id))
-              .where(inArray(packBooks.bookId, bookIds));
+              .select({ total: sql<number>`count(*)::int` })
+              .from(books);
 
-      const packsByBook = new Map<string, AdminBookRow["packs"][number][]>();
-      for (const m of memberships) {
-        const list = packsByBook.get(m.bookId) ?? [];
-        list.push({ id: m.packId, slug: m.slug, name: m.name });
-        packsByBook.set(m.bookId, list);
-      }
+        // Pack memberships for the returned page only.
+        const bookIds = rows.map((r) => r.id);
+        const memberships =
+          bookIds.length === 0
+            ? []
+            : await database
+                .select({
+                  bookId: packBooks.bookId,
+                  packId: packs.id,
+                  slug: packs.slug,
+                  name: packs.name,
+                })
+                .from(packBooks)
+                .innerJoin(packs, eq(packBooks.packId, packs.id))
+                .where(inArray(packBooks.bookId, bookIds));
 
-      return {
-        items: rows.map((r) => ({
-          ...r,
-          createdAt: r.createdAt.getTime(),
-          deletedAt: r.deletedAt ? r.deletedAt.getTime() : null,
-          packs: packsByBook.get(r.id) ?? [],
-        })),
-        total,
-      };
-    }),
+        const packsByBook = new Map<
+          string,
+          Array<AdminBookRow["packs"][number]>
+        >();
+        for (const m of memberships) {
+          const list = packsByBook.get(m.bookId) ?? [];
+          list.push({ id: m.packId, slug: m.slug, name: m.name });
+          packsByBook.set(m.bookId, list);
+        }
+
+        return {
+          items: rows.map((r) => ({
+            ...r,
+            createdAt: r.createdAt.getTime(),
+            deletedAt: r.deletedAt ? r.deletedAt.getTime() : null,
+            packs: packsByBook.get(r.id) ?? [],
+          })),
+          total,
+        };
+      },
+    ),
   );
 
 export interface UpdateBookCurationInput {
@@ -360,7 +391,9 @@ export const updateBookCurationFn = createServerFn({ method: "POST" })
     return {
       bookId: requireUuid(r.bookId, "bookId"),
       genre: typeof r.genre === "string" ? r.genre : undefined,
-      moodTags: Array.isArray(r.moodTags) ? (r.moodTags as string[]) : undefined,
+      moodTags: Array.isArray(r.moodTags)
+        ? (r.moodTags as Array<string>)
+        : undefined,
     };
   })
   .handler(
@@ -497,36 +530,39 @@ export interface AdminPackSummary {
 }
 
 export const listPacksFn = createServerFn({ method: "GET" }).handler(
-  withErrorLogging("listPacksFn", async (): Promise<ReadonlyArray<AdminPackSummary>> => {
-    await requireAdmin();
-    const database = await getDb();
+  withErrorLogging(
+    "listPacksFn",
+    async (): Promise<ReadonlyArray<AdminPackSummary>> => {
+      await requireAdmin();
+      const database = await getDb();
 
-    // One query with LEFT JOIN + GROUP BY so packs with zero books still
-    // appear. `count(pack_id)` (not `count(*)`) correctly returns 0 for
-    // packs that LEFT JOIN produces a single NULL row for.
-    const rows = await database
-      .select({
-        id: packs.id,
-        slug: packs.slug,
-        name: packs.name,
-        description: packs.description,
-        creatorId: packs.creatorId,
-        isPublic: packs.isPublic,
-        coverImageUrl: packs.coverImageUrl,
-        createdAt: packs.createdAt,
-        bookCount: sql<number>`count(${packBooks.packId})::int`,
-      })
-      .from(packs)
-      .leftJoin(packBooks, eq(packBooks.packId, packs.id))
-      .groupBy(packs.id)
-      .orderBy(desc(packs.createdAt));
+      // One query with LEFT JOIN + GROUP BY so packs with zero books still
+      // appear. `count(pack_id)` (not `count(*)`) correctly returns 0 for
+      // packs that LEFT JOIN produces a single NULL row for.
+      const rows = await database
+        .select({
+          id: packs.id,
+          slug: packs.slug,
+          name: packs.name,
+          description: packs.description,
+          creatorId: packs.creatorId,
+          isPublic: packs.isPublic,
+          coverImageUrl: packs.coverImageUrl,
+          createdAt: packs.createdAt,
+          bookCount: sql<number>`count(${packBooks.packId})::int`,
+        })
+        .from(packs)
+        .leftJoin(packBooks, eq(packBooks.packId, packs.id))
+        .groupBy(packs.id)
+        .orderBy(desc(packs.createdAt));
 
-    return rows.map((r) => ({
-      ...r,
-      createdAt: r.createdAt.getTime(),
-    }));
-    }),
-  );
+      return rows.map((r) => ({
+        ...r,
+        createdAt: r.createdAt.getTime(),
+      }));
+    },
+  ),
+);
 
 export interface UpdatePackInput {
   packId: string;
@@ -575,7 +611,8 @@ export const updatePackFn = createServerFn({ method: "POST" })
     if ("name" in r) {
       const name = String(r.name ?? "").trim();
       if (name.length === 0) throw new Error("Pack name cannot be empty");
-      if (name.length > 120) throw new Error("Pack name must be ≤120 characters");
+      if (name.length > 120)
+        throw new Error("Pack name must be ≤120 characters");
       out.name = name;
     }
     // Treat present-but-empty as an explicit clear (null), mirroring how
@@ -585,73 +622,78 @@ export const updatePackFn = createServerFn({ method: "POST" })
       out.description = v.length > 0 ? v : null;
     }
     if ("coverImageUrl" in r) {
-      const v = typeof r.coverImageUrl === "string" ? r.coverImageUrl.trim() : "";
+      const v =
+        typeof r.coverImageUrl === "string" ? r.coverImageUrl.trim() : "";
       out.coverImageUrl = v.length > 0 ? v : null;
     }
     if ("genreTags" in r) {
       out.genreTags = normalizePackGenreTags(
-        Array.isArray(r.genreTags) ? (r.genreTags as unknown[]) : [],
+        Array.isArray(r.genreTags) ? (r.genreTags as Array<unknown>) : [],
       );
     }
     return out;
   })
   .handler(
-    withErrorLogging("updatePackFn", async ({ data }): Promise<UpdatePackResult> => {
-      await requireAdmin();
-      const database = await getDb();
+    withErrorLogging(
+      "updatePackFn",
+      async ({ data }): Promise<UpdatePackResult> => {
+        await requireAdmin();
+        const database = await getDb();
 
-      // Build the patch incrementally so absent fields stay untouched.
-      // `updatedAt` isn't a column on `packs` (the schema only tracks
-      // `createdAt` + `publishedAt`), so we don't bump anything beyond
-      // the user-visible fields.
-      const patch: Record<string, unknown> = {};
-      if (data.name !== undefined) patch.name = data.name;
-      if (data.description !== undefined) patch.description = data.description;
-      if (data.coverImageUrl !== undefined) patch.coverImageUrl = data.coverImageUrl;
-      if (data.genreTags !== undefined) patch.genreTags = [...data.genreTags];
+        // Build the patch incrementally so absent fields stay untouched.
+        // `updatedAt` isn't a column on `packs` (the schema only tracks
+        // `createdAt` + `publishedAt`), so we don't bump anything beyond
+        // the user-visible fields.
+        const patch: Record<string, unknown> = {};
+        if (data.name !== undefined) patch.name = data.name;
+        if (data.description !== undefined)
+          patch.description = data.description;
+        if (data.coverImageUrl !== undefined)
+          patch.coverImageUrl = data.coverImageUrl;
+        if (data.genreTags !== undefined) patch.genreTags = [...data.genreTags];
 
-      if (Object.keys(patch).length === 0) {
-        // Nothing to write — re-fetch and return current state so the UI
-        // sees a stable shape regardless of whether anything changed.
-        const [row] = await database
-          .select({
+        if (Object.keys(patch).length === 0) {
+          // Nothing to write — re-fetch and return current state so the UI
+          // sees a stable shape regardless of whether anything changed.
+          const [row] = await database
+            .select({
+              id: packs.id,
+              slug: packs.slug,
+              name: packs.name,
+              description: packs.description,
+              coverImageUrl: packs.coverImageUrl,
+              genreTags: packs.genreTags,
+            })
+            .from(packs)
+            .where(and(eq(packs.id, data.packId), isNull(packs.creatorId)))
+            .limit(1);
+          if (!row) throw new Error(`Editorial pack ${data.packId} not found`);
+          return row;
+        }
+
+        // Scope the update to the editorial namespace — admin must not be
+        // able to mutate user-built packs through this fn even if a
+        // packId leaks across surfaces.
+        const [updated] = await database
+          .update(packs)
+          .set(patch)
+          .where(and(eq(packs.id, data.packId), isNull(packs.creatorId)))
+          .returning({
             id: packs.id,
             slug: packs.slug,
             name: packs.name,
             description: packs.description,
             coverImageUrl: packs.coverImageUrl,
             genreTags: packs.genreTags,
-          })
-          .from(packs)
-          .where(and(eq(packs.id, data.packId), isNull(packs.creatorId)))
-          .limit(1);
-        if (!row) throw new Error(`Editorial pack ${data.packId} not found`);
-        return row;
-      }
+          });
 
-      // Scope the update to the editorial namespace — admin must not be
-      // able to mutate user-built packs through this fn even if a
-      // packId leaks across surfaces.
-      const [updated] = await database
-        .update(packs)
-        .set(patch)
-        .where(and(eq(packs.id, data.packId), isNull(packs.creatorId)))
-        .returning({
-          id: packs.id,
-          slug: packs.slug,
-          name: packs.name,
-          description: packs.description,
-          coverImageUrl: packs.coverImageUrl,
-          genreTags: packs.genreTags,
-        });
-
-      if (!updated) {
-        throw new Error(`Editorial pack ${data.packId} not found`);
-      }
-      return updated;
-    }),
+        if (!updated) {
+          throw new Error(`Editorial pack ${data.packId} not found`);
+        }
+        return updated;
+      },
+    ),
   );
-
 
 export interface CreatePackInput {
   slug: string;
@@ -700,40 +742,43 @@ export const createPackFn = createServerFn({ method: "POST" })
     };
   })
   .handler(
-    withErrorLogging("createPackFn", async ({ data }): Promise<CreatePackResult> => {
-      await requireAdmin();
-      const slug = normalizeKebab(data.slug, "Slug");
-      const database = await getDb();
+    withErrorLogging(
+      "createPackFn",
+      async ({ data }): Promise<CreatePackResult> => {
+        await requireAdmin();
+        const slug = normalizeKebab(data.slug, "Slug");
+        const database = await getDb();
 
-      // Scope the collision check to editorial (creator_id IS NULL) —
-      // user-built packs can reuse the same slug under their own
-      // namespace; the partial unique index enforces this at the DB
-      // level too.
-      const existing = await database
-        .select({ id: packs.id })
-        .from(packs)
-        .where(and(eq(packs.slug, slug), isNull(packs.creatorId)))
-        .limit(1);
-      if (existing.length > 0) {
-        throw new Error(`Editorial pack slug "${slug}" already exists`);
-      }
+        // Scope the collision check to editorial (creator_id IS NULL) —
+        // user-built packs can reuse the same slug under their own
+        // namespace; the partial unique index enforces this at the DB
+        // level too.
+        const existing = await database
+          .select({ id: packs.id })
+          .from(packs)
+          .where(and(eq(packs.slug, slug), isNull(packs.creatorId)))
+          .limit(1);
+        if (existing.length > 0) {
+          throw new Error(`Editorial pack slug "${slug}" already exists`);
+        }
 
-      const [created] = await database
-        .insert(packs)
-        .values({
-          slug,
-          name: data.name,
-          description: data.description,
-          coverImageUrl: data.coverImageUrl,
-          creatorId: null,
-          isPublic: true,
-          publishedAt: new Date(),
-        })
-        .returning({ id: packs.id, slug: packs.slug, name: packs.name });
+        const [created] = await database
+          .insert(packs)
+          .values({
+            slug,
+            name: data.name,
+            description: data.description,
+            coverImageUrl: data.coverImageUrl,
+            creatorId: null,
+            isPublic: true,
+            publishedAt: new Date(),
+          })
+          .returning({ id: packs.id, slug: packs.slug, name: packs.name });
 
-      if (!created) throw new Error("Pack insert returned no row");
-      return created;
-    }),
+        if (!created) throw new Error("Pack insert returned no row");
+        return created;
+      },
+    ),
   );
 
 export interface AdminPackDetail {
@@ -762,62 +807,67 @@ export interface AdminPackDetail {
 export const getPackFn = createServerFn({ method: "GET" })
   .inputValidator((raw: unknown): { slug: string } => {
     const r = (raw ?? {}) as Record<string, unknown>;
-    const slug = String(r.slug ?? "").trim().toLowerCase();
+    const slug = String(r.slug ?? "")
+      .trim()
+      .toLowerCase();
     if (!slug) throw new Error("slug is required");
     return { slug };
   })
   .handler(
-    withErrorLogging("getPackFn", async ({ data }): Promise<AdminPackDetail> => {
-      await requireAdmin();
-      const database = await getDb();
+    withErrorLogging(
+      "getPackFn",
+      async ({ data }): Promise<AdminPackDetail> => {
+        await requireAdmin();
+        const database = await getDb();
 
-      // Admin pack view scopes to the editorial namespace (creator_id IS
-      // NULL). User-built packs have their own moderation surface — this
-      // function only ever serves Tome-authored rows.
-      const [pack] = await database
-        .select({
-          id: packs.id,
-          slug: packs.slug,
-          name: packs.name,
-          description: packs.description,
-          creatorId: packs.creatorId,
-          isPublic: packs.isPublic,
-          coverImageUrl: packs.coverImageUrl,
-          genreTags: packs.genreTags,
-          createdAt: packs.createdAt,
-        })
-        .from(packs)
-        .where(and(eq(packs.slug, data.slug), isNull(packs.creatorId)))
-        .limit(1);
-      if (!pack) throw new Error(`Pack "${data.slug}" not found`);
+        // Admin pack view scopes to the editorial namespace (creator_id IS
+        // NULL). User-built packs have their own moderation surface — this
+        // function only ever serves Tome-authored rows.
+        const [pack] = await database
+          .select({
+            id: packs.id,
+            slug: packs.slug,
+            name: packs.name,
+            description: packs.description,
+            creatorId: packs.creatorId,
+            isPublic: packs.isPublic,
+            coverImageUrl: packs.coverImageUrl,
+            genreTags: packs.genreTags,
+            createdAt: packs.createdAt,
+          })
+          .from(packs)
+          .where(and(eq(packs.slug, data.slug), isNull(packs.creatorId)))
+          .limit(1);
+        if (!pack) throw new Error(`Pack "${data.slug}" not found`);
 
-      const rows = await database
-        .select({
-          id: books.id,
-          title: books.title,
-          authors: books.authors,
-          coverUrl: books.coverUrl,
-          genre: books.genre,
-          rarity: books.rarity,
-        })
-        .from(packBooks)
-        .innerJoin(books, eq(packBooks.bookId, books.id))
-        .where(eq(packBooks.packId, pack.id))
-        .orderBy(asc(books.title));
+        const rows = await database
+          .select({
+            id: books.id,
+            title: books.title,
+            authors: books.authors,
+            coverUrl: books.coverUrl,
+            genre: books.genre,
+            rarity: books.rarity,
+          })
+          .from(packBooks)
+          .innerJoin(books, eq(packBooks.bookId, books.id))
+          .where(eq(packBooks.packId, pack.id))
+          .orderBy(asc(books.title));
 
-      return {
-        id: pack.id,
-        slug: pack.slug,
-        name: pack.name,
-        description: pack.description,
-        creatorId: pack.creatorId,
-        isPublic: pack.isPublic,
-        coverImageUrl: pack.coverImageUrl,
-        genreTags: pack.genreTags,
-        createdAt: pack.createdAt.getTime(),
-        books: rows,
-      };
-    }),
+        return {
+          id: pack.id,
+          slug: pack.slug,
+          name: pack.name,
+          description: pack.description,
+          creatorId: pack.creatorId,
+          isPublic: pack.isPublic,
+          coverImageUrl: pack.coverImageUrl,
+          genreTags: pack.genreTags,
+          createdAt: pack.createdAt.getTime(),
+          books: rows,
+        };
+      },
+    ),
   );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -846,34 +896,37 @@ export const addBookToPackFn = createServerFn({ method: "POST" })
     };
   })
   .handler(
-    withErrorLogging("addBookToPackFn", async ({ data }): Promise<{ ok: true }> => {
-      await requireAdmin();
-      const database = await getDb();
+    withErrorLogging(
+      "addBookToPackFn",
+      async ({ data }): Promise<{ ok: true }> => {
+        await requireAdmin();
+        const database = await getDb();
 
-      // Guard against adding a tombstoned book to a new pack. The FK
-      // doesn't catch this (the row still exists), and silently
-      // letting it through would resurface deleted books in editorial
-      // packs. setBookPacksFn intentionally does NOT have this guard
-      // — admins still need to be able to unlink existing memberships
-      // on a soft-deleted book during cleanup.
-      const [book] = await database
-        .select({ id: books.id, deletedAt: books.deletedAt })
-        .from(books)
-        .where(eq(books.id, data.bookId))
-        .limit(1);
-      if (!book) throw new Error(`Book ${data.bookId} not found`);
-      if (book.deletedAt) {
-        throw new Error(
-          `Book ${data.bookId} has been soft-deleted; restore it before adding to a pack`,
-        );
-      }
+        // Guard against adding a tombstoned book to a new pack. The FK
+        // doesn't catch this (the row still exists), and silently
+        // letting it through would resurface deleted books in editorial
+        // packs. setBookPacksFn intentionally does NOT have this guard
+        // — admins still need to be able to unlink existing memberships
+        // on a soft-deleted book during cleanup.
+        const [book] = await database
+          .select({ id: books.id, deletedAt: books.deletedAt })
+          .from(books)
+          .where(eq(books.id, data.bookId))
+          .limit(1);
+        if (!book) throw new Error(`Book ${data.bookId} not found`);
+        if (book.deletedAt) {
+          throw new Error(
+            `Book ${data.bookId} has been soft-deleted; restore it before adding to a pack`,
+          );
+        }
 
-      await database
-        .insert(packBooks)
-        .values({ packId: data.packId, bookId: data.bookId })
-        .onConflictDoNothing();
-      return { ok: true };
-    }),
+        await database
+          .insert(packBooks)
+          .values({ packId: data.packId, bookId: data.bookId })
+          .onConflictDoNothing();
+        return { ok: true };
+      },
+    ),
   );
 
 export const removeBookFromPackFn = createServerFn({ method: "POST" })
@@ -888,14 +941,22 @@ export const removeBookFromPackFn = createServerFn({ method: "POST" })
     };
   })
   .handler(
-    withErrorLogging("removeBookFromPackFn", async ({ data }): Promise<{ ok: true }> => {
-      await requireAdmin();
-      const database = await getDb();
-      await database
-        .delete(packBooks)
-        .where(and(eq(packBooks.packId, data.packId), eq(packBooks.bookId, data.bookId)));
-      return { ok: true };
-    }),
+    withErrorLogging(
+      "removeBookFromPackFn",
+      async ({ data }): Promise<{ ok: true }> => {
+        await requireAdmin();
+        const database = await getDb();
+        await database
+          .delete(packBooks)
+          .where(
+            and(
+              eq(packBooks.packId, data.packId),
+              eq(packBooks.bookId, data.bookId),
+            ),
+          );
+        return { ok: true };
+      },
+    ),
   );
 
 export interface SetBookPacksInput {
@@ -919,7 +980,9 @@ export const setBookPacksFn = createServerFn({ method: "POST" })
       throw new Error("setBookPacksFn expects an object");
     }
     const r = raw as Record<string, unknown>;
-    const packIdsRaw = Array.isArray(r.packIds) ? (r.packIds as unknown[]) : [];
+    const packIdsRaw = Array.isArray(r.packIds)
+      ? (r.packIds as Array<unknown>)
+      : [];
     const packIds = packIdsRaw.map((id, i) => requireUuid(id, `packIds[${i}]`));
     return {
       bookId: requireUuid(r.bookId, "bookId"),
@@ -994,7 +1057,9 @@ export interface IngestHardcoverForAdminPackResult {
   created: boolean;
 }
 
-export const ingestHardcoverBookForAdminPackFn = createServerFn({ method: "POST" })
+export const ingestHardcoverBookForAdminPackFn = createServerFn({
+  method: "POST",
+})
   .inputValidator((raw: unknown): { packId: string; hardcoverId: number } => {
     if (typeof raw !== "object" || raw === null) {
       throw new Error("ingestHardcoverBookForAdminPackFn expects an object");

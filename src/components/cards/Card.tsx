@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { motion } from "motion/react";
-import { BookOpen, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, BookOpen } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { CoverImage } from "@/components/CoverImage";
 import type { CardData } from "@/lib/cards/types";
+import { CoverImage } from "@/components/CoverImage";
 import { RARITY_STYLES, formatGenre } from "@/lib/cards/style";
 
 export interface CardProps {
@@ -41,7 +41,12 @@ export interface CardProps {
  * above the button on the back face with a higher z-index + its own
  * click handler that stops propagation so navigating doesn't also flip.
  */
-export function Card({ card, startFlipped = false, detailHref, coverLoading = "eager" }: CardProps) {
+export function Card({
+  card,
+  startFlipped = false,
+  detailHref,
+  coverLoading = "eager",
+}: CardProps) {
   const [flipped, setFlipped] = useState(startFlipped);
   const rarity = RARITY_STYLES[card.rarity];
   const genreLabel = formatGenre(card.genre);
@@ -101,7 +106,9 @@ export function Card({ card, startFlipped = false, detailHref, coverLoading = "e
               <h3 className="display-title text-lg font-bold leading-tight text-[var(--sea-ink)]">
                 {card.title}
               </h3>
-              <p className="text-xs text-[var(--sea-ink-soft)]">{card.authors.join(", ")}</p>
+              <p className="text-xs text-[var(--sea-ink-soft)]">
+                {card.authors.join(", ")}
+              </p>
             </div>
             {/* When a detail route is available, we replace the
                 decorative BookOpen icon with a real link — the link's
@@ -136,7 +143,9 @@ export function Card({ card, startFlipped = false, detailHref, coverLoading = "e
             </div>
             <div className="flex justify-between">
               <span>Published</span>
-              <span className="text-[var(--sea-ink)]">{card.publishedYear}</span>
+              <span className="text-[var(--sea-ink)]">
+                {card.publishedYear}
+              </span>
             </div>
             <div className="flex justify-between">
               <span>Genre</span>

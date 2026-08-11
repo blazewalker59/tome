@@ -1,17 +1,12 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { BookOpen, Layers, Library, Sparkles } from "lucide-react";
-import { CoverImage } from "@/components/CoverImage";
-import {
-  getCollectionFn,
-  getRipPacksFn,
-  type PackSummary,
-} from "@/server/collection";
-import {
-  listReadingEntriesFn,
-  type ReadingEntry,
-} from "@/server/reading";
-import { RARITY_STYLES } from "@/lib/cards/style";
 import type { Rarity } from "@/lib/cards/types";
+import type { PackSummary } from "@/server/collection";
+import type { ReadingEntry } from "@/server/reading";
+import { CoverImage } from "@/components/CoverImage";
+import { getCollectionFn, getRipPacksFn } from "@/server/collection";
+import { listReadingEntriesFn } from "@/server/reading";
+import { RARITY_STYLES } from "@/lib/cards/style";
 import { packGradient } from "@/lib/packs/gradient";
 
 /**
@@ -91,14 +86,17 @@ function Home() {
         </h1>
         <p className="mb-6 max-w-2xl text-sm text-[var(--sea-ink-soft)] sm:mb-8 sm:text-lg">
           Tome turns your reading life into a trading-card collection — log
-          books to earn shards, rip packs to collect them, and build packs
-          worth sharing.
+          books to earn shards, rip packs to collect them, and build packs worth
+          sharing.
         </p>
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <Link to="/rip" className="btn-primary rounded-full px-5 text-sm">
             Rip a pack
           </Link>
-          <Link to="/library/collection" className="btn-secondary rounded-full px-5 text-sm">
+          <Link
+            to="/library/collection"
+            className="btn-secondary rounded-full px-5 text-sm"
+          >
             View collection
           </Link>
           {/* Reading log is gated on sign-in: every entry lives on a
@@ -110,7 +108,10 @@ function Home() {
               is still reachable via the main nav and /packs routes
               for users who go looking for it. */}
           {collection && (
-            <Link to="/library/reading" className="btn-secondary rounded-full px-5 text-sm">
+            <Link
+              to="/library/reading"
+              className="btn-secondary rounded-full px-5 text-sm"
+            >
               Log a book
             </Link>
           )}
@@ -314,7 +315,9 @@ function ReadingStrip({
 function RecentPulls({
   pulls,
 }: {
-  pulls: NonNullable<Awaited<ReturnType<typeof getCollectionFn>>>["recentPulls"];
+  pulls: NonNullable<
+    Awaited<ReturnType<typeof getCollectionFn>>
+  >["recentPulls"];
 }) {
   return (
     <div className="mt-6">
@@ -406,8 +409,8 @@ function StarterPacksCard({ packs }: { packs: ReadonlyArray<PackSummary> }) {
             Start your shelf
           </h2>
           <p className="mt-2 max-w-xl text-sm text-[var(--sea-ink-soft)]">
-            Five hand-picked packs across the biggest modern genres —
-            {" "}20 well-loved books each.
+            Five hand-picked packs across the biggest modern genres — 20
+            well-loved books each.
           </p>
         </div>
         <Link

@@ -82,8 +82,12 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   displayName: text("display_name"),
   avatarUrl: text("avatar_url"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 /**
@@ -102,8 +106,12 @@ export const sessions = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [index("sessions_user_idx").on(t.userId)],
 );
@@ -124,13 +132,21 @@ export const accounts = pgTable(
     providerId: text("provider_id").notNull(),
     accessToken: text("access_token"),
     refreshToken: text("refresh_token"),
-    accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
-    refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }),
+    accessTokenExpiresAt: timestamp("access_token_expires_at", {
+      withTimezone: true,
+    }),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at", {
+      withTimezone: true,
+    }),
     scope: text("scope"),
     idToken: text("id_token"),
     password: text("password"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index("accounts_user_idx").on(t.userId),
@@ -150,8 +166,12 @@ export const verifications = pgTable(
     identifier: text("identifier").notNull(),
     value: text("value").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [index("verifications_identifier_idx").on(t.identifier)],
 );
@@ -169,7 +189,9 @@ export const follows = pgTable(
     followeeId: uuid("followee_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.followerId, t.followeeId] })],
 );
@@ -229,8 +251,12 @@ export const books = pgTable(
       onDelete: "set null",
     }),
     ingestedAt: timestamp("ingested_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     /**
      * Soft-delete tombstone. Null = live; non-null = removed from
      * curation surfaces (admin search defaults, builder local search,
@@ -291,7 +317,9 @@ export const packs = pgTable(
      * pack. Deleting the creator nulls this out so their published packs
      * remain accessible as orphaned editorial rather than vanishing.
      */
-    creatorId: uuid("creator_id").references(() => users.id, { onDelete: "set null" }),
+    creatorId: uuid("creator_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     /**
      * Drafts are private to the creator. Flipping to true requires passing
      * the composition validator; un-publishing flips it back (and allows
@@ -317,7 +345,9 @@ export const packs = pgTable(
      */
     ripCountWeek: integer("rip_count_week").notNull().default(0),
     coverImageUrl: text("cover_image_url"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index("packs_creator_idx").on(t.creatorId),
@@ -377,11 +407,18 @@ export const collectionCards = pgTable(
       .notNull()
       .references(() => books.id, { onDelete: "restrict" }),
     quantity: integer("quantity").notNull().default(1),
-    firstAcquiredFromPackId: uuid("first_acquired_from_pack_id").references(() => packs.id, {
-      onDelete: "set null",
-    }),
-    firstAcquiredAt: timestamp("first_acquired_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    firstAcquiredFromPackId: uuid("first_acquired_from_pack_id").references(
+      () => packs.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    firstAcquiredAt: timestamp("first_acquired_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [unique("collection_user_book_uq").on(t.userId, t.bookId)],
 );
@@ -416,8 +453,12 @@ export const readingEntries = pgTable(
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     rating: smallint("rating"), // 1..5, validated in app
     note: text("note"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     unique("reading_entries_user_book_uq").on(t.userId, t.bookId),
@@ -445,7 +486,9 @@ export const packRips = pgTable(
     packId: uuid("pack_id")
       .notNull()
       .references(() => packs.id, { onDelete: "restrict" }),
-    rippedAt: timestamp("ripped_at", { withTimezone: true }).notNull().defaultNow(),
+    rippedAt: timestamp("ripped_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     /** Snapshot of the rip result so animations can replay & we can audit. */
     pulledBookIds: uuid("pulled_book_ids").array().notNull(),
     duplicates: integer("duplicates").notNull().default(0),
@@ -521,12 +564,18 @@ export const shardEvents = pgTable(
     refRipId: uuid("ref_rip_id").references(() => packRips.id, {
       onDelete: "set null",
     }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     // Cap-window queries scan by (user, reason, time). This covers
     // them and the balance sum (which needs only `user_id`).
-    index("shard_events_user_reason_created_idx").on(t.userId, t.reason, t.createdAt),
+    index("shard_events_user_reason_created_idx").on(
+      t.userId,
+      t.reason,
+      t.createdAt,
+    ),
     // Enforces once-ever-per-book for the two reasons that need it.
     // Partial index so rip debits / dupe refunds (same book, many times)
     // don't conflict.
@@ -547,7 +596,9 @@ export const shardBalances = pgTable("shard_balances", {
     .primaryKey()
     .references(() => users.id, { onDelete: "cascade" }),
   shards: integer("shards").notNull().default(0),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 /**
@@ -564,7 +615,9 @@ export const shardBalances = pgTable("shard_balances", {
 export const economyConfig = pgTable("economy_config", {
   key: text("key").primaryKey(),
   value: jsonb("value").notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -627,20 +680,23 @@ export const packBooksRelations = relations(packBooks, ({ one }) => ({
   }),
 }));
 
-export const collectionCardsRelations = relations(collectionCards, ({ one }) => ({
-  user: one(users, {
-    fields: [collectionCards.userId],
-    references: [users.id],
+export const collectionCardsRelations = relations(
+  collectionCards,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [collectionCards.userId],
+      references: [users.id],
+    }),
+    book: one(books, {
+      fields: [collectionCards.bookId],
+      references: [books.id],
+    }),
+    firstAcquiredFromPack: one(packs, {
+      fields: [collectionCards.firstAcquiredFromPackId],
+      references: [packs.id],
+    }),
   }),
-  book: one(books, {
-    fields: [collectionCards.bookId],
-    references: [books.id],
-  }),
-  firstAcquiredFromPack: one(packs, {
-    fields: [collectionCards.firstAcquiredFromPackId],
-    references: [packs.id],
-  }),
-}));
+);
 
 export const readingEntriesRelations = relations(readingEntries, ({ one }) => ({
   user: one(users, {
@@ -675,5 +731,8 @@ export const shardEventsRelations = relations(shardEvents, ({ one }) => ({
   user: one(users, { fields: [shardEvents.userId], references: [users.id] }),
   book: one(books, { fields: [shardEvents.refBookId], references: [books.id] }),
   pack: one(packs, { fields: [shardEvents.refPackId], references: [packs.id] }),
-  rip: one(packRips, { fields: [shardEvents.refRipId], references: [packRips.id] }),
+  rip: one(packRips, {
+    fields: [shardEvents.refRipId],
+    references: [packRips.id],
+  }),
 }));

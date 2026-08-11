@@ -1,10 +1,8 @@
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 
+import type { MyPackSummary } from "@/server/user-packs";
 import { getMeFn } from "@/server/admin";
-import {
-  listMyPacksFn,
-  type MyPackSummary,
-} from "@/server/user-packs";
+import { listMyPacksFn } from "@/server/user-packs";
 
 /**
  * "My packs" — the signed-in creator's hub for their own packs.
@@ -47,9 +45,8 @@ function MyPacksPage() {
             My packs
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[var(--sea-ink-soft)]">
-            Drafts stay private; only you can see them here. Publish a
-            pack to make it show up on your profile and available for
-            anyone to rip.
+            Drafts stay private; only you can see them here. Publish a pack to
+            make it show up on your profile and available for anyone to rip.
           </p>
         </div>
         <Link
@@ -61,13 +58,11 @@ function MyPacksPage() {
       </header>
 
       <section className="mb-8">
-        <h2 className="island-kicker mb-3">
-          Drafts · {drafts.length}
-        </h2>
+        <h2 className="island-kicker mb-3">Drafts · {drafts.length}</h2>
         {drafts.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--sea-ink-soft)]">
-            No drafts in progress. Start one and it&rsquo;ll live here
-            until you publish.
+            No drafts in progress. Start one and it&rsquo;ll live here until you
+            publish.
           </p>
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2">
@@ -79,13 +74,11 @@ function MyPacksPage() {
       </section>
 
       <section>
-        <h2 className="island-kicker mb-3">
-          Published · {published.length}
-        </h2>
+        <h2 className="island-kicker mb-3">Published · {published.length}</h2>
         {published.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--sea-ink-soft)]">
-            Nothing published yet. Your drafts move here once they meet
-            the composition rules and you hit publish.
+            Nothing published yet. Your drafts move here once they meet the
+            composition rules and you hit publish.
           </p>
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2">
@@ -136,8 +129,8 @@ function PackCard({
             </span>
           </div>
           <p className="text-xs text-[var(--sea-ink-soft)]">
-            {pack.bookCount} {pack.bookCount === 1 ? "book" : "books"} · Continue
-            building →
+            {pack.bookCount} {pack.bookCount === 1 ? "book" : "books"} ·
+            Continue building →
           </p>
         </Link>
       </li>

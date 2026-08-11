@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/neon-serverless";
-import type { NeonDatabase } from "drizzle-orm/neon-serverless";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import * as schema from "./schema";
+import type { NeonDatabase } from "drizzle-orm/neon-serverless";
 import { getEnv } from "@/lib/env";
 
 /**

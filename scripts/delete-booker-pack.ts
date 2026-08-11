@@ -40,27 +40,29 @@
  *   0 — pack deleted OR already gone
  *   1 — missing DATABASE_URL or a query failed
  */
-import { config as loadEnv } from 'dotenv'
+import { config as loadEnv } from "dotenv";
 
-loadEnv({ path: '.env.local' })
-loadEnv()
+import { and, eq, isNull } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 
-import { and, eq, isNull } from 'drizzle-orm'
-import { drizzle } from 'drizzle-orm/postgres-js'
-import postgres from 'postgres'
+import { packBooks, packRips, packs } from "../src/db/schema";
 
-import { packBooks, packRips, packs } from '../src/db/schema'
+loadEnv({ path: ".env.local" });
+loadEnv();
 
-const BOOKER_SLUG = 'booker-shortlist-2024'
+const BOOKER_SLUG = "booker-shortlist-2024";
 
-const url = process.env.DATABASE_URL
+const url = process.env.DATABASE_URL;
 if (!url) {
-  console.error('[delete-booker-pack] Missing DATABASE_URL. Set it in .env.local.')
-  process.exit(1)
+  console.error(
+    "[delete-booker-pack] Missing DATABASE_URL. Set it in .env.local.",
+  );
+  process.exit(1);
 }
 
-const client = postgres(url, { max: 1 })
-const db = drizzle(client, { schema: { packs, packBooks, packRips } })
+const client = postgres(url, { max: 1 });
+const db = drizzle(client, { schema: { packs, packBooks, packRips } });
 
 try {
   // Editorial namespace: creator_id IS NULL. The partial unique index
@@ -69,10 +71,12 @@ try {
     .select({ id: packs.id, name: packs.name })
     .from(packs)
     .where(and(eq(packs.slug, BOOKER_SLUG), isNull(packs.creatorId)))
-    .limit(1)
+    .limit(1);
 
   if (!pack) {
-    console.log(`[delete-booker-pack] ✓ pack "${BOOKER_SLUG}" not found — already gone.`)
+    console.log(
+      `[delete-booker-pack] ✓ pack "${BOOKER_SLUG}" not found — already gone.`,
+    );
   } else {
     // `pack_rips` first: the FK is `ON DELETE RESTRICT`, so any
     // historical rip against this pack blocks the delete. Clearing
@@ -82,7 +86,7 @@ try {
     const deletedRips = await db
       .delete(packRips)
       .where(eq(packRips.packId, pack.id))
-      .returning({ id: packRips.id })
+      .returning({ id: packRips.id });
 
     // `pack_books` next: FK is `ON DELETE CASCADE` so this is
     // redundant in principle, but doing it explicitly means we can
@@ -90,17 +94,17 @@ try {
     const deletedMembership = await db
       .delete(packBooks)
       .where(eq(packBooks.packId, pack.id))
-      .returning({ bookId: packBooks.bookId })
+      .returning({ bookId: packBooks.bookId });
 
-    await db.delete(packs).where(eq(packs.id, pack.id))
+    await db.delete(packs).where(eq(packs.id, pack.id));
 
     console.log(
       `[delete-booker-pack] ✓ removed pack "${pack.name}" (${pack.id}); cleared ${deletedRips.length} rip audit row(s) and ${deletedMembership.length} membership row(s).`,
-    )
+    );
   }
 } catch (err) {
-  console.error('[delete-booker-pack] ✗ failed:', err)
-  process.exitCode = 1
+  console.error("[delete-booker-pack] ✗ failed:", err);
+  process.exitCode = 1;
 } finally {
-  await client.end()
+  await client.end();
 }

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { PoolEntry } from "@/lib/cards/pull";
 import {
-  applyRip,
   DEFAULT_PULL_COUNT,
   PULL_WEIGHTS,
+  applyRip,
   pullPack,
-  type PoolEntry,
 } from "@/lib/cards/pull";
 
 /**
@@ -31,7 +31,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-const samplePool: PoolEntry[] = [
+const samplePool: Array<PoolEntry> = [
   { bookId: "b1", rarity: "common" },
   { bookId: "b2", rarity: "common" },
   { bookId: "b3", rarity: "uncommon" },
@@ -52,12 +52,18 @@ describe("pullPack", () => {
   });
 
   it("respects an explicit count", () => {
-    expect(pullPack({ pool: samplePool, count: 1, rng: mulberry32(1) })).toHaveLength(1);
-    expect(pullPack({ pool: samplePool, count: 12, rng: mulberry32(1) })).toHaveLength(12);
+    expect(
+      pullPack({ pool: samplePool, count: 1, rng: mulberry32(1) }),
+    ).toHaveLength(1);
+    expect(
+      pullPack({ pool: samplePool, count: 12, rng: mulberry32(1) }),
+    ).toHaveLength(12);
   });
 
   it("returns an empty array when count is 0", () => {
-    expect(pullPack({ pool: samplePool, count: 0, rng: mulberry32(1) })).toEqual([]);
+    expect(
+      pullPack({ pool: samplePool, count: 0, rng: mulberry32(1) }),
+    ).toEqual([]);
   });
 
   it("throws on an empty pool", () => {
@@ -77,7 +83,7 @@ describe("pullPack", () => {
   });
 
   it("collapses to the only entry when the pool has size 1", () => {
-    const pool: PoolEntry[] = [{ bookId: "solo", rarity: "rare" }];
+    const pool: Array<PoolEntry> = [{ bookId: "solo", rarity: "rare" }];
     const result = pullPack({ pool, count: 7, rng: mulberry32(99) });
     expect(result).toHaveLength(7);
     for (const pull of result) {
@@ -89,7 +95,7 @@ describe("pullPack", () => {
     // Two cards, equal slot count, but one is common and one is legendary.
     // Over many trials, the legendary should appear ~PULL_WEIGHTS.legendary
     // times more often than the common.
-    const pool: PoolEntry[] = [
+    const pool: Array<PoolEntry> = [
       { bookId: "c", rarity: "common" },
       { bookId: "L", rarity: "legendary" },
     ];
@@ -110,7 +116,7 @@ describe("pullPack", () => {
   });
 
   it("does NOT erase pool composition: 99 commons + 1 legendary still pulls mostly commons", () => {
-    const pool: PoolEntry[] = [];
+    const pool: Array<PoolEntry> = [];
     for (let i = 0; i < 99; i++) {
       pool.push({ bookId: `c${i}`, rarity: "common" });
     }

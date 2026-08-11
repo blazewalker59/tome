@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
+import type { Rarity } from "@/lib/packs/composition";
+import type { BuilderHardcoverHit } from "@/server/user-packs";
 import { CoverImage } from "@/components/CoverImage";
 import { demoteReasonLabel } from "@/lib/hardcover/rank";
 import {
   LOCAL_SPARSE_THRESHOLD,
   searchBooksForBuilderFn,
   searchHardcoverForBuilderFn,
-  type BuilderHardcoverHit,
 } from "@/server/user-packs";
-import type { Rarity } from "@/lib/packs/composition";
 
 /**
  * Shared "add books" search panel used by both the user-pack builder
@@ -100,8 +100,10 @@ export function BookSearchPanel({
   onAddHardcover,
 }: BookSearchPanelProps) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<BookHit[]>([]);
-  const [hardcoverHits, setHardcoverHits] = useState<BuilderHardcoverHit[]>([]);
+  const [results, setResults] = useState<Array<BookHit>>([]);
+  const [hardcoverHits, setHardcoverHits] = useState<
+    Array<BuilderHardcoverHit>
+  >([]);
   const [searching, setSearching] = useState(false);
   const [searchingHardcover, setSearchingHardcover] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -174,7 +176,8 @@ export function BookSearchPanel({
           setHardcoverError(null);
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Search failed");
+        if (!cancelled)
+          setError(err instanceof Error ? err.message : "Search failed");
       } finally {
         if (!cancelled) setSearching(false);
       }
@@ -194,7 +197,6 @@ export function BookSearchPanel({
       // for the same book until the next debounced re-search.
       setResults((prev) => prev.filter((b) => b.id !== bookId));
     } catch (err) {
-      // eslint-disable-next-line no-alert
       alert(err instanceof Error ? err.message : "Failed to add");
     } finally {
       setAddingId(null);
@@ -205,10 +207,13 @@ export function BookSearchPanel({
     setIngestingId(hardcoverId);
     try {
       await onAddHardcover(hardcoverId);
-      setHardcoverHits((prev) => prev.filter((h) => h.hardcoverId !== hardcoverId));
+      setHardcoverHits((prev) =>
+        prev.filter((h) => h.hardcoverId !== hardcoverId),
+      );
     } catch (err) {
-      // eslint-disable-next-line no-alert
-      alert(err instanceof Error ? err.message : "Failed to add from Hardcover");
+      alert(
+        err instanceof Error ? err.message : "Failed to add from Hardcover",
+      );
     } finally {
       setIngestingId(null);
     }
@@ -230,9 +235,13 @@ export function BookSearchPanel({
         placeholder="Search by title or author…"
       />
       {error && (
-        <p className="mt-3 text-xs text-[color:var(--rarity-legendary)]">{error}</p>
+        <p className="mt-3 text-xs text-[color:var(--rarity-legendary)]">
+          {error}
+        </p>
       )}
-      {searching && <p className="mt-3 text-xs text-[var(--sea-ink-soft)]">Searching…</p>}
+      {searching && (
+        <p className="mt-3 text-xs text-[var(--sea-ink-soft)]">Searching…</p>
+      )}
       {results.length > 0 && (
         <ul className="mt-4 space-y-2">
           {results.map((b) => {
@@ -314,7 +323,9 @@ export function BookSearchPanel({
           {hardcoverExpanded && (
             <div className="mt-2">
               {searchingHardcover && (
-                <p className="text-xs text-[var(--sea-ink-soft)]">Searching Hardcover…</p>
+                <p className="text-xs text-[var(--sea-ink-soft)]">
+                  Searching Hardcover…
+                </p>
               )}
               {hardcoverError && (
                 <p className="text-xs text-[color:var(--rarity-legendary)]">

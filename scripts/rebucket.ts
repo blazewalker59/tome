@@ -26,15 +26,16 @@
  */
 import { config as loadEnv } from "dotenv";
 
-loadEnv({ path: ".env.local" });
-loadEnv();
-
 import { inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import { books } from "../src/db/schema";
-import { assignRarities, type Rarity } from "../src/lib/cards/rarity";
+import { assignRarities } from "../src/lib/cards/rarity";
+import type { Rarity } from "../src/lib/cards/rarity";
+
+loadEnv({ path: ".env.local" });
+loadEnv();
 
 const url = process.env.DATABASE_URL;
 
@@ -72,7 +73,7 @@ try {
   // per rarity (5 statements max) using `WHERE id = ANY($1)`, instead
   // of N per-row updates. On Neon each round trip is network latency,
   // so this matters even for modest N.
-  const changesByRarity = new Map<Rarity, string[]>();
+  const changesByRarity = new Map<Rarity, Array<string>>();
   let unchanged = 0;
   for (const row of rows) {
     const next = assigned.get(row.id);
@@ -88,9 +89,13 @@ try {
 
   const changed = rows.length - unchanged;
   if (changed === 0) {
-    console.log(`[rebucket] ✓ no changes (${rows.length} books already bucketed)`);
+    console.log(
+      `[rebucket] ✓ no changes (${rows.length} books already bucketed)`,
+    );
   } else {
-    console.log(`[rebucket] applying ${changed} changes (${unchanged} already correct)…`);
+    console.log(
+      `[rebucket] applying ${changed} changes (${unchanged} already correct)…`,
+    );
     await db.transaction(async (tx) => {
       for (const [rarity, ids] of changesByRarity) {
         await tx
@@ -108,12 +113,20 @@ try {
   for (const r of assigned.values()) {
     distribution.set(r, (distribution.get(r) ?? 0) + 1);
   }
-  const order: Rarity[] = ["legendary", "foil", "rare", "uncommon", "common"];
+  const order: Array<Rarity> = [
+    "legendary",
+    "foil",
+    "rare",
+    "uncommon",
+    "common",
+  ];
   console.log("[rebucket] distribution:");
   for (const r of order) {
     const n = distribution.get(r) ?? 0;
     const pct = rows.length === 0 ? 0 : ((n / rows.length) * 100).toFixed(1);
-    console.log(`[rebucket]   ${r.padEnd(9)} ${String(n).padStart(4)}  (${pct}%)`);
+    console.log(
+      `[rebucket]   ${r.padEnd(9)} ${String(n).padStart(4)}  (${pct}%)`,
+    );
   }
 } catch (err) {
   console.error("[rebucket] ✗ failed:", err);

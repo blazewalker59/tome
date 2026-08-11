@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 
+import type { AdminPackSummary } from "@/server/catalog";
 import { AdminForbidden } from "@/components/AdminForbidden";
 import { checkAdminFn } from "@/server/admin";
-import { createPackFn, listPacksFn, type AdminPackSummary } from "@/server/catalog";
+import { createPackFn, listPacksFn } from "@/server/catalog";
 
 /**
  * Admin packs index: list existing packs + inline create form.
@@ -43,7 +44,7 @@ function slugify(name: string): string {
 }
 
 function PacksWorkspace() {
-  const [packs, setPacks] = useState<AdminPackSummary[]>([]);
+  const [packs, setPacks] = useState<Array<AdminPackSummary>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -130,7 +131,8 @@ function PacksWorkspace() {
                         {p.name}
                       </p>
                       <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
-                        {p.slug} · {p.bookCount} books · {p.creatorId === null ? "editorial" : "user"}
+                        {p.slug} · {p.bookCount} books ·{" "}
+                        {p.creatorId === null ? "editorial" : "user"}
                       </p>
                       {p.description && (
                         <p className="mt-1 line-clamp-1 text-xs text-[var(--sea-ink-soft)]">
@@ -285,7 +287,9 @@ function Field({
     <label className="block">
       <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
         {label}
-        {required && <span className="ml-1 text-[color:var(--rarity-legendary)]">*</span>}
+        {required && (
+          <span className="ml-1 text-[color:var(--rarity-legendary)]">*</span>
+        )}
       </span>
       {children}
       {hint && (

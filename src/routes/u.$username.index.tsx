@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { Link, createFileRoute, notFound } from "@tanstack/react-router";
 
-import {
-  getPublicProfileFn,
-  type PublicProfilePayload,
-} from "@/server/user-packs";
-import { getFollowStateFn, type FollowStatePayload } from "@/server/social";
+import type { PublicProfilePayload } from "@/server/user-packs";
+import type { FollowStatePayload } from "@/server/social";
+import { getPublicProfileFn } from "@/server/user-packs";
+import { getFollowStateFn } from "@/server/social";
 import { getMeFn } from "@/server/admin";
 import { FollowButton } from "@/components/FollowButton";
 
@@ -119,9 +118,7 @@ function ProfilePage() {
       </header>
 
       <section>
-        <h2 className="island-kicker mb-3">
-          Published packs · {packs.length}
-        </h2>
+        <h2 className="island-kicker mb-3">Published packs · {packs.length}</h2>
         {packs.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--sea-ink-soft)]">
             No published packs yet.

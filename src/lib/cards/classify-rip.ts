@@ -22,10 +22,10 @@
 
 export interface RipClassification {
   /** Distinct, in-pull-order. Used to write `collection_cards` rows. */
-  newBookIds: string[];
+  newBookIds: Array<string>;
   /** Every duplicated pull, in pull order, repeats preserved. Each
    *  entry corresponds to one `dupe_refund` shard event. */
-  duplicateBookIds: string[];
+  duplicateBookIds: Array<string>;
 }
 
 /**
@@ -44,8 +44,8 @@ export function classifyRip(
   pulledBookIds: ReadonlyArray<string>,
   ownedBeforeRip: ReadonlySet<string>,
 ): RipClassification {
-  const newBookIds: string[] = [];
-  const duplicateBookIds: string[] = [];
+  const newBookIds: Array<string> = [];
+  const duplicateBookIds: Array<string> = [];
   const gainedThisRip = new Set<string>();
 
   for (const id of pulledBookIds) {

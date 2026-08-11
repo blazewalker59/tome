@@ -1,4 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { getPublishUnlockStatus } from "@/lib/packs/unlock";
 
 /**
  * Publish-unlock status tests.
@@ -30,8 +32,6 @@ vi.mock("@/lib/economy/config", () => ({
     publishUnlock: { finishedBookThreshold: threshold },
   }),
 }));
-
-import { getPublishUnlockStatus } from "@/lib/packs/unlock";
 
 beforeEach(() => {
   finishedCount = 0;

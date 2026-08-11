@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  FINISH_GUARD_MS,
+  computeReadingTimestamps,
+  decideTransitionGrant,
+  shouldGrantFinish,
+} from "@/server/reading";
+
 /**
  * Reading-log helper tests.
  *
@@ -63,13 +70,6 @@ vi.mock("@tanstack/react-start", () => ({
     }),
   }),
 }));
-
-import {
-  FINISH_GUARD_MS,
-  computeReadingTimestamps,
-  decideTransitionGrant,
-  shouldGrantFinish,
-} from "@/server/reading";
 
 describe("decideTransitionGrant", () => {
   // New entry (prior=undefined) covers the first-log case. The two

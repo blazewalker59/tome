@@ -26,11 +26,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { eq, inArray, sql } from "drizzle-orm";
 
+import { fetchBookById, searchBooks } from "./hardcover";
+import type { HardcoverSearchResult } from "./hardcover";
 import { getDb } from "@/db/client";
 import { books, packBooks, packs } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth/session";
 import { bookResponseToRow } from "@/lib/cards/hardcover";
-import { fetchBookById, searchBooks, type HardcoverSearchResult } from "./hardcover";
 
 /**
  * Cheap read-only probe used by the admin route loader to decide whether
@@ -147,7 +148,9 @@ function normalizeInput(input: IngestBookInput): IngestBookInput {
     .map((t) => t.trim().toLowerCase())
     .filter((t) => t.length > 0);
   if (moodTags.some((t) => !/^[a-z0-9][a-z0-9-]*$/.test(t))) {
-    throw new Error(`Mood tags must be kebab-case; got ${JSON.stringify(input.moodTags)}`);
+    throw new Error(
+      `Mood tags must be kebab-case; got ${JSON.stringify(input.moodTags)}`,
+    );
   }
   const packSlug = input.packSlug?.trim() || undefined;
   return { hardcoverId: input.hardcoverId, genre, moodTags, packSlug };
@@ -162,7 +165,7 @@ export const ingestBookFn = createServerFn({ method: "POST" })
     return {
       hardcoverId: Number(r.hardcoverId),
       genre: String(r.genre ?? ""),
-      moodTags: Array.isArray(r.moodTags) ? (r.moodTags as string[]) : [],
+      moodTags: Array.isArray(r.moodTags) ? (r.moodTags as Array<string>) : [],
       packSlug: typeof r.packSlug === "string" ? r.packSlug : undefined,
     };
   })
@@ -223,7 +226,9 @@ export const ingestBookFn = createServerFn({ method: "POST" })
     if (!upserted) {
       // Defensive — returning() should always yield a row on insert or
       // update. Being explicit helps surface driver weirdness.
-      throw new Error(`Upsert of hardcoverId=${input.hardcoverId} returned no row`);
+      throw new Error(
+        `Upsert of hardcoverId=${input.hardcoverId} returned no row`,
+      );
     }
 
     let linkedToPackId: string | null = null;
