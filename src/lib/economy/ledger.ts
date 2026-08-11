@@ -74,7 +74,27 @@ export type ShardReason =
    * write batch fails after the shards were already taken — see the
    * compensation note there. Never issued by normal play.
    */
-  | "rip_refund";
+  | "rip_refund"
+  /**
+   * One-time reconciliation written during the Neon -> D1 migration.
+   *
+   * The Neon data had `shard_balances` disagreeing with `SUM(shard_events)`
+   * — 52 cached against a ledger summing to -110 for the only user. The
+   * ledger was missing its `welcome_grant` row entirely, and rip audit rows
+   * had been deleted by a collection reset while their debit events stayed.
+   * Under the old code that drift was invisible, because the cache was
+   * incremented rather than derived.
+   *
+   * It stops being invisible here: `grantShards` now rebuilds the cache from
+   * the ledger, so the next grant would have yanked the balance from 52 to
+   * roughly -110. Rather than carry a lie forward or silently reset someone's
+   * currency, the migration writes one explicit event for the difference. The
+   * balance the user sees is preserved and the ledger becomes the truth it
+   * always claimed to be.
+   *
+   * Never written at runtime. See scripts/migrate-neon-to-d1.ts.
+   */
+  | "migration_adjustment";
 
 export interface ShardEventRefs {
   bookId?: string;

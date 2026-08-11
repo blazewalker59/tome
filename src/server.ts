@@ -31,13 +31,9 @@ import {
   createStartHandler,
   defaultStreamHandler,
 } from "@tanstack/react-start/server";
-import type {CloudflareEnv} from "@/db/client";
+import type { CloudflareEnv } from "@/db/client";
 import { getAuth } from "@/lib/auth/server";
-import {
-  
-  serverRequestContext,
-  setWorkerEnv
-} from "@/db/client";
+import { serverRequestContext, setWorkerEnv } from "@/db/client";
 
 const startFetch = createStartHandler(defaultStreamHandler) as (
   request: Request,
