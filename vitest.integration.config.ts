@@ -55,6 +55,21 @@ export default defineConfig({
       "@": new URL("./src", import.meta.url).pathname,
       "@test": new URL("./src/__tests__/_setup", import.meta.url).pathname,
       "#": new URL("./src", import.meta.url).pathname,
+      // See _tanstack-stub.ts: server modules import createServerFn, which
+      // resolves virtual entry specifiers that only exist in the real
+      // dev/build pipeline.
+      "#tanstack-router-entry": new URL(
+        "./src/__tests__/integration/_tanstack-stub.ts",
+        import.meta.url,
+      ).pathname,
+      "#tanstack-start-entry": new URL(
+        "./src/__tests__/integration/_tanstack-stub.ts",
+        import.meta.url,
+      ).pathname,
+      "#tanstack-start-plugin-adapters": new URL(
+        "./src/__tests__/integration/_tanstack-stub.ts",
+        import.meta.url,
+      ).pathname,
     },
   },
   test: {
