@@ -31,8 +31,9 @@ a stub. Dev and production hit the same binding.
 
 ```bash
 bun run dev             # dev server on http://localhost:3000 (real D1 binding)
-bun run test            # watch the test suite
+bun run test            # watch the unit suite
 bun run test:run        # run it once
+bun run test:integration # run the real-D1 integration suite
 bun run check           # prettier --check + eslint
 bun run typecheck       # tsc --noEmit
 bun run build           # production Cloudflare Workers build
@@ -54,6 +55,30 @@ bun run db:rebucket     # recompute rarity buckets across the catalog
 Schema lives at [`src/db/schema.ts`](./src/db/schema.ts). Migrations are SQL
 files in `drizzle/`, applied by wrangler (which tracks what it has run in D1's
 own `d1_migrations` table) — not by drizzle-kit.
+
+### Tests
+
+Two suites, deliberately separate:
+
+| | runtime | covers |
+| --- | --- | --- |
+| `bun run test:run` | node / jsdom | pure logic, components, server-fn branch behaviour against fakes |
+| `bun run test:integration` | workerd + real D1 | anything that touches the database |
+
+The split exists because two bugs shipped that no amount of unit testing could
+have caught. Both type-checked, both passed unit tests against a hand-written
+fake, and neither could execute:
+
+- `spendShards` batched a statement built with ``db.run(sql`...`)``. Drizzle's
+  D1 batch reaches for a `.stmt` that raw statements never have, so every pack
+  rip threw `Cannot read properties of undefined (reading 'bind')`.
+- `grantShards` targeted the partial unique index with
+  `onConflictDoNothing({ target, where })`. Drizzle emits the index predicate
+  *after* `DO NOTHING`; SQLite requires it before, and rejects the statement.
+
+The integration suite applies the same `./drizzle` migrations wrangler applies
+to production, so schema drift surfaces there too. It needs no Cloudflare
+credentials — miniflare runs D1 locally.
 
 ### Things D1 does not have
 
