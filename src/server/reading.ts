@@ -928,9 +928,17 @@ export const ingestHardcoverForReadingLogFn = createServerFn({ method: "POST" })
           genre: "unknown",
           moodTags: [],
         });
+        // `xmax = 0` — the Postgres trick for telling an insert from an update
+        // in one round trip — is gone: `xmax` is a Postgres SYSTEM COLUMN and
+        // does not exist in SQLite, so on D1 it fails with
+        // `no such column: xmax`. Mint the id here instead and compare what
+        // comes back: an insert returns the id we supplied, a conflict
+        // returns the pre-existing row's. See src/server/ingest.ts.
+        const newBookId = crypto.randomUUID();
         const [upserted] = await database
           .insert(books)
           .values({
+            id: newBookId,
             ...row,
             ingestedByUserId: user.id,
             ingestedAt: new Date(),
@@ -955,7 +963,6 @@ export const ingestHardcoverForReadingLogFn = createServerFn({ method: "POST" })
           })
           .returning({
             id: books.id,
-            created: sql<boolean>`(xmax = 0)`,
           });
 
         if (!upserted) {
@@ -963,7 +970,7 @@ export const ingestHardcoverForReadingLogFn = createServerFn({ method: "POST" })
             `Upsert of hardcoverId=${data.hardcoverId} returned no row`,
           );
         }
-        return { bookId: upserted.id, created: Boolean(upserted.created) };
+        return { bookId: upserted.id, created: upserted.id === newBookId };
       },
     ),
   );
