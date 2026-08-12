@@ -15,8 +15,10 @@
 BETTER_AUTH_SECRET=
 
 # Canonical origin Better Auth uses for CSRF + OAuth callback URL construction.
-# For `wrangler dev` this is typically http://localhost:8787.
-BETTER_AUTH_URL=http://localhost:8787
+# NOT required: wrangler.jsonc already declares BETTER_AUTH_URL as a plain var
+# (http://localhost:3000 for dev, the workers.dev origin for production).
+# Uncomment only to override locally — e.g. if you serve on a different port.
+# BETTER_AUTH_URL=http://localhost:8787
 
 # Google OAuth client (redirect URI for the above origin must be registered
 # in Google Cloud Console).

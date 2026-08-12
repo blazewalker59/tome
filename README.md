@@ -85,7 +85,7 @@ Google OAuth redirect URIs (set in Google Cloud Console):
 - `http://localhost:8787/api/auth/callback/google` (`wrangler dev`)
 - `https://<prod-domain>/api/auth/callback/google`
 
-`BETTER_AUTH_URL` must match the origin you're actually serving from — it's used to build the Google redirect URL. `trustedOrigins` in `src/lib/auth/server.ts` whitelists the two localhost ports so dev works on either.
+`BETTER_AUTH_URL` must match the origin you're actually serving from — it's used to build the Google redirect URL. It lives in `wrangler.jsonc`'s `vars` (dev default `http://localhost:3000`, production `https://tome.blazewalker59.workers.dev`), not in Worker secrets: it's the site's own address, not a credential. `trustedOrigins` in `src/lib/auth/server.ts` whitelists the two localhost ports so dev works on either.
 
 ## Deploy to Cloudflare Workers
 
@@ -94,7 +94,6 @@ First time:
 ```bash
 bunx wrangler login
 bunx wrangler secret put BETTER_AUTH_SECRET --name tome   # openssl rand -base64 32
-bunx wrangler secret put BETTER_AUTH_URL --name tome      # https://<prod-domain>
 bunx wrangler secret put GOOGLE_CLIENT_ID --name tome
 bunx wrangler secret put GOOGLE_CLIENT_SECRET --name tome
 bunx wrangler secret put HARDCOVER_API_TOKEN --name tome
@@ -110,10 +109,10 @@ All runtime secrets live in Worker secrets, not in the `vars` block of `wrangler
 
 | Variable               | Where it's used | How it's set |
 | ---------------------- | --------------- | ------------ |
-| `BETTER_AUTH_SECRET`   | Server (Worker) | `wrangler secret put` (prod) / `.env.local` (dev) |
-| `BETTER_AUTH_URL`      | Server (Worker) | `wrangler secret put` (prod) / `.env.local` (dev) |
-| `GOOGLE_CLIENT_ID`     | Server (Worker) | `wrangler secret put` (prod) / `.env.local` (dev) |
-| `GOOGLE_CLIENT_SECRET` | Server (Worker) | `wrangler secret put` (prod) / `.env.local` (dev) |
+| `BETTER_AUTH_SECRET`   | Server (Worker) | `wrangler secret put` (prod) / `.dev.vars` (dev) |
+| `BETTER_AUTH_URL`      | Server (Worker) | plain `vars` in `wrangler.jsonc` — not a secret |
+| `GOOGLE_CLIENT_ID`     | Server (Worker) | `wrangler secret put` (prod) / `.dev.vars` (dev) |
+| `GOOGLE_CLIENT_SECRET` | Server (Worker) | `wrangler secret put` (prod) / `.dev.vars` (dev) |
 | `HARDCOVER_API_TOKEN`  | Server (Worker) | `wrangler secret put` (prod) / `.dev.vars` (dev) |
 | `ADMIN_EMAILS`         | Server (Worker) | `wrangler secret put` (prod) / `.dev.vars` (dev) |
 

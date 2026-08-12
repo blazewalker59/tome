@@ -179,11 +179,12 @@ jobs:
           name: dist
           path: dist/
 
-      # Worker secrets (BETTER_AUTH_SECRET, BETTER_AUTH_URL, GOOGLE_CLIENT_ID,
+      # Worker secrets (BETTER_AUTH_SECRET, GOOGLE_CLIENT_ID,
       # GOOGLE_CLIENT_SECRET, HARDCOVER_API_TOKEN, ADMIN_EMAILS) are managed
       # out-of-band via `wrangler secret put` and persist across deploys —
-      # nothing is uploaded per-deploy. DATABASE_URL is gone: the database is
-      # a binding now, declared in wrangler.jsonc.
+      # nothing is uploaded per-deploy. BETTER_AUTH_URL is NOT a secret; it is
+      # a plain var in wrangler.jsonc and ships with this deploy. DATABASE_URL
+      # is gone: the database is a binding now, also declared there.
       #
       # The vite-built worker bundle is passed positionally, which overrides
       # `main` in wrangler.jsonc (that points at source, for the vite plugin).
