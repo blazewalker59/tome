@@ -25,6 +25,10 @@ export default defineConfig({
     globals: false,
     setupFiles: ["./src/__tests__/_setup/setup.ts"],
     include: ["src/__tests__/**/*.test.{ts,tsx}"],
+    // Integration tests need a real D1 binding and run under workerd via
+    // vitest.integration.config.ts (`bun run test:integration`). They would
+    // fail here, where there is no binding and no Worker runtime.
+    exclude: ["src/__tests__/integration/**"],
     css: false,
   },
 });

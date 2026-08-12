@@ -219,21 +219,39 @@ export async function grantShards(
     refRipId: refs.ripId ?? null,
   };
 
+  // A BARE `on conflict do nothing`, with no target, for the index-covered
+  // reasons. That is not the obvious choice, so: SQLite's grammar for
+  // targeting a partial index is
+  //
+  //     ON CONFLICT (cols) WHERE <index-predicate> DO NOTHING
+  //
+  // and drizzle's `onConflictDoNothing({ target, where })` emits the predicate
+  // in the wrong place —
+  //
+  //     on conflict (cols) do nothing where <index-predicate>
+  //
+  // (see sqlite-core/query-builders/insert.js) — which SQLite rejects with
+  // `near "where": syntax error`. Dropping the `where` is not an option
+  // either: SQLite refuses to match a conflict target against a partial index
+  // unless the predicate is present and identical.
+  //
+  // Going bare sidesteps both. It catches whatever constraint the row
+  // violates, which on this table is precisely what we want: `shard_events`
+  // has exactly one unique index — the partial
+  // `shard_events_once_per_book_uq` — plus the primary key on `id`, and `id`
+  // is a fresh randomUUID, so the partial index is the only conflict that can
+  // realistically fire. If a second unique constraint is ever added to this
+  // table, this must be revisited, because it would start silently swallowing
+  // that conflict too.
+  //
+  // Covered by the once-per-book cases in
+  // src/__tests__/integration/ledger.test.ts, which exercise this against a
+  // real D1 — a fake cannot tell you whether SQLite matched the right index.
   const insertStatement = isIndexCovered
     ? db
         .insert(shardEvents)
         .values(insertValues)
-        .onConflictDoNothing({
-          target: [
-            shardEvents.userId,
-            shardEvents.reason,
-            shardEvents.refBookId,
-          ],
-          // Repeat the partial index predicate so the planner can match the
-          // conflict target to the right index. Must stay in sync with
-          // `shard_events_once_per_book_uq` in src/db/schema.ts.
-          where: sql`${shardEvents.reason} in ('start_reading', 'finish_reading')`,
-        })
+        .onConflictDoNothing()
         .returning({ id: shardEvents.id })
     : db
         .insert(shardEvents)

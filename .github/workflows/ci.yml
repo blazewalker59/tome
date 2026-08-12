@@ -2,11 +2,13 @@ name: CI/CD
 
 # One pipeline for PRs and production.
 #
-#   PR:            checks ─┐
-#                  test   ─┴─ (gate only)
+#   PR:            checks      ─┐
+#                  test        ─┼─ (gate only)
+#                  integration ─┘
 #
-#   push to main:  checks(+artifact) ─┬─ migrate ─ deploy (reuses the build)
-#                  test              ─┘
+#   push to main:  checks(+artifact) ─┐
+#                  test              ─┼─ migrate ─ deploy (reuses the build)
+#                  integration       ─┘
 #
 # Replaces the old deploy.yml, which ran only on main, had no lint or
 # typecheck step, and had failed on every run since April because
@@ -108,13 +110,48 @@ jobs:
       - name: Run tests
         run: bun run test:run --shard=${{ matrix.shard }}/3
 
+  # Real D1, in-process via @cloudflare/vitest-pool-workers, applying the same
+  # ./drizzle migrations wrangler applies to production.
+  #
+  # A separate job because it is a different kind of check, and because two
+  # production bugs got through everything else: a statement that could not be
+  # batched, and an ON CONFLICT target SQLite would not accept. Both
+  # type-checked, both passed unit tests against a fake, and neither could run.
+  # Not sharded — the whole suite is ~1s, so the runner's startup dominates.
+  integration:
+    name: Integration (real D1)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4.2.4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # No Cloudflare credentials needed: miniflare runs D1 locally.
+      - name: Run integration tests
+        run: bun run test:integration
+
   # Schema before code. Wrangler tracks which migrations it has applied in
   # D1's own d1_migrations table, so re-running is a no-op when nothing is
   # pending — this job is cheap on the common path.
   migrate:
     name: Apply D1 migrations
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [checks, test]
+    needs: [checks, test, integration]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -149,7 +186,7 @@ jobs:
   deploy:
     name: Deploy to Cloudflare Workers
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [checks, test, migrate]
+    needs: [checks, test, integration, migrate]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
