@@ -38,6 +38,10 @@ function makeDb(o: FakeDbOverrides = {}) {
 
   const db: any = {
     insert: () => ({
+      // `insert().select(...)` is spendShards' conditional insert. It is built
+      // with the query builder rather than `db.run(sql\`...\`)` because a raw
+      // statement cannot be batched — see batchable.test.ts.
+      select: () => statement("insert.select"),
       values: () => ({
         onConflictDoNothing: () => ({
           returning: () => statement("insert.onConflictDoNothing"),

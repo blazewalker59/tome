@@ -298,21 +298,37 @@ export async function spendShards(
     throw new Error(`spendShards: amount must be positive, got ${amount}`);
   }
 
-  // Raw SQL for the conditional insert: Drizzle's insert builder has no
-  // "insert only if this predicate holds" form. The id is generated here
-  // because `$defaultFn` only runs through the query builder, not raw SQL.
+  // The conditional insert, as `insert().select()` rather than a raw
+  // `db.run(sql\`...\`)`.
+  //
+  // This distinction is not stylistic — a raw statement CANNOT go into
+  // `db.batch()`. Drizzle's D1 batch does:
+  //
+  //     const prepared = query._prepare();
+  //     if (prepared.getQuery().params.length > 0)
+  //       builtQueries.push(prepared.stmt.bind(...params));
+  //
+  // and `SQLiteRaw._prepare()` returns `this`, which has no `.stmt`. So any
+  // raw statement carrying bind params throws "Cannot read properties of
+  // undefined (reading 'bind')" the moment it is batched. It type-checks
+  // (SQLiteRaw does implement RunnableQuery) and it runs fine on its own —
+  // it only fails inside a batch, which is why this shipped.
+  //
+  // `insert().select()` produces a real insert builder with a working
+  // `_prepare()`, and drizzle emits the explicit column list from the table
+  // definition, so the SELECT's column order is checked against the schema
+  // rather than assumed. The id is generated here because `$defaultFn` only
+  // runs for `.values()`, not for an insert-from-select.
   const eventId = crypto.randomUUID();
-  const insertIfAffordable = db.run(sql`
-    insert into ${shardEvents}
-      (id, user_id, delta, reason, ref_book_id, ref_pack_id, ref_rip_id, created_at)
-    select
+  const insertIfAffordable = db.insert(shardEvents).select(
+    sql`select
       ${eventId}, ${userId}, ${-amount}, 'rip', null,
       ${refs.packId ?? null}, ${refs.ripId ?? null}, unixepoch()
     where coalesce(
       (select shards from ${shardBalances} where ${shardBalances.userId} = ${userId}),
       0
-    ) >= ${amount}
-  `);
+    ) >= ${amount}`,
+  );
 
   const debit = db
     .update(shardBalances)
