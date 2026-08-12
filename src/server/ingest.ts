@@ -24,7 +24,7 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 import { fetchBookById, searchBooks } from "./hardcover";
 import type { HardcoverSearchResult } from "./hardcover";
@@ -188,14 +188,24 @@ export const ingestBookFn = createServerFn({ method: "POST" })
 
     const database = await getDb();
 
-    // Upsert on the unique hardcover_id. `created` tells the UI whether
-    // this was a new row or a re-curation. We use `xmax = 0` (a well-
-    // known postgres trick) to detect inserts vs updates in a single
-    // round trip: on fresh inserts xmax is the null xid 0, on updates
-    // it's the originating txid.
+    // Upsert on the unique hardcover_id. `created` tells the UI whether this
+    // was a new row or a re-curation.
+    //
+    // This used to read `xmax = 0`, the standard Postgres trick for telling
+    // an insert from an update in one round trip (xmax is the null xid 0 on a
+    // fresh insert, the originating txid on an update). `xmax` is a Postgres
+    // *system column* — SQLite has no such thing, so on D1 that expression is
+    // simply `no such column: xmax` and the whole upsert fails.
+    //
+    // The replacement generates the id here rather than letting `$defaultFn`
+    // do it, then compares what came back. On an insert the returned id is
+    // the one we supplied; on a conflict the pre-existing row's id comes back
+    // instead. Exact, and correct under a concurrent insert — unlike
+    // inferring "created" from an earlier existence check.
+    const newBookId = crypto.randomUUID();
     const [upserted] = await database
       .insert(books)
-      .values(row)
+      .values({ id: newBookId, ...row })
       .onConflictDoUpdate({
         target: books.hardcoverId,
         set: {
@@ -222,7 +232,6 @@ export const ingestBookFn = createServerFn({ method: "POST" })
         title: books.title,
         authors: books.authors,
         hardcoverId: books.hardcoverId,
-        created: sql<boolean>`(xmax = 0)`,
       });
 
     if (!upserted) {
@@ -259,7 +268,7 @@ export const ingestBookFn = createServerFn({ method: "POST" })
       title: upserted.title,
       authors: upserted.authors,
       hardcoverId: upserted.hardcoverId,
-      created: Boolean(upserted.created),
+      created: upserted.id === newBookId,
       linkedToPackId,
     };
   });

@@ -1135,9 +1135,17 @@ export const ingestHardcoverBookForAdminPackFn = createServerFn({
         // (`genre`, `moodTags`, `rarity`) untouched. `xmax = 0` flags
         // insert vs update so the caller can tell whether a new row was
         // actually created.
+        // `xmax = 0` — the Postgres trick for telling an insert from an update
+        // in one round trip — is gone: `xmax` is a Postgres SYSTEM COLUMN and
+        // does not exist in SQLite, so on D1 it fails with
+        // `no such column: xmax`. Mint the id here instead and compare what
+        // comes back: an insert returns the id we supplied, a conflict
+        // returns the pre-existing row's. See src/server/ingest.ts.
+        const newBookId = crypto.randomUUID();
         const [upserted] = await database
           .insert(books)
           .values({
+            id: newBookId,
             ...row,
             // Admin path: leave provenance null so the row reads as
             // editorial/legacy rather than charged to the admin's
@@ -1164,7 +1172,6 @@ export const ingestHardcoverBookForAdminPackFn = createServerFn({
           })
           .returning({
             id: books.id,
-            created: sql<boolean>`(xmax = 0)`,
           });
 
         if (!upserted) {
@@ -1178,7 +1185,7 @@ export const ingestHardcoverBookForAdminPackFn = createServerFn({
           .values({ packId: pack.id, bookId: upserted.id })
           .onConflictDoNothing();
 
-        return { bookId: upserted.id, created: Boolean(upserted.created) };
+        return { bookId: upserted.id, created: upserted.id === newBookId };
       },
     ),
   );
