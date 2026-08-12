@@ -1,10 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
+import { Link, createFileRoute, redirect } from "@tanstack/react-router";
+import {
+  ArrowDown,
+  ArrowUp,
+  RefreshCw,
+  RotateCcw,
+  Trash2,
+  X,
+} from "lucide-react";
 
+import type { Rarity } from "@/lib/cards/rarity";
+import type {
+  AdminBookRow,
+  AdminBooksSortKey,
+  AdminPackSummary,
+  SortDir,
+} from "@/server/catalog";
 import { AdminForbidden } from "@/components/AdminForbidden";
 import { CoverImage } from "@/components/CoverImage";
-import type { Rarity } from "@/lib/cards/rarity";
 import { checkAdminFn } from "@/server/admin";
 import {
   listBooksFn,
@@ -15,10 +28,6 @@ import {
   softDeleteBookFn,
   updateBookCurationFn,
   updateBookRarityFn,
-  type AdminBookRow,
-  type AdminBooksSortKey,
-  type AdminPackSummary,
-  type SortDir,
 } from "@/server/catalog";
 
 // Mirror of `RARITY_VALUES` in src/server/catalog.ts. Local constant
@@ -89,7 +98,7 @@ interface LoadState {
 }
 
 function BooksWorkspace() {
-  const [books, setBooks] = useState<AdminBookRow[]>([]);
+  const [books, setBooks] = useState<Array<AdminBookRow>>([]);
   const [total, setTotal] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>({ kind: "idle" });
   const [searchInput, setSearchInput] = useState("");
@@ -99,7 +108,7 @@ function BooksWorkspace() {
   // Toggling this on lets the admin audit and restore soft-deleted
   // catalog rows without a SQL detour.
   const [includeDeleted, setIncludeDeleted] = useState(false);
-  const [allPacks, setAllPacks] = useState<AdminPackSummary[]>([]);
+  const [allPacks, setAllPacks] = useState<Array<AdminPackSummary>>([]);
   const [assignTarget, setAssignTarget] = useState<AdminBookRow | null>(null);
 
   // Debounced search — same cadence as Hardcover ingest's search.
@@ -161,12 +170,14 @@ function BooksWorkspace() {
   const handleCurationUpdate = useCallback(
     async (
       bookId: string,
-      patch: { genre?: string; moodTags?: string[] },
+      patch: { genre?: string; moodTags?: Array<string> },
     ): Promise<void> => {
       // Optimistic: we already updated local state before this was called.
       // On failure, reload the row from the server to rectify.
       try {
-        const result = await updateBookCurationFn({ data: { bookId, ...patch } });
+        const result = await updateBookCurationFn({
+          data: { bookId, ...patch },
+        });
         setBooks((prev) =>
           prev.map((b) =>
             b.id === bookId
@@ -178,7 +189,7 @@ function BooksWorkspace() {
         // Error is surfaced via alert because inline row error UI would
         // require a per-row error slot. Admin-tier UX — a toast would be
         // nicer later.
-        // eslint-disable-next-line no-alert
+
         alert(
           `Failed to save: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -205,7 +216,6 @@ function BooksWorkspace() {
           ),
         );
       } catch (err) {
-        // eslint-disable-next-line no-alert
         alert(
           `Failed to save rarity: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -242,7 +252,6 @@ function BooksWorkspace() {
       // noisy for the common case, so we only surface the no-op path
       // (which is what an admin needs to know to escalate).
       if (!result.changed) {
-        // eslint-disable-next-line no-alert
         alert(
           "Refreshed from Hardcover, but no visible fields changed. " +
             "If the cover is still broken the upstream URL itself is dead — " +
@@ -250,7 +259,6 @@ function BooksWorkspace() {
         );
       }
     } catch (err) {
-      // eslint-disable-next-line no-alert
       alert(
         `Refresh failed: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -265,30 +273,31 @@ function BooksWorkspace() {
   // the row updates without a refetch; if the toggle hides
   // tombstones, the row will disappear on the next search-driven
   // reload, which is the right UX.
-  const handleSoftDelete = useCallback(async (bookId: string): Promise<void> => {
-    // eslint-disable-next-line no-alert
-    const confirmed = window.confirm(
-      "Soft-delete this book?\n\n" +
-        "It will be hidden from the admin browse, builder search, and " +
-        "future pack additions. Existing user collections, reading " +
-        "logs, and pack memberships are preserved. You can restore it " +
-        "from this page with 'Show deleted' toggled on.",
-    );
-    if (!confirmed) return;
-    try {
-      const result = await softDeleteBookFn({ data: { bookId } });
-      setBooks((prev) =>
-        prev.map((b) =>
-          b.id === bookId ? { ...b, deletedAt: result.deletedAt } : b,
-        ),
+  const handleSoftDelete = useCallback(
+    async (bookId: string): Promise<void> => {
+      const confirmed = window.confirm(
+        "Soft-delete this book?\n\n" +
+          "It will be hidden from the admin browse, builder search, and " +
+          "future pack additions. Existing user collections, reading " +
+          "logs, and pack memberships are preserved. You can restore it " +
+          "from this page with 'Show deleted' toggled on.",
       );
-    } catch (err) {
-      // eslint-disable-next-line no-alert
-      alert(
-        `Delete failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }, []);
+      if (!confirmed) return;
+      try {
+        const result = await softDeleteBookFn({ data: { bookId } });
+        setBooks((prev) =>
+          prev.map((b) =>
+            b.id === bookId ? { ...b, deletedAt: result.deletedAt } : b,
+          ),
+        );
+      } catch (err) {
+        alert(
+          `Delete failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    [],
+  );
 
   const handleRestore = useCallback(async (bookId: string): Promise<void> => {
     try {
@@ -297,7 +306,6 @@ function BooksWorkspace() {
         prev.map((b) => (b.id === bookId ? { ...b, deletedAt: null } : b)),
       );
     } catch (err) {
-      // eslint-disable-next-line no-alert
       alert(
         `Restore failed: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -305,7 +313,7 @@ function BooksWorkspace() {
   }, []);
 
   const handleAssignSubmit = useCallback(
-    async (bookId: string, packIds: string[]) => {
+    async (bookId: string, packIds: Array<string>) => {
       try {
         await setBookPacksFn({ data: { bookId, packIds } });
         // Sync local row's `packs` display.
@@ -319,7 +327,6 @@ function BooksWorkspace() {
         );
         setAssignTarget(null);
       } catch (err) {
-        // eslint-disable-next-line no-alert
         alert(
           `Failed to save pack assignments: ${
             err instanceof Error ? err.message : String(err)
@@ -344,17 +351,24 @@ function BooksWorkspace() {
             Browse catalog
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[var(--sea-ink-soft)]">
-            Edit genre, mood tags, and rarity in place (saves on
-            change). Click a row&rsquo;s <em>Packs</em> to manage
-            memberships. Use the <RefreshCw aria-hidden className="inline h-3 w-3 align-text-bottom" />{" "}
-            icon next to <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">hc#</code>{" "}
-            to re-pull title, authors, and cover from Hardcover when a
-            cover URL has gone stale. The <Trash2 aria-hidden className="inline h-3 w-3 align-text-bottom" />{" "}
+            Edit genre, mood tags, and rarity in place (saves on change). Click
+            a row&rsquo;s <em>Packs</em> to manage memberships. Use the{" "}
+            <RefreshCw
+              aria-hidden
+              className="inline h-3 w-3 align-text-bottom"
+            />{" "}
+            icon next to{" "}
+            <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">
+              hc#
+            </code>{" "}
+            to re-pull title, authors, and cover from Hardcover when a cover URL
+            has gone stale. The{" "}
+            <Trash2 aria-hidden className="inline h-3 w-3 align-text-bottom" />{" "}
             soft-deletes a book — it&rsquo;s hidden from search, builder
-            results, and new pack additions, but existing user
-            collections, reading logs, and pack memberships are
-            preserved. Toggle <em>Show deleted</em> to audit or restore.
-            Rarity edits are global and may be overwritten by{" "}
+            results, and new pack additions, but existing user collections,
+            reading logs, and pack memberships are preserved. Toggle{" "}
+            <em>Show deleted</em> to audit or restore. Rarity edits are global
+            and may be overwritten by{" "}
             <code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 text-xs">
               pnpm db:rebucket
             </code>
@@ -548,7 +562,7 @@ function BookRow({
   book: AdminBookRow;
   onUpdate: (
     bookId: string,
-    patch: { genre?: string; moodTags?: string[] },
+    patch: { genre?: string; moodTags?: Array<string> },
   ) => Promise<void>;
   onRarityChange: (bookId: string, rarity: Rarity) => Promise<void>;
   onRefresh: (bookId: string) => Promise<void>;
@@ -756,7 +770,9 @@ function BookRow({
             parent's handleRarityUpdate. */}
         <select
           value={book.rarity}
-          onChange={(e) => void onRarityChange(book.id, e.target.value as Rarity)}
+          onChange={(e) =>
+            void onRarityChange(book.id, e.target.value as Rarity)
+          }
           aria-label={`Rarity for ${book.title}`}
           className={`cursor-pointer appearance-none rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] outline-none transition-shadow hover:shadow-sm focus-visible:ring-2 focus-visible:ring-[color:var(--lagoon)]/40 ${
             RARITY_CHIP_CLASSES[book.rarity] ?? RARITY_CHIP_CLASSES.common
@@ -826,9 +842,13 @@ function SortHeader({
     <button
       type="button"
       onClick={() => onClick(column)}
-      aria-sort={isActive ? (activeDir === "asc" ? "ascending" : "descending") : "none"}
+      aria-sort={
+        isActive ? (activeDir === "asc" ? "ascending" : "descending") : "none"
+      }
       className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${
-        isActive ? "text-[var(--sea-ink)]" : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+        isActive
+          ? "text-[var(--sea-ink)]"
+          : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
       }`}
     >
       {label}
@@ -884,9 +904,9 @@ function AssignPacksModal({
   onSubmit,
 }: {
   book: AdminBookRow;
-  allPacks: AdminPackSummary[];
+  allPacks: Array<AdminPackSummary>;
   onClose: () => void;
-  onSubmit: (packIds: string[]) => void;
+  onSubmit: (packIds: Array<string>) => void;
 }) {
   const initialSelected = useMemo(
     () => new Set(book.packs.map((p) => p.id)),

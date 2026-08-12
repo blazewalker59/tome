@@ -1,10 +1,13 @@
-import { useState, useMemo } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { motion, type PanInfo } from "motion/react";
+import { useMemo, useState } from "react";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { motion } from "motion/react";
 import { Sparkles } from "lucide-react";
-import { getRipPacksFn, getShardBalanceFn, type PackSummary } from "@/server/collection";
-import { listPublicPacksFn, type PublicPackSummary } from "@/server/user-packs";
-import { packGradient, packBoxShadow } from "@/lib/packs/gradient";
+import type { PanInfo } from "motion/react";
+import type { PackSummary } from "@/server/collection";
+import type { PublicPackSummary } from "@/server/user-packs";
+import { getRipPacksFn, getShardBalanceFn } from "@/server/collection";
+import { listPublicPacksFn } from "@/server/user-packs";
+import { packBoxShadow, packGradient } from "@/lib/packs/gradient";
 
 /**
  * /rip — rip hub.
@@ -66,8 +69,7 @@ const MIN_SLOTS = 3;
 // Editorial slot: real packs from `getRipPacksFn`, padded with
 // placeholders to MIN_SLOTS.
 type EditorialSlot =
-  | { kind: "pack"; pack: PackSummary }
-  | { kind: "placeholder"; id: string };
+  { kind: "pack"; pack: PackSummary } | { kind: "placeholder"; id: string };
 
 // Community slot: real public user packs, or placeholders when the
 // section is empty. Carries the creator's username so the centered
@@ -91,7 +93,7 @@ function RipPickerPage() {
   // Editorial slots = real packs + placeholders padded to MIN_SLOTS.
   // Stable ids on placeholders so motion layout effects have a key
   // to track.
-  const editorialSlots = useMemo<EditorialSlot[]>(() => {
+  const editorialSlots = useMemo<Array<EditorialSlot>>(() => {
     const real = packs.map<EditorialSlot>((pack) => ({ kind: "pack", pack }));
     const padded = [...real];
     let i = 0;
@@ -106,14 +108,17 @@ function RipPickerPage() {
   // (matches the original "design slot is real" intent). When real
   // packs are present we still pad to MIN_SLOTS so a single pack
   // doesn't sit alone on the stage with no peek-in neighbours.
-  const communitySlots = useMemo<CommunitySlot[]>(() => {
+  const communitySlots = useMemo<Array<CommunitySlot>>(() => {
     if (communityPacks.length === 0) {
       return Array.from({ length: 5 }, (_, i) => ({
         kind: "placeholder",
         id: `community-${i}`,
       }));
     }
-    const real = communityPacks.map<CommunitySlot>((pack) => ({ kind: "pack", pack }));
+    const real = communityPacks.map<CommunitySlot>((pack) => ({
+      kind: "pack",
+      pack,
+    }));
     const padded = [...real];
     let i = 0;
     while (padded.length < MIN_SLOTS) {
@@ -136,171 +141,184 @@ function RipPickerPage() {
       <div className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div className="page-wrap space-y-8 px-4 pb-10 pt-6 sm:space-y-10 sm:pt-10">
           <header className="text-center">
-        {/* Single h1 — dropped the "Rip a pack" kicker because it just
+            {/* Single h1 — dropped the "Rip a pack" kicker because it just
             restated what the h1 already says. "Choose your pack" is
             the action, that's all the framing the page needs. */}
-        <h1 className="display-title text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
-          Choose your pack
-        </h1>
-        {shards !== null && (
-          // "Balance" reads as a spendable currency amount without
-          // needing a verb. Icon matches the profile dropdown +
-          // /rip/$slug header so the glyph consistently means shards.
-          <p className="mt-1 inline-flex items-center justify-center gap-1.5 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
-            Balance
-            <span className="inline-flex items-center gap-1 tabular-nums text-[var(--sea-ink)]">
-              {shards}
-              <Sparkles aria-hidden className="h-3.5 w-3.5 text-[var(--lagoon)]" />
-            </span>
-          </p>
-        )}
-      </header>
-
-      {/* ----- Editor's picks ----- */}
-      <section aria-labelledby="rip-editorial-heading">
-        <SectionHeading id="rip-editorial-heading" kicker="Curated by Tome">
-          Editor&rsquo;s picks
-        </SectionHeading>
-
-        <PackCarousel
-          slots={editorialSlots}
-          // Tapping the active pack opens the tear-flow. Tapping a
-          // neighbour just selects it (handled internally by
-          // PackCarousel — this callback only fires on active taps).
-          onActivate={(slot) => {
-            if (slot.kind !== "pack") return;
-            navigate({ to: "/rip/$slug", params: { slug: slot.pack.slug } });
-          }}
-          renderMetadata={(slot) =>
-            slot.kind === "pack" ? (
-              <>
-                <h3 className="text-base font-semibold text-[var(--sea-ink)]">
-                  {slot.pack.name}
-                </h3>
-                {slot.pack.description && (
-                  <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
-                    {slot.pack.description}
-                  </p>
-                )}
-                <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
-                  {slot.pack.bookCount} books sealed
-                </p>
-                <Link
-                  to="/rip/$slug"
-                  params={{ slug: slot.pack.slug }}
-                  className="btn-primary mt-3 inline-flex w-full max-w-[320px] items-center justify-center rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
-                >
-                  Open pack
-                </Link>
-              </>
-            ) : (
-              <p className="text-xs uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
-                More packs coming soon
+            <h1 className="display-title text-xl font-bold text-[var(--sea-ink)] sm:text-2xl">
+              Choose your pack
+            </h1>
+            {shards !== null && (
+              // "Balance" reads as a spendable currency amount without
+              // needing a verb. Icon matches the profile dropdown +
+              // /rip/$slug header so the glyph consistently means shards.
+              <p className="mt-1 inline-flex items-center justify-center gap-1.5 text-[11px] uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+                Balance
+                <span className="inline-flex items-center gap-1 tabular-nums text-[var(--sea-ink)]">
+                  {shards}
+                  <Sparkles
+                    aria-hidden
+                    className="h-3.5 w-3.5 text-[var(--lagoon)]"
+                  />
+                </span>
               </p>
-            )
-          }
-        />
-      </section>
+            )}
+          </header>
 
-      {/* ----- Recently shared by community ----- */}
-      <section aria-labelledby="rip-community-heading">
-        <SectionHeading
-          id="rip-community-heading"
-          kicker={communityPacks.length === 0 ? "Coming soon" : "Trending this week"}
-        >
-          Recently shared by community
-        </SectionHeading>
+          {/* ----- Editor's picks ----- */}
+          <section aria-labelledby="rip-editorial-heading">
+            <SectionHeading id="rip-editorial-heading" kicker="Curated by Tome">
+              Editor&rsquo;s picks
+            </SectionHeading>
 
-        {/* Same carousel, smaller stage so it visually subordinates
+            <PackCarousel
+              slots={editorialSlots}
+              // Tapping the active pack opens the tear-flow. Tapping a
+              // neighbour just selects it (handled internally by
+              // PackCarousel — this callback only fires on active taps).
+              onActivate={(slot) => {
+                if (slot.kind !== "pack") return;
+                navigate({
+                  to: "/rip/$slug",
+                  params: { slug: slot.pack.slug },
+                });
+              }}
+              renderMetadata={(slot) =>
+                slot.kind === "pack" ? (
+                  <>
+                    <h3 className="text-base font-semibold text-[var(--sea-ink)]">
+                      {slot.pack.name}
+                    </h3>
+                    {slot.pack.description && (
+                      <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+                        {slot.pack.description}
+                      </p>
+                    )}
+                    <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
+                      {slot.pack.bookCount} books sealed
+                    </p>
+                    <Link
+                      to="/rip/$slug"
+                      params={{ slug: slot.pack.slug }}
+                      className="btn-primary mt-3 inline-flex w-full max-w-[320px] items-center justify-center rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
+                    >
+                      Open pack
+                    </Link>
+                  </>
+                ) : (
+                  <p className="text-xs uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
+                    More packs coming soon
+                  </p>
+                )
+              }
+            />
+          </section>
+
+          {/* ----- Recently shared by community ----- */}
+          <section aria-labelledby="rip-community-heading">
+            <SectionHeading
+              id="rip-community-heading"
+              kicker={
+                communityPacks.length === 0
+                  ? "Coming soon"
+                  : "Trending this week"
+              }
+            >
+              Recently shared by community
+            </SectionHeading>
+
+            {/* Same carousel, smaller stage so it visually subordinates
             to editorial without losing the peek-in framing. When real
             community packs exist, tapping the centered tile opens the
             public pack page (`/u/$username/$slug`) — the rip flow
             from there mirrors editorial. The section's metadata
             renderer surfaces creator attribution + a "🔥 N rips" chip
             so the trending signal isn't invisible. */}
-        <PackCarousel
-          slots={communitySlots}
-          stageHeight="clamp(300px, 44vh, 380px)"
-          tileWidth="min(48vw, 180px)"
-          onActivate={(slot) => {
-            if (slot.kind !== "pack") return;
-            // Only community slots have a `creator`; the type guard
-            // narrows via the field's presence rather than a tag so
-            // the carousel stays generic over both pack shapes.
-            const pack = slot.pack;
-            if (!("creator" in pack)) return;
-            navigate({
-              to: "/u/$username/$slug",
-              params: { username: pack.creator.username, slug: pack.slug },
-            });
-          }}
-          renderMetadata={(slot) => {
-            if (slot.kind !== "pack") {
-              // Empty-state copy stays close to the placeholder
-              // tiles so the section reads as "nothing yet, but
-              // here's how to fill it".
-              return (
-                <p className="text-xs uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
-                  Be the first to share a pack
-                </p>
-              );
-            }
-            const pack = slot.pack;
-            // The community section only ever renders PublicPackSummary
-            // shapes (or placeholders), so the `creator` field is
-            // guaranteed when `kind === "pack"`. Editorial summaries
-            // never reach this renderer.
-            if (!("creator" in pack)) return null;
-            return (
-              <>
-                <h3 className="text-base font-semibold text-[var(--sea-ink)]">
-                  {pack.name}
-                </h3>
-                <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
-                  by{" "}
-                  <Link
-                    to="/u/$username"
-                    params={{ username: pack.creator.username }}
-                    className="font-medium text-[var(--sea-ink)] underline decoration-dotted underline-offset-2"
-                  >
-                    @{pack.creator.username}
-                  </Link>
-                  {pack.ripsThisWeek > 0 && (
-                    <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--lagoon)_18%,transparent)] px-2 py-[1px] text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink)]">
-                      🔥 {pack.ripsThisWeek} rip
-                      {pack.ripsThisWeek === 1 ? "" : "s"} this week
-                    </span>
-                  )}
-                </p>
-                <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
-                  {pack.bookCount} books sealed
-                </p>
-                <Link
-                  to="/u/$username/$slug"
-                  params={{ username: pack.creator.username, slug: pack.slug }}
-                  className="btn-primary mt-3 inline-flex w-full max-w-[320px] items-center justify-center rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
-                >
-                  Open pack
-                </Link>
-              </>
-            );
-          }}
-        />
+            <PackCarousel
+              slots={communitySlots}
+              stageHeight="clamp(300px, 44vh, 380px)"
+              tileWidth="min(48vw, 180px)"
+              onActivate={(slot) => {
+                if (slot.kind !== "pack") return;
+                // Only community slots have a `creator`; the type guard
+                // narrows via the field's presence rather than a tag so
+                // the carousel stays generic over both pack shapes.
+                const pack = slot.pack;
+                if (!("creator" in pack)) return;
+                navigate({
+                  to: "/u/$username/$slug",
+                  params: { username: pack.creator.username, slug: pack.slug },
+                });
+              }}
+              renderMetadata={(slot) => {
+                if (slot.kind !== "pack") {
+                  // Empty-state copy stays close to the placeholder
+                  // tiles so the section reads as "nothing yet, but
+                  // here's how to fill it".
+                  return (
+                    <p className="text-xs uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
+                      Be the first to share a pack
+                    </p>
+                  );
+                }
+                const pack = slot.pack;
+                // The community section only ever renders PublicPackSummary
+                // shapes (or placeholders), so the `creator` field is
+                // guaranteed when `kind === "pack"`. Editorial summaries
+                // never reach this renderer.
+                if (!("creator" in pack)) return null;
+                return (
+                  <>
+                    <h3 className="text-base font-semibold text-[var(--sea-ink)]">
+                      {pack.name}
+                    </h3>
+                    <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+                      by{" "}
+                      <Link
+                        to="/u/$username"
+                        params={{ username: pack.creator.username }}
+                        className="font-medium text-[var(--sea-ink)] underline decoration-dotted underline-offset-2"
+                      >
+                        @{pack.creator.username}
+                      </Link>
+                      {pack.ripsThisWeek > 0 && (
+                        <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--lagoon)_18%,transparent)] px-2 py-[1px] text-[10px] uppercase tracking-[0.14em] text-[var(--sea-ink)]">
+                          🔥 {pack.ripsThisWeek} rip
+                          {pack.ripsThisWeek === 1 ? "" : "s"} this week
+                        </span>
+                      )}
+                    </p>
+                    <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
+                      {pack.bookCount} books sealed
+                    </p>
+                    <Link
+                      to="/u/$username/$slug"
+                      params={{
+                        username: pack.creator.username,
+                        slug: pack.slug,
+                      }}
+                      className="btn-primary mt-3 inline-flex w-full max-w-[320px] items-center justify-center rounded-full px-6 py-3 text-sm uppercase tracking-[0.16em] sm:w-auto"
+                    >
+                      Open pack
+                    </Link>
+                  </>
+                );
+              }}
+            />
 
-        <p className="mt-4 text-center text-xs text-[var(--sea-ink-soft)]">
-          {communityPacks.length === 0
-            ? "User-built packs will land here as creators publish them."
-            : "More on the way."}{" "}
-          Want to make one?{" "}
-          <Link
-            to="/packs/new"
-            className="font-medium text-[var(--sea-ink)] underline decoration-dotted underline-offset-2"
-          >
-            Start building
-          </Link>
-          .
-        </p>
-        </section>
+            <p className="mt-4 text-center text-xs text-[var(--sea-ink-soft)]">
+              {communityPacks.length === 0
+                ? "User-built packs will land here as creators publish them."
+                : "More on the way."}{" "}
+              Want to make one?{" "}
+              <Link
+                to="/packs/new"
+                className="font-medium text-[var(--sea-ink)] underline decoration-dotted underline-offset-2"
+              >
+                Start building
+              </Link>
+              .
+            </p>
+          </section>
         </div>
       </div>
     </main>
@@ -354,7 +372,7 @@ function SectionHeading({
 // center.
 
 interface PackCarouselProps {
-  slots: Slot[];
+  slots: Array<Slot>;
   /**
    * Called when the centered slot is tapped. Receives the slot so the
    * parent can branch on `kind` — placeholder taps are surfaced too,
@@ -506,7 +524,12 @@ interface PackCarouselItemProps {
  * elements avoids that race and also sidesteps the `disabled`-
  * attribute-flipping-mid-click issue on far-off slots.
  */
-function PackCarouselItem({ slot, offset, tileWidth, onClick }: PackCarouselItemProps) {
+function PackCarouselItem({
+  slot,
+  offset,
+  tileWidth,
+  onClick,
+}: PackCarouselItemProps) {
   // Neighboring packs sit ~55% of their own width away from center,
   // with aggressive scale falloff so 2+ steps away fade almost to
   // nothing. Keeps the composition readable at small screen widths
@@ -604,7 +627,10 @@ function PackPreview({
   pack,
   active,
 }: {
-  pack: Pick<PackSummary, "slug" | "name" | "bookCount" | "coverImageUrl" | "genreTags">;
+  pack: Pick<
+    PackSummary,
+    "slug" | "name" | "bookCount" | "coverImageUrl" | "genreTags"
+  >;
   active: boolean;
 }) {
   const gradient = packGradient(pack.slug, pack.genreTags);
@@ -682,7 +708,9 @@ function PackPreview({
 
       <div className="relative flex h-full flex-col items-center justify-end p-5 text-center text-[var(--on-accent)]">
         <div>
-          <h3 className="display-title text-lg font-bold leading-tight">{pack.name}</h3>
+          <h3 className="display-title text-lg font-bold leading-tight">
+            {pack.name}
+          </h3>
           <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-[var(--on-accent)]/70">
             {pack.bookCount} books · sealed
           </p>
@@ -703,11 +731,14 @@ function PackPlaceholder() {
     <div
       className="flex h-full w-full items-center justify-center rounded-2xl border-2 border-dashed text-center text-[var(--sea-ink-soft)]"
       style={{
-        borderColor: "color-mix(in oklab, var(--sea-ink-soft) 60%, transparent)",
+        borderColor:
+          "color-mix(in oklab, var(--sea-ink-soft) 60%, transparent)",
         background: "color-mix(in oklab, var(--surface) 40%, transparent)",
       }}
     >
-      <p className="px-4 text-[10px] uppercase tracking-[0.18em]">Coming soon</p>
+      <p className="px-4 text-[10px] uppercase tracking-[0.18em]">
+        Coming soon
+      </p>
     </div>
   );
 }

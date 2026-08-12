@@ -1,24 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  createFileRoute,
   Link,
+  createFileRoute,
   redirect,
   useRouter,
 } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
 
+import type {
+  LocalSearchHit,
+  ReadingEntry,
+  ReadingHardcoverHit,
+  ReadingStatus,
+} from "@/server/reading";
 import { getMeFn } from "@/server/admin";
 import {
+  LOCAL_SPARSE_THRESHOLD,
   ingestHardcoverForReadingLogFn,
   listReadingEntriesFn,
-  LOCAL_SPARSE_THRESHOLD,
   searchForReadingLogFn,
   searchHardcoverForReadingLogFn,
   upsertReadingEntryFn,
-  type LocalSearchHit,
-  type ReadingEntry,
-  type ReadingHardcoverHit,
-  type ReadingStatus,
 } from "@/server/reading";
 import { useToast } from "@/components/Toast";
 import { CoverImage } from "@/components/CoverImage";
@@ -87,7 +89,7 @@ function ReadingListPage() {
   }, []);
 
   const grouped = useMemo(() => {
-    const by = new Map<TabKey, ReadingEntry[]>();
+    const by = new Map<TabKey, Array<ReadingEntry>>();
     for (const t of TABS) by.set(t.key, []);
     for (const e of entries) by.get(e.status as TabKey)?.push(e);
     return by;
@@ -105,9 +107,9 @@ function ReadingListPage() {
           start/finish. */}
       <header>
         <p className="max-w-2xl text-sm text-[var(--sea-ink-soft)]">
-          Shelf any book here to earn shards when you start and finish
-          it — pack ownership not required. Search pulls in your
-          catalog first, then Hardcover.
+          Shelf any book here to earn shards when you start and finish it — pack
+          ownership not required. Search pulls in your catalog first, then
+          Hardcover.
         </p>
       </header>
 
@@ -275,8 +277,8 @@ function LogSearchPanel({
 }) {
   const toast = useToast();
   const [query, setQuery] = useState("");
-  const [local, setLocal] = useState<LocalSearchHit[]>([]);
-  const [hardcover, setHardcover] = useState<ReadingHardcoverHit[]>([]);
+  const [local, setLocal] = useState<Array<LocalSearchHit>>([]);
+  const [hardcover, setHardcover] = useState<Array<ReadingHardcoverHit>>([]);
   const [searchingLocal, setSearchingLocal] = useState(false);
   const [searchingHardcover, setSearchingHardcover] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -331,9 +333,7 @@ function LogSearchPanel({
           } catch (err) {
             if (!cancelled) {
               setHardcoverError(
-                err instanceof Error
-                  ? err.message
-                  : "Hardcover search failed",
+                err instanceof Error ? err.message : "Hardcover search failed",
               );
               setHardcover([]);
             }
@@ -410,10 +410,7 @@ function LogSearchPanel({
     }
   };
 
-  const logHardcover = async (
-    hardcoverId: number,
-    status: ReadingStatus,
-  ) => {
+  const logHardcover = async (hardcoverId: number, status: ReadingStatus) => {
     setBusyHardcoverId(hardcoverId);
     try {
       // Two-step: ingest to get a local bookId, then upsert the
@@ -532,9 +529,7 @@ function LogSearchPanel({
           })}
         </ul>
       )}
-      {(searchingHardcover ||
-        hardcover.length > 0 ||
-        hardcoverError) && (
+      {(searchingHardcover || hardcover.length > 0 || hardcoverError) && (
         <div className="mt-5">
           <button
             type="button"

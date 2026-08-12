@@ -1,8 +1,8 @@
 import { Gem } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { RARITY_STYLES } from "@/lib/cards/style";
 import type { Rarity } from "@/lib/cards/types";
+import { RARITY_STYLES } from "@/lib/cards/style";
 
 /**
  * Canonical display order for rarity rows, ascending from most common
@@ -75,7 +75,9 @@ export function RarityGemRow(props: RarityGemRowProps) {
   // stacking context that traps absolutely-positioned children behind
   // subsequent sibling cards — rendering the popover through a portal
   // to document.body sidesteps the trap entirely.
-  const buttonRefs = useRef<Partial<Record<Rarity, HTMLButtonElement | null>>>({});
+  const buttonRefs = useRef<Partial<Record<Rarity, HTMLButtonElement | null>>>(
+    {},
+  );
 
   // Close on outside click / Escape. The listeners are only attached
   // while a popover is open so we're not paying for them on every
@@ -88,7 +90,10 @@ export function RarityGemRow(props: RarityGemRowProps) {
     const onDocClick = (e: MouseEvent) => {
       const target = e.target as Node;
       if (containerRef.current?.contains(target)) return;
-      if (target instanceof Element && target.closest("[data-rarity-popover]")) {
+      if (
+        target instanceof Element &&
+        target.closest("[data-rarity-popover]")
+      ) {
         return;
       }
       setOpenRarity(null);
@@ -127,7 +132,11 @@ export function RarityGemRow(props: RarityGemRowProps) {
         // it doesn't clip off-screen on narrow viewports. Middle
         // three stay centered under their gem.
         const align: "start" | "center" | "end" =
-          idx === 0 ? "start" : idx === ALL_RARITIES.length - 1 ? "end" : "center";
+          idx === 0
+            ? "start"
+            : idx === ALL_RARITIES.length - 1
+              ? "end"
+              : "center";
 
         return (
           <li
@@ -145,8 +154,19 @@ export function RarityGemRow(props: RarityGemRowProps) {
               aria-label={ariaLabel(style.label, props.mode, value, total)}
               className="flex flex-col items-center gap-1 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lagoon)]"
             >
-              <GemBadge rarity={r} hasAny={hasAny} pct={pct} mode={props.mode} />
-              <GemLabel rarity={r} mode={props.mode} value={value} total={total} hasAny={hasAny} />
+              <GemBadge
+                rarity={r}
+                hasAny={hasAny}
+                pct={pct}
+                mode={props.mode}
+              />
+              <GemLabel
+                rarity={r}
+                mode={props.mode}
+                value={value}
+                total={total}
+                hasAny={hasAny}
+              />
             </button>
 
             {open && (
@@ -278,7 +298,9 @@ function GemLabel({
   if (mode === "progress" && total !== null) {
     return (
       <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--sea-ink-soft)] tabular-nums">
-        <span className={hasAny ? "text-[var(--sea-ink)]" : undefined}>{value}</span>
+        <span className={hasAny ? "text-[var(--sea-ink)]" : undefined}>
+          {value}
+        </span>
         <span aria-hidden>/</span>
         {total}
       </span>
@@ -286,7 +308,9 @@ function GemLabel({
   }
   return (
     <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--sea-ink-soft)] tabular-nums">
-      <span className={hasAny ? "text-[var(--sea-ink)]" : undefined}>{value}</span>
+      <span className={hasAny ? "text-[var(--sea-ink)]" : undefined}>
+        {value}
+      </span>
       <span className="sr-only"> {RARITY_STYLES[rarity].label}</span>
     </span>
   );
@@ -359,9 +383,11 @@ function RarityPopover({
   const GAP = 8; // mt-2 ≈ 8px between anchor and popover
   const ANCHOR_PAD = 12; // horizontal offset used by start/end alignment
 
-  const [pos, setPos] = useState<{ top: number; left: number; arrowLeft: number } | null>(
-    null,
-  );
+  const [pos, setPos] = useState<{
+    top: number;
+    left: number;
+    arrowLeft: number;
+  } | null>(null);
 
   // useLayoutEffect so the first paint already has the computed
   // position — otherwise the popover would flash at top:0,left:0 for
@@ -387,7 +413,10 @@ function RarityPopover({
     // (very narrow screens, tight edge gems).
     const margin = 8;
     const maxLeft = window.innerWidth - POPOVER_W - margin;
-    const clampedLeft = Math.min(Math.max(left, margin), Math.max(margin, maxLeft));
+    const clampedLeft = Math.min(
+      Math.max(left, margin),
+      Math.max(margin, maxLeft),
+    );
     // When the popover is clamped, adjust the arrow so it still
     // points at the gem's center.
     arrowLeft += left - clampedLeft;
@@ -424,9 +453,13 @@ function RarityPopover({
           fillOpacity={0.25}
         />
         <p className="text-sm font-bold text-[var(--sea-ink)]">{label}</p>
-        <p className="ml-auto text-[11px] font-semibold text-[var(--sea-ink-soft)]">{body}</p>
+        <p className="ml-auto text-[11px] font-semibold text-[var(--sea-ink-soft)]">
+          {body}
+        </p>
       </div>
-      <p className="mt-2 text-xs leading-relaxed text-[var(--sea-ink-soft)]">{blurb}</p>
+      <p className="mt-2 text-xs leading-relaxed text-[var(--sea-ink-soft)]">
+        {blurb}
+      </p>
     </div>,
     document.body,
   );

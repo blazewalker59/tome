@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 
+import type { Rarity } from "@/lib/cards/rarity";
+import type { AdminPackDetail } from "@/server/catalog";
 import { AdminForbidden } from "@/components/AdminForbidden";
 import { BookSearchPanel } from "@/components/builder/BookSearchPanel";
 import { CoverImage } from "@/components/CoverImage";
-import type { Rarity } from "@/lib/cards/rarity";
 import { checkAdminFn } from "@/server/admin";
 import {
   addBookToPackFn,
@@ -13,7 +14,6 @@ import {
   removeBookFromPackFn,
   updateBookRarityFn,
   updatePackFn,
-  type AdminPackDetail,
 } from "@/server/catalog";
 
 // Mirror of `RARITY_VALUES` in src/server/catalog.ts. Kept as a local
@@ -86,10 +86,11 @@ function PackWorkspace({ slug }: { slug: string }) {
         await removeBookFromPackFn({ data: { packId: pack.id, bookId } });
         // Optimistic removal so the row disappears instantly.
         setPack((prev) =>
-          prev ? { ...prev, books: prev.books.filter((b) => b.id !== bookId) } : prev,
+          prev
+            ? { ...prev, books: prev.books.filter((b) => b.id !== bookId) }
+            : prev,
         );
       } catch (err) {
-        // eslint-disable-next-line no-alert
         alert(err instanceof Error ? err.message : "Failed to remove");
         await reload();
       }
@@ -118,7 +119,6 @@ function PackWorkspace({ slug }: { slug: string }) {
       try {
         await updateBookRarityFn({ data: { bookId, rarity } });
       } catch (err) {
-        // eslint-disable-next-line no-alert
         alert(err instanceof Error ? err.message : "Failed to update rarity");
         // Revert the optimistic patch.
         if (prior !== undefined) {
@@ -183,7 +183,8 @@ function PackWorkspace({ slug }: { slug: string }) {
           {pack.name}
         </h1>
         <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-[var(--sea-ink-soft)]">
-          {pack.creatorId === null ? "editorial" : "user"} · {pack.books.length} books
+          {pack.creatorId === null ? "editorial" : "user"} · {pack.books.length}{" "}
+          books
           {pack.genreTags.length > 0 && <> · {pack.genreTags.join(", ")}</>}
         </p>
       </header>
@@ -292,7 +293,13 @@ function PackDetailsForm({
     setDescription(pack.description ?? "");
     setCoverImageUrl(pack.coverImageUrl ?? "");
     setGenreTagsRaw(pack.genreTags.join(", "));
-  }, [pack.id, pack.name, pack.description, pack.coverImageUrl, pack.genreTags]);
+  }, [
+    pack.id,
+    pack.name,
+    pack.description,
+    pack.coverImageUrl,
+    pack.genreTags,
+  ]);
 
   // Parse the comma-separated tag input into a normalized array. We do
   // this on every render (cheap; ≤3 tags) so the dirty-check has the
@@ -365,7 +372,10 @@ function PackDetailsForm({
         onSubmit={onSubmit}
         className="island-shell grid gap-4 rounded-3xl p-5 lg:grid-cols-2"
       >
-        <Field label="Slug" hint="Read-only. Slugs anchor public URLs and rip history.">
+        <Field
+          label="Slug"
+          hint="Read-only. Slugs anchor public URLs and rip history."
+        >
           <input
             type="text"
             value={pack.slug}
@@ -539,7 +549,6 @@ function MembersColumn({
   );
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Field — small label/input wrapper used by the details form
 // ─────────────────────────────────────────────────────────────────────────────
@@ -565,7 +574,9 @@ function Field({
     <label className="block">
       <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
         {label}
-        {required && <span className="ml-1 text-[color:var(--rarity-legendary)]">*</span>}
+        {required && (
+          <span className="ml-1 text-[color:var(--rarity-legendary)]">*</span>
+        )}
       </span>
       {children}
       {hint && (

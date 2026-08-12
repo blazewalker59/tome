@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+bun.lock
+public
+drizzle
+scripts/migration-data
+src/routeTree.gen.ts
+.output
+.wrangler
+*.md

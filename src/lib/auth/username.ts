@@ -19,16 +19,17 @@
  * dashes removed) and retry once. If THAT is somehow also taken we fall
  * through to the raw 8-char uuid prefix which is effectively unique.
  */
-import type { NeonDatabase } from "drizzle-orm/neon-serverless";
 import { eq } from "drizzle-orm";
+import type { Database as DB } from "@/db/client";
 import * as schema from "@/db/schema";
-
-type DB = NeonDatabase<typeof schema>;
 
 const USERNAME_RE = /[^a-z0-9_-]+/g;
 
 function normalise(raw: string): string {
-  const slug = raw.toLowerCase().replace(USERNAME_RE, "-").replace(/^-+|-+$/g, "");
+  const slug = raw
+    .toLowerCase()
+    .replace(USERNAME_RE, "-")
+    .replace(/^-+|-+$/g, "");
   return slug;
 }
 
@@ -52,7 +53,8 @@ export async function deriveUsername(
 
   const raw =
     (typeof profile.username === "string" && profile.username) ||
-    (typeof profile.preferred_username === "string" && profile.preferred_username) ||
+    (typeof profile.preferred_username === "string" &&
+      profile.preferred_username) ||
     emailLocal ||
     uuidChunk(input.id, 8);
 

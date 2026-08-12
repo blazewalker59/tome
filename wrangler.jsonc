@@ -1,0 +1,90 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Single source-of-truth Wrangler config. The @cloudflare/vite-plugin reads
+  // this for dev + `vite build` (which requires `main` to point at the source
+  // entry). The CI deploy passes the built bundle positionally:
+  //
+  //   wrangler deploy dist/server/index.js --config wrangler.jsonc --env production
+  //
+  // which overrides `main`, so this one file drives dev, build, and deploy.
+  //
+  // This replaces the previous setup, where Nitro generated a wrangler.json
+  // into .output/ and a .wrangler/deploy/config.json redirect pointed wrangler
+  // at it. That generated config could not carry a D1 binding, which is why
+  // the move to D1 required moving to a checked-in config.
+  "name": "tome",
+  // nodejs_compat is still required: Better Auth and Drizzle both reach for
+  // node builtins (crypto, async_hooks). The date is bumped from the old
+  // 2025-03-15 because that value was chosen for Neon's TCP-socket support,
+  // which D1 does not need.
+  "compatibility_date": "2025-01-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./src/server.ts",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+  },
+  // Plain (non-secret) config. `vars` and secrets both land on the same `env`
+  // object that src/lib/env.ts reads, so moving a value between them needs no
+  // code change.
+  //
+  // BETTER_AUTH_URL lives here rather than in `wrangler secret put` because it
+  // is not a secret — it is the site's own address, visible in the browser and
+  // registered as a redirect URI in Google Cloud Console. Declaring it makes
+  // the per-environment value reviewable instead of invisible out-of-band
+  // state. Better Auth uses it as `baseURL`: the canonical origin it builds the
+  // Google OAuth callback from and checks CSRF against.
+  //
+  // This top-level value is the dev default (vite dev serves on :3000);
+  // `.dev.vars` still overrides it if you need something else locally.
+  //
+  // NOTE: a secret SHADOWS a var of the same name. If BETTER_AUTH_URL ever
+  // reappears in `wrangler secret list`, the secret wins and edits here will
+  // look like they do nothing.
+  "vars": {
+    "BETTER_AUTH_URL": "http://localhost:3000",
+  },
+  // Static assets from the vite client build (used at deploy time).
+  "assets": {
+    "directory": "./dist/client",
+  },
+  "d1_databases": [
+    {
+      // Binding name is deliberately `DB`, not wrangler's suggested
+      // `tome_db` — src/db/client.ts reads env.DB.
+      "binding": "DB",
+      "database_name": "tome-db",
+      "database_id": "9974d01e-6ed2-4369-a81c-fbf34d195f0a",
+      "migrations_dir": "drizzle",
+    },
+  ],
+  // Bindings are NOT inherited into named environments, so production repeats
+  // them. There is no staging environment: merges to main deploy to production.
+  "env": {
+    "production": {
+      "name": "tome",
+      "workers_dev": true,
+      "observability": {
+        "enabled": true,
+      },
+      // Not inherited from the top level — named environments get their own
+      // `vars` or none at all, so production restates the canonical origin.
+      // Must stay in sync with the Google Cloud Console redirect URI
+      // `https://tome.blazewalker59.workers.dev/api/auth/callback/google`.
+      "vars": {
+        "BETTER_AUTH_URL": "https://tome.blazewalker59.workers.dev",
+      },
+      "assets": {
+        "directory": "./dist/client",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "tome-db",
+          "database_id": "9974d01e-6ed2-4369-a81c-fbf34d195f0a",
+          "migrations_dir": "drizzle",
+        },
+      ],
+    },
+  },
+}

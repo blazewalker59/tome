@@ -62,21 +62,21 @@ export function pullPack({
   pool,
   count = DEFAULT_PULL_COUNT,
   rng = Math.random,
-}: PullPackOptions): PullResult[] {
+}: PullPackOptions): Array<PullResult> {
   if (pool.length === 0) {
     throw new Error("pullPack: pool must contain at least one entry");
   }
   if (count <= 0) return [];
 
   // Cumulative-weight table for O(log n) sampling per pull.
-  const cumulative: number[] = Array.from({ length: pool.length });
+  const cumulative: Array<number> = Array.from({ length: pool.length });
   let total = 0;
   for (let i = 0; i < pool.length; i++) {
     total += PULL_WEIGHTS[pool[i].rarity];
     cumulative[i] = total;
   }
 
-  const pulls: PullResult[] = [];
+  const pulls: Array<PullResult> = [];
   for (let i = 0; i < count; i++) {
     const target = rng() * total;
     const idx = lowerBound(cumulative, target);
@@ -102,11 +102,11 @@ function lowerBound(arr: ReadonlyArray<number>, target: number): number {
 }
 
 export interface RipOutcome {
-  pulls: PullResult[];
+  pulls: Array<PullResult>;
   /** Pulls the user did not already own (deduplicated within this rip). */
-  newCards: PullResult[];
+  newCards: Array<PullResult>;
   /** Pulls that collapsed into shards (already owned, or repeated in-rip). */
-  duplicates: PullResult[];
+  duplicates: Array<PullResult>;
   /** Total shards earned from `duplicates`. */
   shardsEarned: number;
 }
@@ -129,14 +129,15 @@ export function applyRip({
   ownedBookIds,
   shardsPerDupe,
 }: ApplyRipOptions): RipOutcome {
-  const newCards: PullResult[] = [];
-  const duplicates: PullResult[] = [];
+  const newCards: Array<PullResult> = [];
+  const duplicates: Array<PullResult> = [];
   // Track books gained DURING this rip so a second copy in the same pack
   // collapses to shards too.
   const gainedThisRip = new Set<string>();
 
   for (const pull of pulls) {
-    const alreadyOwned = ownedBookIds.has(pull.bookId) || gainedThisRip.has(pull.bookId);
+    const alreadyOwned =
+      ownedBookIds.has(pull.bookId) || gainedThisRip.has(pull.bookId);
     if (alreadyOwned) {
       duplicates.push(pull);
     } else {

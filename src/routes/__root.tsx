@@ -1,4 +1,9 @@
-import { HeadContent, Link, Scripts, createRootRoute } from "@tanstack/react-router";
+import {
+  HeadContent,
+  Link,
+  Scripts,
+  createRootRoute,
+} from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import BottomTabs from "../components/BottomTabs";
@@ -100,7 +105,8 @@ function NotFound() {
           This page isn&rsquo;t in the library
         </h1>
         <p className="mt-3 text-sm text-[var(--sea-ink-soft)]">
-          The URL you followed doesn&rsquo;t match any route. Head back home or rip a pack.
+          The URL you followed doesn&rsquo;t match any route. Head back home or
+          rip a pack.
         </p>
         <div className="mt-6 flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
           <Link

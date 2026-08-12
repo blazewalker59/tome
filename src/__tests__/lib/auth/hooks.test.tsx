@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook, act, waitFor } from "@test/utils";
+import { act, renderHook, waitFor } from "@test/utils";
+import type * as ReactModule from "react";
+
+import {
+  signOut as authSignOut,
+  signInWithGoogle,
+  useAuth,
+  useIsAdmin,
+  useUser,
+} from "@/lib/auth/hooks";
 
 /**
  * Auth hooks test.
@@ -18,7 +27,10 @@ import { renderHook, act, waitFor } from "@test/utils";
  */
 
 type MockSession = {
-  data: { user: Record<string, unknown>; session: Record<string, unknown> } | null;
+  data: {
+    user: Record<string, unknown>;
+    session: Record<string, unknown>;
+  } | null;
   isPending: boolean;
 };
 
@@ -30,25 +42,24 @@ const mocks = vi.hoisted(() => {
     current: { data: null, isPending: true },
   };
   const listeners = new Set<() => void>();
+  // Typed as a call signature rather than `ReturnType<typeof vi.fn>`: as of
+  // Vitest 4 the bare `Mock` type is `Mock<Procedure | Constructable>`, a
+  // union that TypeScript won't let you *call* without narrowing.
   return {
     sessionState,
     listeners,
-    signOutMock: (async () => ({ data: { success: true } })) as unknown as ReturnType<
-      typeof vi.fn
-    >,
-    signInSocialMock: (async () => ({
-      data: { url: "https://accounts.google.test/o/oauth2" },
-      error: null,
-    })) as unknown as ReturnType<typeof vi.fn>,
+    signOutMock: vi.fn<(...args: Array<unknown>) => Promise<unknown>>(),
+    signInSocialMock: vi.fn<(...args: Array<unknown>) => Promise<unknown>>(),
   };
 });
 
-// Replace the hoisted stubs with real vi.fn()s we can assert on. Mutating
-// the `mocks` object keeps the reference the mock factory already holds.
-mocks.signOutMock = vi.fn().mockResolvedValue({ data: { success: true } });
-mocks.signInSocialMock = vi
-  .fn()
-  .mockResolvedValue({ data: { url: "https://accounts.google.test/o/oauth2" }, error: null });
+// Give the hoisted mocks their default resolutions. Mutating in place (rather
+// than reassigning) keeps the reference the mock factory already closed over.
+mocks.signOutMock.mockResolvedValue({ data: { success: true } });
+mocks.signInSocialMock.mockResolvedValue({
+  data: { url: "https://accounts.google.test/o/oauth2" },
+  error: null,
+});
 
 function setSession(next: MockSession) {
   mocks.sessionState.current = next;
@@ -58,7 +69,7 @@ function setSession(next: MockSession) {
 // React-compatible `useSession` — subscribes to our in-test store so
 // `act(() => setSession(...))` re-renders components using it.
 function useSessionMock() {
-  const { useSyncExternalStore } = require("react") as typeof import("react");
+  const { useSyncExternalStore } = require("react") as typeof ReactModule;
   return useSyncExternalStore(
     (cb: () => void) => {
       mocks.listeners.add(cb);
@@ -72,11 +83,15 @@ function useSessionMock() {
 vi.mock("@/lib/auth/client", () => ({
   useSession: useSessionMock,
   authClient: {
-    signOut: (...args: unknown[]) => mocks.signOutMock(...args),
-    signIn: { social: (...args: unknown[]) => mocks.signInSocialMock(...args) },
+    signOut: (...args: Array<unknown>) => mocks.signOutMock(...args),
+    signIn: {
+      social: (...args: Array<unknown>) => mocks.signInSocialMock(...args),
+    },
   },
-  signIn: { social: (...args: unknown[]) => mocks.signInSocialMock(...args) },
-  signOut: (...args: unknown[]) => mocks.signOutMock(...args),
+  signIn: {
+    social: (...args: Array<unknown>) => mocks.signInSocialMock(...args),
+  },
+  signOut: (...args: Array<unknown>) => mocks.signOutMock(...args),
 }));
 
 // `useIsAdmin` calls `checkAdminFn` from `@/server/admin`. That module
@@ -84,18 +99,12 @@ vi.mock("@/lib/auth/client", () => ({
 // `cloudflare:workers` specifier — Vitest's vite loader chokes on that
 // resolve-time. We don't exercise the admin hook in these tests (it has
 // its own coverage), so mock the server module at the boundary.
-const checkAdminMock = vi.fn().mockResolvedValue({ signedIn: false, isAdmin: false });
+const checkAdminMock = vi
+  .fn()
+  .mockResolvedValue({ signedIn: false, isAdmin: false });
 vi.mock("@/server/admin", () => ({
-  checkAdminFn: (...args: unknown[]) => checkAdminMock(...args),
+  checkAdminFn: (...args: Array<unknown>) => checkAdminMock(...args),
 }));
-
-import {
-  signInWithGoogle,
-  signOut as authSignOut,
-  useAuth,
-  useIsAdmin,
-  useUser,
-} from "@/lib/auth/hooks";
 
 const mockUser = {
   id: "user-1",
@@ -138,7 +147,10 @@ describe("auth hooks", () => {
   it("flips to 'authenticated' when the session fetch returns a user", async () => {
     const { result } = renderHook(() => useAuth());
     act(() =>
-      setSession({ data: { user: mockUser, session: mockSession }, isPending: false }),
+      setSession({
+        data: { user: mockUser, session: mockSession },
+        isPending: false,
+      }),
     );
     await waitFor(() => expect(result.current.status).toBe("authenticated"));
     expect(result.current.user).toEqual(mockUser);
@@ -151,7 +163,10 @@ describe("auth hooks", () => {
     await waitFor(() => expect(result.current.status).toBe("anonymous"));
 
     act(() =>
-      setSession({ data: { user: mockUser, session: mockSession }, isPending: false }),
+      setSession({
+        data: { user: mockUser, session: mockSession },
+        isPending: false,
+      }),
     );
     expect(result.current.status).toBe("authenticated");
     expect(result.current.user).toEqual(mockUser);
@@ -160,7 +175,10 @@ describe("auth hooks", () => {
   it("useUser is a thin alias for the user field", async () => {
     const { result } = renderHook(() => useUser());
     act(() =>
-      setSession({ data: { user: mockUser, session: mockSession }, isPending: false }),
+      setSession({
+        data: { user: mockUser, session: mockSession },
+        isPending: false,
+      }),
     );
     await waitFor(() => expect(result.current).toEqual(mockUser));
   });
@@ -215,7 +233,10 @@ describe("useIsAdmin", () => {
     });
     const { result } = renderHook(() => useIsAdmin());
     act(() =>
-      setSession({ data: { user: mockUser, session: mockSession }, isPending: false }),
+      setSession({
+        data: { user: mockUser, session: mockSession },
+        isPending: false,
+      }),
     );
     await waitFor(() => expect(result.current).toBe(true));
     expect(checkAdminMock).toHaveBeenCalledTimes(1);
@@ -225,7 +246,10 @@ describe("useIsAdmin", () => {
     checkAdminMock.mockRejectedValueOnce(new Error("network"));
     const { result } = renderHook(() => useIsAdmin());
     act(() =>
-      setSession({ data: { user: mockUser, session: mockSession }, isPending: false }),
+      setSession({
+        data: { user: mockUser, session: mockSession },
+        isPending: false,
+      }),
     );
     await waitFor(() => expect(result.current).toBe(false));
   });

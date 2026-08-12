@@ -15,3 +15,9 @@ todos.json
 # Cloudflare Workers local dev secrets (never commit — use `wrangler
 # secret put` for production).
 .dev.vars
+
+# One-shot Neon -> D1 migration dump. Contains live session tokens, OAuth
+# access/refresh/id tokens, and password hashes — local-only, never committed.
+scripts/migration-data/
+coverage
+dist

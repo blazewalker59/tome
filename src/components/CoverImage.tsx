@@ -1,4 +1,5 @@
-import { useEffect, useState, type ImgHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useState } from "react";
+import type { ImgHTMLAttributes, ReactNode } from "react";
 
 /**
  * Renders a book cover with two failure modes collapsed into one:
@@ -24,12 +25,20 @@ import { useEffect, useState, type ImgHTMLAttributes, type ReactNode } from "rea
  * reused across list re-renders (e.g. the Hardcover search panel
  * swapping out hits) without sticking on a previous error.
  */
-export type CoverImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> & {
+export type CoverImageProps = Omit<
+  ImgHTMLAttributes<HTMLImageElement>,
+  "src"
+> & {
   src: string | null | undefined;
   fallback?: ReactNode;
 };
 
-export function CoverImage({ src, fallback = null, alt = "", ...rest }: CoverImageProps) {
+export function CoverImage({
+  src,
+  fallback = null,
+  alt = "",
+  ...rest
+}: CoverImageProps) {
   const [failed, setFailed] = useState(false);
 
   // Reset on src change. Without this, a list row that was reused for

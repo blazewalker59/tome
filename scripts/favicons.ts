@@ -42,7 +42,10 @@ async function main() {
   for (const { name, size } of sizes) {
     const out = path.join(publicDir, name);
     await sharp(svg, { density: 384 })
-      .resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .resize(size, size, {
+        fit: "contain",
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      })
       .png()
       .toFile(out);
     console.log(`wrote ${out}`);
@@ -54,7 +57,10 @@ async function main() {
   const icoPngs = await Promise.all(
     icoSizes.map((s) =>
       sharp(svg, { density: 384 })
-        .resize(s, s, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .resize(s, s, {
+          fit: "contain",
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
         .png()
         .toBuffer(),
     ),

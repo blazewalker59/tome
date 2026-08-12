@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 import { BookOpen, Layers, Upload } from "lucide-react";
 
 import { AdminForbidden } from "@/components/AdminForbidden";

@@ -45,7 +45,10 @@ function NewPackPage() {
         },
       });
       // Navigate to the edit screen — the builder flow's real surface.
-      await router.navigate({ to: "/packs/$id/edit", params: { id: result.id } });
+      await router.navigate({
+        to: "/packs/$id/edit",
+        params: { id: result.id },
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create draft");
       setSubmitting(false);
@@ -60,13 +63,16 @@ function NewPackPage() {
           Build a pack
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-[var(--sea-ink-soft)]">
-          Start a draft with a name and optional description. You can
-          add books, genre tags, and a cover on the next screen. Drafts
-          are private until you publish them.
+          Start a draft with a name and optional description. You can add books,
+          genre tags, and a cover on the next screen. Drafts are private until
+          you publish them.
         </p>
       </header>
 
-      <form onSubmit={onSubmit} className="island-shell max-w-xl space-y-5 rounded-3xl p-5">
+      <form
+        onSubmit={onSubmit}
+        className="island-shell max-w-xl space-y-5 rounded-3xl p-5"
+      >
         <label className="block">
           <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
             Name <span className="text-[color:var(--rarity-legendary)]">*</span>

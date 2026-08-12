@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  DEFAULTS,
+  _internals,
+  _resetEconomyCache,
+  getEconomy,
+} from "@/lib/economy/config";
+
 /**
  * Economy config reader tests.
  *
@@ -51,8 +58,6 @@ vi.mock("@/db/schema", () => ({
   economyConfig: { key: "key", value: "value" },
 }));
 
-import { DEFAULTS, getEconomy, _internals, _resetEconomyCache } from "@/lib/economy/config";
-
 afterEach(() => {
   _resetEconomyCache();
   selectResult = [];
@@ -81,7 +86,9 @@ describe("getEconomy", () => {
     expect(cfg.packCost).toBe(77);
     expect(cfg.welcomeGrant).toBe(10);
     // Missing keys fall back to defaults without leaking `undefined`.
-    expect(cfg.dupeRefund.shardsPerDupe).toBe(DEFAULTS.dupeRefund.shardsPerDupe);
+    expect(cfg.dupeRefund.shardsPerDupe).toBe(
+      DEFAULTS.dupeRefund.shardsPerDupe,
+    );
     expect(cfg.transitions.startReading.shards).toBe(
       DEFAULTS.transitions.startReading.shards,
     );

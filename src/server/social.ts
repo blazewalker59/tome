@@ -37,10 +37,44 @@
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 
+import { withErrorLogging } from "./_shared";
 import { getDb } from "@/db/client";
+import { toEpochSeconds } from "@/db/sql";
 import { follows, packBooks, packRips, packs, users } from "@/db/schema";
 import { getSessionUser, requireSessionUser } from "@/lib/auth/session";
-import { withErrorLogging } from "./_shared";
+
+/**
+ * A card as it comes back from a `json_group_array(json_object(...))`
+ * aggregate. Snake-cased because the SQL names the keys.
+ */
+type AggregatedCard = {
+  book_id: string;
+  title: string;
+  cover_url: string | null;
+  authors: Array<string> | null;
+  rarity?: string;
+};
+
+/**
+ * Parse the TEXT payload of a SQLite `json_group_array` aggregate.
+ *
+ * Postgres returned `jsonb_agg` already decoded into a JS array; SQLite has no
+ * JSON type, so `json_group_array` hands back a string and every consumer has
+ * to parse it. Null/absent (no matching rows, or a LEFT JOIN miss) collapses
+ * to an empty array so callers can map unconditionally.
+ */
+function parseAggregate<T>(payload: string | null | undefined): Array<T> {
+  if (!payload) return [];
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    return Array.isArray(parsed) ? (parsed as Array<T>) : [];
+  } catch {
+    // A malformed aggregate means a bug in the SQL, not bad user data.
+    // Degrade to "no cards" rather than 500-ing a whole feed page.
+    console.error("[tome/social] could not parse aggregate payload", payload);
+    return [];
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error sentinels
@@ -126,36 +160,39 @@ export const followUserFn = createServerFn({ method: "POST" })
     coerceUsernameInput(raw, "followUserFn"),
   )
   .handler(
-    withErrorLogging("followUserFn", async ({ data }): Promise<FollowResult> => {
-      const me = await requireSessionUser();
-      const database = await getDb();
-      const targetId = await resolveUsernameToId(database, data.username);
+    withErrorLogging(
+      "followUserFn",
+      async ({ data }): Promise<FollowResult> => {
+        const me = await requireSessionUser();
+        const database = await getDb();
+        const targetId = await resolveUsernameToId(database, data.username);
 
-      if (targetId === me.id) {
-        throw new Error(`${SELF_FOLLOW_PREFIX} cannot follow yourself`);
-      }
+        if (targetId === me.id) {
+          throw new Error(`${SELF_FOLLOW_PREFIX} cannot follow yourself`);
+        }
 
-      // Idempotent insert: if the row already exists, do nothing.
-      // The PK on (follower_id, followee_id) is the dedup key; we
-      // rely on it rather than a pre-check to avoid the read-then-
-      // write race in concurrent taps.
-      await database
-        .insert(follows)
-        .values({ followerId: me.id, followeeId: targetId })
-        .onConflictDoNothing();
+        // Idempotent insert: if the row already exists, do nothing.
+        // The PK on (follower_id, followee_id) is the dedup key; we
+        // rely on it rather than a pre-check to avoid the read-then-
+        // write race in concurrent taps.
+        await database
+          .insert(follows)
+          .values({ followerId: me.id, followeeId: targetId })
+          .onConflictDoNothing();
 
-      // Fresh count after the write. The aggregate is cheap given the
-      // PK index on (follower_id, followee_id) and a future
-      // (followee_id) index — for now Postgres scans the followee
-      // column directly. Acceptable while the table is small; if it
-      // grows we'll add `index("follows_followee_idx").on(t.followeeId)`.
-      const [{ count }] = await database
-        .select({ count: sql<number>`count(*)::int` })
-        .from(follows)
-        .where(eq(follows.followeeId, targetId));
+        // Fresh count after the write. The aggregate is cheap given the
+        // PK index on (follower_id, followee_id) and a future
+        // (followee_id) index — for now Postgres scans the followee
+        // column directly. Acceptable while the table is small; if it
+        // grows we'll add `index("follows_followee_idx").on(t.followeeId)`.
+        const [{ count }] = await database
+          .select({ count: sql<number>`count(*)` })
+          .from(follows)
+          .where(eq(follows.followeeId, targetId));
 
-      return { following: true, followerCount: count };
-    }),
+        return { following: true, followerCount: count };
+      },
+    ),
   );
 
 export interface UnfollowResult {
@@ -192,7 +229,7 @@ export const unfollowUserFn = createServerFn({ method: "POST" })
           );
 
         const [{ count }] = await database
-          .select({ count: sql<number>`count(*)::int` })
+          .select({ count: sql<number>`count(*)` })
           .from(follows)
           .where(eq(follows.followeeId, targetId));
 
@@ -247,12 +284,12 @@ export const getFollowStateFn = createServerFn({ method: "GET" })
         const me = await getSessionUser();
 
         const [followerRow] = await database
-          .select({ count: sql<number>`count(*)::int` })
+          .select({ count: sql<number>`count(*)` })
           .from(follows)
           .where(eq(follows.followeeId, targetId));
 
         const [followingRow] = await database
-          .select({ count: sql<number>`count(*)::int` })
+          .select({ count: sql<number>`count(*)` })
           .from(follows)
           .where(eq(follows.followerId, targetId));
 
@@ -444,7 +481,7 @@ function mergeFeedEvents(
   publishes: ReadonlyArray<FollowFeedEvent>,
   pulls: ReadonlyArray<FollowFeedEvent>,
   limit: number,
-): FollowFeedEvent[] {
+): Array<FollowFeedEvent> {
   const merged = [...publishes, ...pulls];
   merged.sort((a, b) => {
     if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
@@ -564,13 +601,13 @@ export const getFollowFeedFn = createServerFn({ method: "GET" })
 async function loadFeedSuggestions(
   database: Awaited<ReturnType<typeof getDb>>,
   myId: string | null,
-): Promise<FeedSuggestion[]> {
+): Promise<Array<FeedSuggestion>> {
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const trendingExpr = sql<number>`(
-    SELECT COUNT(*)::int
+    SELECT COUNT(*)
     FROM ${packRips}
     WHERE ${packRips.packId} = ${packs.id}
-      AND ${packRips.rippedAt} > ${weekAgo}
+      AND ${packRips.rippedAt} > ${toEpochSeconds(weekAgo)}
   )`;
 
   const conditions = [
@@ -609,7 +646,7 @@ async function loadPackPublishedEvents(
   followeeIds: ReadonlyArray<string>,
   before: Date | null,
   limit: number,
-): Promise<PackPublishedEvent[]> {
+): Promise<Array<PackPublishedEvent>> {
   const conditions = [
     inArray(packs.creatorId, [...followeeIds]),
     eq(packs.isPublic, true),
@@ -627,7 +664,7 @@ async function loadPackPublishedEvents(
       genreTags: packs.genreTags,
       publishedAt: packs.publishedAt,
       bookCount: sql<number>`(
-        SELECT COUNT(*)::int FROM ${packBooks}
+        SELECT COUNT(*) FROM ${packBooks}
         WHERE ${packBooks.packId} = ${packs.id}
       )`,
       actor: {
@@ -679,32 +716,42 @@ async function loadLegendaryPullEvents(
   followeeIds: ReadonlyArray<string>,
   before: Date | null,
   limit: number,
-): Promise<LegendaryPullEvent[]> {
-  // Subquery: per-rip aggregation of legendary cards. We select the
-  // rip + actor + pack columns, then aggregate the legendary book
-  // metadata via array_agg. The HAVING clause drops rips with zero
-  // legendaries — the WHERE on rarity already filters but the
-  // aggregate still produces a row per rip if any joined book matched.
-  // No it doesn't — the inner JOIN against books-with-rarity-legendary
-  // means rips with no legendary books produce no rows at all, so a
-  // GROUP BY collapses to non-empty groups only. HAVING is a safety net.
+): Promise<Array<LegendaryPullEvent>> {
+  // Per-rip aggregation of legendary cards, one row per rip with a `cards`
+  // payload so the JS map step stays trivial.
   //
-  // Drizzle doesn't expose array_agg ergonomically through its query
-  // builder when paired with cross-table joins on uuid arrays, so we
-  // drop to raw SQL for the aggregate. Bind params keep this safe.
-  const beforeCond = before ? sql`AND pr.ripped_at < ${before}` : sql``;
-  const followeeArray = sql.raw(
-    `ARRAY[${followeeIds.map((id) => `'${id.replace(/'/g, "''")}'::uuid`).join(",")}]`,
+  // Translated from Postgres to SQLite when we moved to D1. Three things
+  // changed shape:
+  //
+  //   unnest(pr.pulled_book_ids)  →  json_each(pr.pulled_book_ids)
+  //     `pulled_book_ids` was a uuid[] and is now a JSON array of id strings,
+  //     so the lateral unnest becomes a json_each table-valued function and
+  //     the joined id is `pulled.value`.
+  //
+  //   jsonb_agg(jsonb_build_object(...))  →  json_group_array(json_object(...))
+  //     Note `json(b.authors)` rather than plain `b.authors`: authors is a
+  //     TEXT column holding JSON, so passing it bare would nest it as an
+  //     escaped *string* instead of an array. `json()` splices it as JSON.
+  //     The aggregate returns TEXT either way, so `cards` is parsed in JS.
+  //
+  //   ORDER BY inside the aggregate  →  ordered subquery
+  //     SQLite only gained in-aggregate ORDER BY in 3.44. Sorting in a
+  //     derived table works on every version and costs nothing here.
+  //
+  // `= ANY(array)` also becomes a plain `IN (...)`, which lets the followee
+  // ids go through as ordinary bind params — the old version interpolated
+  // them into the SQL string with hand-rolled quote escaping.
+  const beforeCond = before
+    ? sql`AND pr.ripped_at < ${toEpochSeconds(before)}`
+    : sql``;
+  const followeeList = sql.join(
+    followeeIds.map((id) => sql`${id}`),
+    sql`, `,
   );
 
-  // Sanity: followeeIds is already validated as a non-empty array of
-  // UUIDs by the caller. The single-quote escape is belt-and-braces
-  // — Postgres uuids never contain quotes, but we don't want to bet
-  // on the input shape staying static.
-
-  const result = await database.execute<{
+  type LegendaryRow = {
     rip_id: string;
-    ripped_at: Date;
+    ripped_at: number;
     pack_id: string;
     pack_slug: string;
     pack_name: string;
@@ -713,75 +760,58 @@ async function loadLegendaryPullEvents(
     actor_username: string;
     actor_display_name: string | null;
     actor_avatar_url: string | null;
-    cards: Array<{
-      book_id: string;
-      title: string;
-      cover_url: string | null;
-      authors: string[];
-    }>;
-  }>(sql`
+    cards: string;
+  };
+
+  const rows = await database.all<LegendaryRow>(sql`
     SELECT
-      pr.id AS rip_id,
-      pr.ripped_at,
-      p.id AS pack_id,
-      p.slug AS pack_slug,
-      p.name AS pack_name,
-      pcu.username AS pack_creator_username,
-      au.id AS actor_id,
-      au.username AS actor_username,
-      au.display_name AS actor_display_name,
-      au.avatar_url AS actor_avatar_url,
-      jsonb_agg(
-        jsonb_build_object(
-          'book_id', b.id,
-          'title', b.title,
-          'cover_url', b.cover_url,
-          'authors', b.authors
+      rip_id, ripped_at, pack_id, pack_slug, pack_name, pack_creator_username,
+      actor_id, actor_username, actor_display_name, actor_avatar_url,
+      json_group_array(
+        json_object(
+          'book_id', book_id,
+          'title', title,
+          'cover_url', cover_url,
+          'authors', json(authors)
         )
-        ORDER BY b.title
       ) AS cards
-    FROM pack_rips pr
-    INNER JOIN users au ON au.id = pr.user_id
-    INNER JOIN packs p ON p.id = pr.pack_id
-    LEFT JOIN users pcu ON pcu.id = p.creator_id
-    INNER JOIN LATERAL unnest(pr.pulled_book_ids) AS pulled_id ON true
-    INNER JOIN books b ON b.id = pulled_id AND b.rarity = 'legendary'
-    WHERE pr.user_id = ANY(${followeeArray})
-      ${beforeCond}
-    GROUP BY pr.id, pr.ripped_at, p.id, p.slug, p.name, pcu.username,
-             au.id, au.username, au.display_name, au.avatar_url
-    ORDER BY pr.ripped_at DESC
+    FROM (
+      SELECT
+        pr.id AS rip_id,
+        pr.ripped_at AS ripped_at,
+        p.id AS pack_id,
+        p.slug AS pack_slug,
+        p.name AS pack_name,
+        pcu.username AS pack_creator_username,
+        au.id AS actor_id,
+        au.username AS actor_username,
+        au.display_name AS actor_display_name,
+        au.avatar_url AS actor_avatar_url,
+        b.id AS book_id,
+        b.title AS title,
+        b.cover_url AS cover_url,
+        b.authors AS authors
+      FROM pack_rips pr
+      INNER JOIN users au ON au.id = pr.user_id
+      INNER JOIN packs p ON p.id = pr.pack_id
+      LEFT JOIN users pcu ON pcu.id = p.creator_id
+      INNER JOIN json_each(pr.pulled_book_ids) AS pulled
+      INNER JOIN books b ON b.id = pulled.value AND b.rarity = 'legendary'
+      WHERE pr.user_id IN (${followeeList})
+        ${beforeCond}
+      ORDER BY b.title
+    )
+    GROUP BY rip_id, ripped_at, pack_id, pack_slug, pack_name,
+             pack_creator_username, actor_id, actor_username,
+             actor_display_name, actor_avatar_url
+    ORDER BY ripped_at DESC
     LIMIT ${limit}
   `);
 
-  // Drizzle's `execute` returns the driver's row shape, which for
-  // postgres-js comes back as an array on the result itself. Some
-  // driver versions wrap it in `.rows`; handle both.
-  const rows = (Array.isArray(result) ? result : result.rows) as Array<{
-    rip_id: string;
-    ripped_at: Date;
-    pack_id: string;
-    pack_slug: string;
-    pack_name: string;
-    pack_creator_username: string | null;
-    actor_id: string;
-    actor_username: string;
-    actor_display_name: string | null;
-    actor_avatar_url: string | null;
-    cards: Array<{
-      book_id: string;
-      title: string;
-      cover_url: string | null;
-      authors: string[];
-    }>;
-  }>;
-
   return rows.map((r) => ({
     type: "legendary_pull" as const,
-    timestamp:
-      r.ripped_at instanceof Date
-        ? r.ripped_at.getTime()
-        : new Date(r.ripped_at).getTime(),
+    // Epoch SECONDS out of SQLite; the feed contract is milliseconds.
+    timestamp: r.ripped_at * 1000,
     id: `pull:${r.rip_id}`,
     actor: {
       id: r.actor_id,
@@ -795,7 +825,7 @@ async function loadLegendaryPullEvents(
       name: r.pack_name,
       creatorUsername: r.pack_creator_username,
     },
-    cards: r.cards.map((c) => ({
+    cards: parseAggregate<AggregatedCard>(r.cards).map((c) => ({
       bookId: c.book_id,
       title: c.title,
       coverUrl: c.cover_url,
@@ -884,7 +914,11 @@ export const getSuggestedCreatorsFn = createServerFn({ method: "GET" })
         // The "score > 0" filter drops dormant accounts; without it
         // every user in the system would tie at zero on a fresh DB.
         const excludeId = me?.id ?? null;
-        const result = await database.execute<{
+        // SQLite translation notes, same as loadLegendaryPullEvents:
+        //   COUNT(*)   → COUNT(*)          (no cast syntax; already int)
+        //   is_public = true→ is_public = 1     (booleans are 0/1 integers)
+        //   LATERAL unnest  → json_each(...)    (pulled_book_ids is JSON now)
+        const rows = await database.all<{
           id: string;
           username: string;
           display_name: string | null;
@@ -894,20 +928,20 @@ export const getSuggestedCreatorsFn = createServerFn({ method: "GET" })
           score: number;
         }>(sql`
           WITH pack_counts AS (
-            SELECT creator_id AS user_id, COUNT(*)::int AS n
+            SELECT creator_id AS user_id, COUNT(*) AS n
             FROM packs
             WHERE creator_id IS NOT NULL
-              AND is_public = true
+              AND is_public = 1
               AND published_at IS NOT NULL
-              AND published_at > ${since}
+              AND published_at > ${toEpochSeconds(since)}
             GROUP BY creator_id
           ),
           pull_counts AS (
-            SELECT pr.user_id, COUNT(*)::int AS n
+            SELECT pr.user_id AS user_id, COUNT(*) AS n
             FROM pack_rips pr
-            INNER JOIN LATERAL unnest(pr.pulled_book_ids) AS pulled_id ON true
-            INNER JOIN books b ON b.id = pulled_id AND b.rarity = 'legendary'
-            WHERE pr.ripped_at > ${since}
+            INNER JOIN json_each(pr.pulled_book_ids) AS pulled
+            INNER JOIN books b ON b.id = pulled.value AND b.rarity = 'legendary'
+            WHERE pr.ripped_at > ${toEpochSeconds(since)}
             GROUP BY pr.user_id
           ),
           combined AS (
@@ -939,16 +973,6 @@ export const getSuggestedCreatorsFn = createServerFn({ method: "GET" })
           ORDER BY score DESC, username ASC
           LIMIT ${limit}
         `);
-
-        const rows = (Array.isArray(result) ? result : result.rows) as Array<{
-          id: string;
-          username: string;
-          display_name: string | null;
-          avatar_url: string | null;
-          packs_published: number;
-          legendaries_pulled: number;
-          score: number;
-        }>;
 
         return {
           creators: rows.map((r) => ({
@@ -1040,7 +1064,7 @@ const RARITY_ORDER: Record<MyRipCard["rarity"], number> = {
  * Returns the input slice in highlight-first order so the caller
  * doesn't need a second sort pass.
  */
-function sortRipCards(cards: ReadonlyArray<MyRipCard>): MyRipCard[] {
+function sortRipCards(cards: ReadonlyArray<MyRipCard>): Array<MyRipCard> {
   return [...cards].sort((a, b) => {
     const ra = RARITY_ORDER[a.rarity];
     const rb = RARITY_ORDER[b.rarity];
@@ -1091,10 +1115,20 @@ export const getMyRipsFn = createServerFn({ method: "GET" })
         // want every card here) and ordered by ripped_at, not pack.
         // Drops to raw SQL for the array unnest + jsonb_agg combo —
         // Drizzle's builder doesn't compose this cleanly.
-        const beforeCond = before ? sql`AND pr.ripped_at < ${before}` : sql``;
-        const result = await database.execute<{
+        const beforeCond = before
+          ? sql`AND pr.ripped_at < ${toEpochSeconds(before)}`
+          : sql``;
+        // SQLite translation, as in loadLegendaryPullEvents:
+        //   unnest(pulled_book_ids)      → json_each(pulled_book_ids)
+        //   array_length(ids, 1)         → json_array_length(ids)
+        //   jsonb_agg/jsonb_build_object → json_group_array/json_object
+        //   'authors', b.authors         → 'authors', json(b.authors)
+        // The correlated `cards` subquery still correlates fine: json_each
+        // takes `pr.pulled_book_ids` from the enclosing row exactly as the
+        // lateral unnest did.
+        const rows = await database.all<{
           rip_id: string;
-          ripped_at: Date;
+          ripped_at: number;
           duplicates: number;
           shards_awarded: number;
           pulled_count: number;
@@ -1102,85 +1136,59 @@ export const getMyRipsFn = createServerFn({ method: "GET" })
           pack_slug: string;
           pack_name: string;
           pack_creator_username: string | null;
-          cards: Array<{
-            book_id: string;
-            title: string;
-            cover_url: string | null;
-            authors: string[];
-            rarity: MyRipCard["rarity"];
-          }> | null;
+          cards: string | null;
         }>(sql`
           SELECT
             pr.id AS rip_id,
-            pr.ripped_at,
-            pr.duplicates,
-            pr.shards_awarded,
-            COALESCE(array_length(pr.pulled_book_ids, 1), 0) AS pulled_count,
+            pr.ripped_at AS ripped_at,
+            pr.duplicates AS duplicates,
+            pr.shards_awarded AS shards_awarded,
+            COALESCE(json_array_length(pr.pulled_book_ids), 0) AS pulled_count,
             p.id AS pack_id,
             p.slug AS pack_slug,
             p.name AS pack_name,
             pcu.username AS pack_creator_username,
             (
-              SELECT jsonb_agg(
-                jsonb_build_object(
+              SELECT json_group_array(
+                json_object(
                   'book_id', b.id,
                   'title', b.title,
                   'cover_url', b.cover_url,
-                  'authors', b.authors,
+                  'authors', json(b.authors),
                   'rarity', b.rarity
                 )
               )
-              FROM unnest(pr.pulled_book_ids) AS pulled_id
-              INNER JOIN books b ON b.id = pulled_id
+              FROM json_each(pr.pulled_book_ids) AS pulled
+              INNER JOIN books b ON b.id = pulled.value
             ) AS cards
           FROM pack_rips pr
           INNER JOIN packs p ON p.id = pr.pack_id
           LEFT JOIN users pcu ON pcu.id = p.creator_id
           WHERE pr.user_id = ${me.id}
             -- Hide orphaned rips: only surface rips where the user
-            -- still owns at least one of the books pulled. The
-            -- 0008_orphan_rip_cleanup migration deletes pre-existing
-            -- orphans; this guard keeps the surface honest in case a
-            -- future collection-reset operation produces new ones.
+            -- still owns at least one of the books pulled. This guard
+            -- keeps the surface honest if a collection-reset operation
+            -- ever produces new orphans.
             AND EXISTS (
               SELECT 1
-              FROM unnest(pr.pulled_book_ids) AS pulled_id
+              FROM json_each(pr.pulled_book_ids) AS pulled
               INNER JOIN collection_cards cc
                 ON cc.user_id = pr.user_id
-               AND cc.book_id = pulled_id
+               AND cc.book_id = pulled.value
             )
             ${beforeCond}
           ORDER BY pr.ripped_at DESC
           LIMIT ${limit}
         `);
 
-        const rows = (Array.isArray(result) ? result : result.rows) as Array<{
-          rip_id: string;
-          ripped_at: Date;
-          duplicates: number;
-          shards_awarded: number;
-          pulled_count: number;
-          pack_id: string;
-          pack_slug: string;
-          pack_name: string;
-          pack_creator_username: string | null;
-          cards: Array<{
-            book_id: string;
-            title: string;
-            cover_url: string | null;
-            authors: string[];
-            rarity: MyRipCard["rarity"];
-          }> | null;
-        }>;
-
-        const events: MyRipEvent[] = [];
+        const events: Array<MyRipEvent> = [];
         for (const r of rows) {
-          const rawCards = (r.cards ?? []).map((c) => ({
+          const rawCards = parseAggregate<AggregatedCard>(r.cards).map((c) => ({
             bookId: c.book_id,
             title: c.title,
             coverUrl: c.cover_url,
             authors: c.authors ?? [],
-            rarity: c.rarity,
+            rarity: c.rarity as MyRipCard["rarity"],
           }));
           // Defensive: a rip with all-deleted books shouldn't render
           // at all (no highlight to pick). The UI shouldn't hit this
@@ -1188,10 +1196,8 @@ export const getMyRipsFn = createServerFn({ method: "GET" })
           // theory be soft-removed by an admin script.
           if (rawCards.length === 0) continue;
           const sorted = sortRipCards(rawCards);
-          const ts =
-            r.ripped_at instanceof Date
-              ? r.ripped_at.getTime()
-              : new Date(r.ripped_at).getTime();
+          // Epoch SECONDS out of SQLite; the event contract is milliseconds.
+          const ts = r.ripped_at * 1000;
           events.push({
             id: `myrip:${r.rip_id}`,
             timestamp: ts,

@@ -17,11 +17,11 @@
 
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { deriveUsername } from "./username";
 import { getDb } from "@/db/client";
 import { getEnv } from "@/lib/env";
 import { getEconomy } from "@/lib/economy/config";
 import { grantShards } from "@/lib/economy/ledger";
-import { deriveUsername } from "./username";
 
 async function requireEnv(name: string): Promise<string> {
   const v = await getEnv(name);
@@ -37,12 +37,13 @@ async function requireEnv(name: string): Promise<string> {
 
 export async function getAuth() {
   const db = await getDb();
-  const [secret, baseURL, googleClientId, googleClientSecret] = await Promise.all([
-    requireEnv("BETTER_AUTH_SECRET"),
-    requireEnv("BETTER_AUTH_URL"),
-    requireEnv("GOOGLE_CLIENT_ID"),
-    requireEnv("GOOGLE_CLIENT_SECRET"),
-  ]);
+  const [secret, baseURL, googleClientId, googleClientSecret] =
+    await Promise.all([
+      requireEnv("BETTER_AUTH_SECRET"),
+      requireEnv("BETTER_AUTH_URL"),
+      requireEnv("GOOGLE_CLIENT_ID"),
+      requireEnv("GOOGLE_CLIENT_SECRET"),
+    ]);
 
   return betterAuth({
     // Our Drizzle schema uses plural table names (users, sessions, …).
@@ -50,7 +51,7 @@ export async function getAuth() {
     // via `usePlural: true`. This is preferred over renaming our tables
     // because every FK in the app already points at `users.id`.
     database: drizzleAdapter(db, {
-      provider: "pg",
+      provider: "sqlite",
       usePlural: true,
     }),
     secret,
@@ -61,10 +62,7 @@ export async function getAuth() {
     // while `vite dev` serves on :3000 — we allow both so either entry
     // point works without editing env between runs. Production only ever
     // hits `BETTER_AUTH_URL`, so the extra localhost entries are harmless.
-    trustedOrigins: [
-      "http://localhost:3000",
-      "http://localhost:8787",
-    ],
+    trustedOrigins: ["http://localhost:3000", "http://localhost:8787"],
     socialProviders: {
       google: {
         clientId: googleClientId,
@@ -128,15 +126,18 @@ export async function getAuth() {
           after: async (user) => {
             const cfg = await getEconomy();
             if (cfg.welcomeGrant <= 0) return;
-            // Grants happen on their own mini-transaction since Better
-            // Auth doesn't hand us the user-create transaction. Failure
-            // here MUST NOT roll back the user — log and continue. A
-            // missing welcome grant is recoverable (admin can top them
-            // up); a failed user create because of a grant error is not.
+            // Failure here MUST NOT roll back the user — log and continue.
+            // A missing welcome grant is recoverable (admin can top them up);
+            // a failed user create because of a grant error is not.
+            //
+            // This used to wrap the grant in `db.transaction()`. On D1 that
+            // wrapper buys nothing (see src/db/client.ts), and it bought
+            // little here even on Postgres — Better Auth doesn't hand us the
+            // user-create transaction, so the grant was always a separate
+            // unit of work from the insert it accompanies. `grantShards`
+            // batches its own ledger-insert + balance-upsert atomically.
             try {
-              await db.transaction(async (tx) => {
-                await grantShards(tx, user.id, "welcome_grant", cfg.welcomeGrant);
-              });
+              await grantShards(db, user.id, "welcome_grant", cfg.welcomeGrant);
             } catch (err) {
               console.error("[tome/auth] welcome grant failed", {
                 userId: user.id,
@@ -149,9 +150,11 @@ export async function getAuth() {
     },
     advanced: {
       database: {
-        // Stay on Postgres `uuid` primary keys to match the rest of the
-        // schema. Without this Better Auth would generate its own string
-        // ids and our FK column types (all `uuid`) would mismatch.
+        // Keep minting UUIDs. The columns are `text` on SQLite rather than
+        // Postgres `uuid`, so any string would now satisfy the type — but the
+        // rows migrated over from Neon carry UUID ids, and Better Auth's own
+        // default id format would sit oddly alongside them. Staying on
+        // randomUUID keeps one id shape across the whole table.
         generateId: () => crypto.randomUUID(),
       },
     },

@@ -27,30 +27,19 @@
  * After this completes, run `pnpm db:rebucket` to recompute rarity
  * buckets across the (now much larger) catalog.
  */
-import { config as loadEnv } from "dotenv";
-
-loadEnv({ path: ".env.local" });
-loadEnv();
-
 import { eq, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
 
-import { bookResponseToRow, type IngestCuration } from "../src/lib/cards/hardcover";
+import { bookResponseToRow } from "../src/lib/cards/hardcover";
 import { books, packBooks, packs } from "../src/db/schema";
 import {
+  HardcoverError,
   __resetRateLimitForTests,
   fetchBookById,
-  HardcoverError,
   searchBooks,
-  type HardcoverSearchHit,
 } from "../src/server/hardcover";
-
-const url = process.env.DATABASE_URL;
-if (!url) {
-  console.error("[editor-packs] Missing DATABASE_URL. Set it in .env.local.");
-  process.exit(1);
-}
+import { db } from "./_db";
+import type { IngestCuration } from "../src/lib/cards/hardcover";
+import type { HardcoverSearchHit } from "../src/server/hardcover";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Editorial curation: pack definitions
@@ -93,7 +82,14 @@ const PACKS: ReadonlyArray<PackDef> = [
       "A snapshot of fantasy since 2015 — from doorstopper epics to tightly-wound novellas. Start here to build a shelf that spans dragons, sorcerers, and stranger things.",
     genre: "fantasy",
     genreTags: ["fantasy", "starter"],
-    moodTagPool: ["epic", "magical", "atmospheric", "character-driven", "dark", "lush"],
+    moodTagPool: [
+      "epic",
+      "magical",
+      "atmospheric",
+      "character-driven",
+      "dark",
+      "lush",
+    ],
     titles: [
       { title: "The Fifth Season", author: "N. K. Jemisin" },
       { title: "Uprooted", author: "Naomi Novik" },
@@ -200,14 +196,7 @@ const PACKS: ReadonlyArray<PackDef> = [
       "Contemporary romance across the spectrum — slow burns, workplace rivals, second chances, and found family. Twenty books that defined the genre's current moment.",
     genre: "romance",
     genreTags: ["romance", "starter"],
-    moodTagPool: [
-      "romantic",
-      "cozy",
-      "swoony",
-      "escapist",
-      "tender",
-      "witty",
-    ],
+    moodTagPool: ["romantic", "cozy", "swoony", "escapist", "tender", "witty"],
     titles: [
       { title: "The Hating Game", author: "Sally Thorne" },
       { title: "Beach Read", author: "Emily Henry" },
@@ -262,7 +251,10 @@ const PACKS: ReadonlyArray<PackDef> = [
       { title: "The Overstory", author: "Richard Powers" },
       { title: "Exit West", author: "Mohsin Hamid" },
       { title: "An American Marriage", author: "Tayari Jones" },
-      { title: "Tomorrow, and Tomorrow, and Tomorrow", author: "Gabrielle Zevin" },
+      {
+        title: "Tomorrow, and Tomorrow, and Tomorrow",
+        author: "Gabrielle Zevin",
+      },
       { title: "Trust", author: "Hernan Diaz" },
       { title: "The Nickel Boys", author: "Colson Whitehead" },
       { title: "Demon Copperhead", author: "Barbara Kingsolver" },
@@ -289,7 +281,11 @@ const PACKS: ReadonlyArray<PackDef> = [
  * ("V. E. Schwab" vs "Victoria Schwab") would cause false negatives.
  */
 async function resolveTitle(q: TitleQuery): Promise<
-  | { ok: true; hit: HardcoverSearchHit; book: Awaited<ReturnType<typeof fetchBookById>> }
+  | {
+      ok: true;
+      hit: HardcoverSearchHit;
+      book: Awaited<ReturnType<typeof fetchBookById>>;
+    }
   | { ok: false; reason: string }
 > {
   const query = q.author ? `${q.title} ${q.author}` : q.title;
@@ -342,9 +338,6 @@ function moodTagsForIndex(
 // Main
 // ──────────────────────────────────────────────────────────────────────────────
 
-const client = postgres(url, { max: 1 });
-const db = drizzle(client, { schema: { books, packs, packBooks } });
-
 // The rate-limit clock starts stale if the module was imported but
 // never used — no-op if it's already zero. Keeps the very first
 // request from waiting 1.1s.
@@ -361,13 +354,15 @@ const startedAt = Date.now();
 try {
   const packResults: Array<{
     def: PackDef;
-    resolved: ResolvedBook[];
+    resolved: Array<ResolvedBook>;
     missed: Array<{ query: TitleQuery; reason: string }>;
   }> = [];
 
   for (const def of PACKS) {
-    console.log(`\n[editor-packs] ── ${def.name} (${def.titles.length} titles) ──`);
-    const resolved: ResolvedBook[] = [];
+    console.log(
+      `\n[editor-packs] ── ${def.name} (${def.titles.length} titles) ──`,
+    );
+    const resolved: Array<ResolvedBook> = [];
     const missed: Array<{ query: TitleQuery; reason: string }> = [];
 
     for (let i = 0; i < def.titles.length; i++) {
@@ -404,7 +399,9 @@ try {
           target: books.hardcoverId,
           set: {
             title: row.title,
+            // Both author columns, always together (src/db/authors.ts).
             authors: row.authors,
+            authorsText: row.authorsText,
             coverUrl: row.coverUrl,
             description: row.description,
             pageCount: row.pageCount,
@@ -416,7 +413,7 @@ try {
             ratingsCount: row.ratingsCount,
             averageRating: row.averageRating,
             rawMetadata: row.rawMetadata,
-            updatedAt: sql`now()`,
+            updatedAt: new Date(),
           },
         })
         .returning({ id: books.id });
@@ -443,7 +440,7 @@ try {
   // ────────────────────────────────────────────────────────────────
   for (const result of packResults) {
     const seen = new Set<string>();
-    const deduped: ResolvedBook[] = [];
+    const deduped: Array<ResolvedBook> = [];
     const rejected: Array<{ query: TitleQuery; reason: string }> = [];
     for (let i = 0; i < result.resolved.length; i++) {
       const r = result.resolved[i];
@@ -471,49 +468,55 @@ try {
   }
 
   // ────────────────────────────────────────────────────────────────
-  // Upsert packs + reset membership. Single transaction so a failure
-  // halfway through doesn't leave a pack with half its books.
+  // Upsert packs + reset membership.
+  //
+  // This used to run in one transaction so a mid-run failure couldn't leave
+  // a pack holding half its books. Scripts reach D1 over its HTTP API, which
+  // has no cross-request transaction, so that guarantee is gone. It matters
+  // less than it looks: the whole script is idempotent (packs upsert by slug,
+  // membership is deleted and rewritten wholesale), so the repair for a
+  // partial run is to run it again.
   // ────────────────────────────────────────────────────────────────
-  console.log(`\n[editor-packs] upserting ${packResults.length} editorial packs…`);
-  await db.transaction(async (tx) => {
-    for (const { def, resolved } of packResults) {
-      const [pack] = await tx
-        .insert(packs)
-        .values({
-          slug: def.slug,
+  console.log(
+    `\n[editor-packs] upserting ${packResults.length} editorial packs…`,
+  );
+  for (const { def, resolved } of packResults) {
+    const [pack] = await db
+      .insert(packs)
+      .values({
+        slug: def.slug,
+        name: def.name,
+        description: def.description,
+        creatorId: null,
+        isPublic: true,
+        publishedAt: new Date(),
+        genreTags: [...def.genreTags],
+      })
+      .onConflictDoUpdate({
+        target: packs.slug,
+        targetWhere: sql`creator_id IS NULL`,
+        set: {
           name: def.name,
           description: def.description,
-          creatorId: null,
-          isPublic: true,
-          publishedAt: sql`now()`,
           genreTags: [...def.genreTags],
-        })
-        .onConflictDoUpdate({
-          target: packs.slug,
-          targetWhere: sql`creator_id IS NULL`,
-          set: {
-            name: def.name,
-            description: def.description,
-            genreTags: [...def.genreTags],
-          },
-        })
-        .returning({ id: packs.id });
+        },
+      })
+      .returning({ id: packs.id });
 
-      await tx.delete(packBooks).where(eq(packBooks.packId, pack.id));
-      if (resolved.length > 0) {
-        await tx.insert(packBooks).values(
-          resolved.map((b, idx) => ({
-            packId: pack.id,
-            bookId: b.bookRowId,
-            position: idx,
-          })),
-        );
-      }
-      console.log(
-        `[editor-packs]   ✓ ${def.slug}: ${resolved.length}/${def.titles.length} books`,
+    await db.delete(packBooks).where(eq(packBooks.packId, pack.id));
+    if (resolved.length > 0) {
+      await db.insert(packBooks).values(
+        resolved.map((b, idx) => ({
+          packId: pack.id,
+          bookId: b.bookRowId,
+          position: idx,
+        })),
       );
     }
-  });
+    console.log(
+      `[editor-packs]   ✓ ${def.slug}: ${resolved.length}/${def.titles.length} books`,
+    );
+  }
 
   // ────────────────────────────────────────────────────────────────
   // Final report
@@ -523,12 +526,16 @@ try {
 
   const totalMissed = packResults.reduce((n, r) => n + r.missed.length, 0);
   if (totalMissed > 0) {
-    console.log(`\n[editor-packs] ${totalMissed} title(s) could not be resolved:`);
+    console.log(
+      `\n[editor-packs] ${totalMissed} title(s) could not be resolved:`,
+    );
     for (const { def, missed } of packResults) {
       if (missed.length === 0) continue;
       console.log(`[editor-packs]   ${def.slug}:`);
       for (const { query, reason } of missed) {
-        const label = query.author ? `${query.title} — ${query.author}` : query.title;
+        const label = query.author
+          ? `${query.title} — ${query.author}`
+          : query.title;
         console.log(`[editor-packs]     • ${label}  (${reason})`);
       }
     }
@@ -538,10 +545,10 @@ try {
     );
   }
 
-  console.log("\n[editor-packs] Next: run `pnpm db:rebucket` to redistribute rarity buckets.");
+  console.log(
+    "\n[editor-packs] Next: run `bun run db:rebucket` to redistribute rarity buckets.",
+  );
 } catch (err) {
   console.error("[editor-packs] ✗ failed:", err);
   process.exitCode = 1;
-} finally {
-  await client.end();
 }

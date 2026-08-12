@@ -43,13 +43,24 @@ export interface CollectionFilter {
   search?: string;
 }
 
-export function filterCards(cards: ReadonlyArray<CardData>, filter: CollectionFilter): CardData[] {
+export function filterCards(
+  cards: ReadonlyArray<CardData>,
+  filter: CollectionFilter,
+): Array<CardData> {
   const search = filter.search?.trim().toLowerCase() ?? "";
   return cards.filter((c) => {
-    if (filter.genres && filter.genres.size > 0 && !filter.genres.has(c.genre)) {
+    if (
+      filter.genres &&
+      filter.genres.size > 0 &&
+      !filter.genres.has(c.genre)
+    ) {
       return false;
     }
-    if (filter.rarities && filter.rarities.size > 0 && !filter.rarities.has(c.rarity)) {
+    if (
+      filter.rarities &&
+      filter.rarities.size > 0 &&
+      !filter.rarities.has(c.rarity)
+    ) {
       return false;
     }
     if (filter.moods && filter.moods.size > 0) {
@@ -73,7 +84,7 @@ export function sortCards(
   cards: ReadonlyArray<CardData>,
   mode: SortMode,
   ctx: SortContext = {},
-): CardData[] {
+): Array<CardData> {
   const sorted = [...cards];
   switch (mode) {
     case "title":
@@ -88,7 +99,9 @@ export function sortCards(
       break;
     case "rarity":
       sorted.sort(
-        (a, b) => RARITY_ORDER[a.rarity] - RARITY_ORDER[b.rarity] || a.title.localeCompare(b.title),
+        (a, b) =>
+          RARITY_ORDER[a.rarity] - RARITY_ORDER[b.rarity] ||
+          a.title.localeCompare(b.title),
       );
       break;
     case "newest": {
@@ -117,14 +130,17 @@ export function sortCards(
 export interface CardGroup {
   key: string;
   label: string;
-  cards: CardData[];
+  cards: Array<CardData>;
 }
 
 export interface GroupContext {
   /** Map bookId → { packId, packName } used by `pack` grouping. Entries
    *  without an attribution can omit `packId` — the book will fall into
    *  an "Unknown" bucket keyed by label. */
-  acquisitions?: ReadonlyMap<string, { packId: string | null; packName: string }>;
+  acquisitions?: ReadonlyMap<
+    string,
+    { packId: string | null; packName: string }
+  >;
 }
 
 /**
@@ -146,7 +162,7 @@ export function groupCards(
   cards: ReadonlyArray<CardData>,
   groupBy: GroupBy,
   ctx: GroupContext = {},
-): CardGroup[] {
+): Array<CardGroup> {
   if (groupBy === "all") {
     return [{ key: "all", label: "All books", cards: [...cards] }];
   }
@@ -155,14 +171,13 @@ export function groupCards(
     // Deterministic order + always include the five buckets so the
     // result is easy to reason about; empty buckets are filtered at the
     // end so the UI doesn't render dead sections.
-    const buckets = new Map<Rarity, CardData[]>(
+    const buckets = new Map<Rarity, Array<CardData>>(
       ALL_RARITIES.map((r) => [r, []]),
     );
     for (const c of cards) {
       buckets.get(c.rarity)!.push(c);
     }
-    return ALL_RARITIES
-      .slice()
+    return ALL_RARITIES.slice()
       .sort((a, b) => RARITY_ORDER[a] - RARITY_ORDER[b])
       .map((r) => ({
         key: `rarity:${r}`,
@@ -216,8 +231,8 @@ export function groupCards(
 function bucketBy(
   cards: ReadonlyArray<CardData>,
   keysFor: (c: CardData) => ReadonlyArray<readonly [string, string]>,
-): Array<{ key: string; label: string; cards: CardData[] }> {
-  const buckets = new Map<string, { label: string; cards: CardData[] }>();
+): Array<{ key: string; label: string; cards: Array<CardData> }> {
+  const buckets = new Map<string, { label: string; cards: Array<CardData> }>();
   for (const c of cards) {
     for (const [key, label] of keysFor(c)) {
       const existing = buckets.get(key);
@@ -228,7 +243,8 @@ function bucketBy(
   return [...buckets.entries()]
     .map(([key, v]) => ({ key, label: v.label, cards: v.cards }))
     .sort(
-      (a, b) => b.cards.length - a.cards.length || a.label.localeCompare(b.label),
+      (a, b) =>
+        b.cards.length - a.cards.length || a.label.localeCompare(b.label),
     );
 }
 
@@ -251,7 +267,7 @@ function formatGenreLocal(genre: string): string {
  */
 export function groupByGenre(
   cards: ReadonlyArray<CardData>,
-): Array<{ genre: Genre; cards: CardData[] }> {
+): Array<{ genre: Genre; cards: Array<CardData> }> {
   return groupCards(cards, "genre").map((g) => ({
     // Strip the `genre:` prefix applied by `groupCards` so legacy
     // callers see the raw slug they expect.
@@ -261,7 +277,9 @@ export function groupByGenre(
 }
 
 /** Per-rarity counts across the supplied cards. */
-export function rarityCounts(cards: ReadonlyArray<CardData>): Record<Rarity, number> {
+export function rarityCounts(
+  cards: ReadonlyArray<CardData>,
+): Record<Rarity, number> {
   const counts: Record<Rarity, number> = {
     common: 0,
     uncommon: 0,
@@ -274,14 +292,14 @@ export function rarityCounts(cards: ReadonlyArray<CardData>): Record<Rarity, num
 }
 
 /** Distinct mood tags appearing across the supplied cards, alphabetized. */
-export function uniqueMoods(cards: ReadonlyArray<CardData>): string[] {
+export function uniqueMoods(cards: ReadonlyArray<CardData>): Array<string> {
   const set = new Set<string>();
   for (const c of cards) for (const t of c.moodTags) set.add(t);
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
 /** Distinct genres appearing across the supplied cards, alphabetized. */
-export function uniqueGenres(cards: ReadonlyArray<CardData>): Genre[] {
+export function uniqueGenres(cards: ReadonlyArray<CardData>): Array<Genre> {
   const set = new Set<Genre>();
   for (const c of cards) set.add(c.genre);
   return [...set].sort((a, b) => a.localeCompare(b));

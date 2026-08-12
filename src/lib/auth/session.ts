@@ -19,8 +19,8 @@
  */
 
 import { getRequest } from "@tanstack/react-start/server";
-import { getEnv } from "@/lib/env";
 import { getAuth } from "./server";
+import { getEnv } from "@/lib/env";
 
 /**
  * Resolve the authenticated user for the current request, or `null`.

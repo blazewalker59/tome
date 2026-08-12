@@ -19,19 +19,19 @@
  * input non-mutation, and the `_internals` helpers.
  */
 
-import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
 
+import type { HardcoverSearchHit } from "@/server/hardcover";
+import type { DemoteReason } from "@/lib/hardcover/rank";
 import {
   RERANK_MIN_HITS,
-  rankSearchHits,
-  demoteReasonLabel,
   _internals,
-  type DemoteReason,
+  demoteReasonLabel,
+  rankSearchHits,
 } from "@/lib/hardcover/rank";
 import { parseSearchResults } from "@/server/hardcover";
-import type { HardcoverSearchHit } from "@/server/hardcover";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture loaders
@@ -42,7 +42,7 @@ const FIXTURE_DIR = resolve(
   "src/__tests__/_setup/msw/fixtures/hardcover-search-junk",
 );
 
-function loadFixture(name: string): HardcoverSearchHit[] {
+function loadFixture(name: string): Array<HardcoverSearchHit> {
   const raw = JSON.parse(
     readFileSync(resolve(FIXTURE_DIR, `${name}.json`), "utf8"),
   ) as { data?: { search?: { results?: unknown } } };
@@ -158,7 +158,9 @@ describe("rankSearchHits — live fixtures", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("rankSearchHits — pure behavior", () => {
-  function hit(overrides: Partial<HardcoverSearchHit> = {}): HardcoverSearchHit {
+  function hit(
+    overrides: Partial<HardcoverSearchHit> = {},
+  ): HardcoverSearchHit {
     return {
       id: 1,
       title: "Some Book",
@@ -176,7 +178,7 @@ describe("rankSearchHits — pure behavior", () => {
   }
 
   it("does not mutate the input array or its hits", () => {
-    const input: HardcoverSearchHit[] = [
+    const input: Array<HardcoverSearchHit> = [
       hit({ id: 1, title: "Workbook for Atomic Habits" }),
       hit({ id: 2, title: "Atomic Habits", ratingsCount: 1000, rating: 4.5 }),
       hit({ id: 3, title: "Summary of Atomic Habits" }),
@@ -217,7 +219,7 @@ describe("rankSearchHits — pure behavior", () => {
   });
 
   it("ranks higher quality clean hits ahead of lower quality ones", () => {
-    const input: HardcoverSearchHit[] = [
+    const input: Array<HardcoverSearchHit> = [
       hit({ id: 1, title: "A", ratingsCount: 1, rating: 5 }),
       hit({ id: 2, title: "B", ratingsCount: 1000, rating: 4 }),
       hit({ id: 3, title: "C", ratingsCount: 100, rating: 4.5 }),
@@ -231,7 +233,7 @@ describe("rankSearchHits — pure behavior", () => {
 
   it("preserves Typesense order as a tiebreak among clean hits", () => {
     // All hits identical popularity → original order preserved.
-    const input: HardcoverSearchHit[] = [
+    const input: Array<HardcoverSearchHit> = [
       hit({ id: 10, title: "First" }),
       hit({ id: 20, title: "Second" }),
       hit({ id: 30, title: "Third" }),
@@ -327,7 +329,10 @@ describe("_internals.qualityScoreOf", () => {
       demoteReason: null,
     };
     const high = _internals.qualityScoreOf(base);
-    const lessRatings = _internals.qualityScoreOf({ ...base, ratingsCount: 10 });
+    const lessRatings = _internals.qualityScoreOf({
+      ...base,
+      ratingsCount: 10,
+    });
     const lowerRated = _internals.qualityScoreOf({ ...base, rating: 1.0 });
     expect(high).toBeGreaterThan(lessRatings);
     expect(high).toBeGreaterThan(lowerRated);
@@ -336,7 +341,7 @@ describe("_internals.qualityScoreOf", () => {
 
 describe("demoteReasonLabel", () => {
   it("returns a human label for every reason", () => {
-    const reasons: DemoteReason[] = [
+    const reasons: Array<DemoteReason> = [
       "summary",
       "workbook",
       "study_guide",

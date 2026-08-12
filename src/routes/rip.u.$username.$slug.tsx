@@ -29,7 +29,13 @@ export const Route = createFileRoute("/rip/u/$username/$slug")({
       getPublicEconomyFn(),
     ]);
     if (!collection) throw redirect({ to: "/sign-in" });
-    return { pack, collection, economy, username: params.username, slug: params.slug };
+    return {
+      pack,
+      collection,
+      economy,
+      username: params.username,
+      slug: params.slug,
+    };
   },
   component: RipUserPackRoute,
 });

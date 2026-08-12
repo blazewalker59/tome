@@ -1,4 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  FINISH_GUARD_MS,
+  computeReadingTimestamps,
+  decideTransitionGrant,
+  shouldGrantFinish,
+} from "@/server/reading";
 
 /**
  * Reading-log helper tests.
@@ -63,13 +70,6 @@ vi.mock("@tanstack/react-start", () => ({
     }),
   }),
 }));
-
-import {
-  FINISH_GUARD_MS,
-  computeReadingTimestamps,
-  decideTransitionGrant,
-  shouldGrantFinish,
-} from "@/server/reading";
 
 describe("decideTransitionGrant", () => {
   // New entry (prior=undefined) covers the first-log case. The two
@@ -188,6 +188,20 @@ function makeDb(priorCreatedAt: Date | null) {
 }
 
 describe("shouldGrantFinish", () => {
+  // The guard compares `Date.now()` inside the function against a timestamp
+  // the test constructs from its own `Date.now()`. With a live clock those
+  // are two different instants, so a test asserting a 1ms margin is really
+  // asserting that less than 1ms of wall time elapsed between them — true on
+  // a fast dev machine, false on a loaded CI runner. Freezing the clock makes
+  // the boundary tests test the boundary instead of the scheduler.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01T12:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("suppresses when no prior start_reading event exists (retroactive log — user is shelving a book they already read, no shards)", async () => {
     const db = makeDb(null);
     await expect(shouldGrantFinish(db, "u1", "b1")).resolves.toBe(false);
@@ -214,7 +228,22 @@ describe("shouldGrantFinish", () => {
   it("suppresses just-under the window (boundary: exclusive)", async () => {
     // 1ms short of the window must NOT grant. Together with the
     // inclusive test above this pins the boundary exactly.
+    //
+    // Note this millisecond is only observable in JS. `shard_events.created_at`
+    // is `integer({ mode: "timestamp" })` — epoch SECONDS — so a timestamp
+    // round-tripped through D1 is truncated to the second and the real
+    // in-production boundary is one second wide, not one millisecond. The
+    // assertion is still worth keeping: it pins the comparison operator
+    // (`>=` vs `>`), which is what a future edit would get wrong.
     const db = makeDb(new Date(Date.now() - (FINISH_GUARD_MS - 1)));
+    await expect(shouldGrantFinish(db, "u1", "b1")).resolves.toBe(false);
+  });
+
+  it("suppresses a start event one second short of the window (D1 resolution)", async () => {
+    // The smallest gap that survives a round trip through D1's
+    // second-resolution timestamps. This is the boundary that actually
+    // governs production behaviour.
+    const db = makeDb(new Date(Date.now() - (FINISH_GUARD_MS - 1000)));
     await expect(shouldGrantFinish(db, "u1", "b1")).resolves.toBe(false);
   });
 });

@@ -1,4 +1,11 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  getAdminEmails,
+  getSessionUser,
+  requireAdmin,
+  requireSessionUser,
+} from "@/lib/auth/session";
 
 /**
  * Server-side session reader test.
@@ -26,8 +33,6 @@ vi.mock("@tanstack/react-start/server", () => ({
   getRequest: () => requestMock,
 }));
 
-import { getAdminEmails, getSessionUser, requireAdmin, requireSessionUser } from "@/lib/auth/session";
-
 describe("getSessionUser", () => {
   it("returns null when Better Auth reports no session", async () => {
     getSessionMock.mockResolvedValueOnce(null);
@@ -43,7 +48,9 @@ describe("getSessionUser", () => {
   it("forwards the request headers verbatim to auth.api.getSession", async () => {
     getSessionMock.mockResolvedValueOnce(null);
     await getSessionUser();
-    expect(getSessionMock).toHaveBeenCalledWith({ headers: requestMock.headers });
+    expect(getSessionMock).toHaveBeenCalledWith({
+      headers: requestMock.headers,
+    });
   });
 });
 

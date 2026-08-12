@@ -9,54 +9,34 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SignInRouteImport } from './routes/sign-in'
-import { Route as RipRouteImport } from './routes/rip'
-import { Route as ReadingRouteImport } from './routes/reading'
-import { Route as LibraryRouteImport } from './routes/library'
-import { Route as FeedRouteImport } from './routes/feed'
-import { Route as CollectionRouteImport } from './routes/collection'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as RipIndexRouteImport } from './routes/rip.index'
-import { Route as PacksIndexRouteImport } from './routes/packs.index'
-import { Route as LibraryIndexRouteImport } from './routes/library.index'
+import { Route as CollectionRouteImport } from './routes/collection'
+import { Route as FeedRouteImport } from './routes/feed'
+import { Route as LibraryRouteImport } from './routes/library'
+import { Route as ReadingRouteImport } from './routes/reading'
+import { Route as RipRouteImport } from './routes/rip'
+import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
-import { Route as RipSlugRouteImport } from './routes/rip.$slug'
-import { Route as PacksNewRouteImport } from './routes/packs.new'
-import { Route as LibraryReadingRouteImport } from './routes/library.reading'
-import { Route as LibraryCollectionRouteImport } from './routes/library.collection'
-import { Route as BookIdRouteImport } from './routes/book.$id'
-import { Route as AdminIngestRouteImport } from './routes/admin.ingest'
 import { Route as AdminBooksRouteImport } from './routes/admin.books'
-import { Route as UUsernameIndexRouteImport } from './routes/u.$username.index'
+import { Route as AdminIngestRouteImport } from './routes/admin.ingest'
+import { Route as BookIdRouteImport } from './routes/book.$id'
+import { Route as LibraryIndexRouteImport } from './routes/library.index'
+import { Route as LibraryCollectionRouteImport } from './routes/library.collection'
+import { Route as LibraryReadingRouteImport } from './routes/library.reading'
+import { Route as PacksIndexRouteImport } from './routes/packs.index'
+import { Route as PacksNewRouteImport } from './routes/packs.new'
+import { Route as RipIndexRouteImport } from './routes/rip.index'
+import { Route as RipSlugRouteImport } from './routes/rip.$slug'
 import { Route as AdminPacksIndexRouteImport } from './routes/admin.packs.index'
-import { Route as UUsernameSlugRouteImport } from './routes/u.$username.$slug'
-import { Route as PacksIdEditRouteImport } from './routes/packs.$id.edit'
 import { Route as AdminPacksSlugRouteImport } from './routes/admin.packs.$slug'
+import { Route as PacksIdEditRouteImport } from './routes/packs.$id.edit'
+import { Route as UUsernameIndexRouteImport } from './routes/u.$username.index'
+import { Route as UUsernameSlugRouteImport } from './routes/u.$username.$slug'
 import { Route as RipUUsernameSlugRouteImport } from './routes/rip.u.$username.$slug'
 
-const SignInRoute = SignInRouteImport.update({
-  id: '/sign-in',
-  path: '/sign-in',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RipRoute = RipRouteImport.update({
-  id: '/rip',
-  path: '/rip',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ReadingRoute = ReadingRouteImport.update({
-  id: '/reading',
-  path: '/reading',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LibraryRoute = LibraryRouteImport.update({
-  id: '/library',
-  path: '/library',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FeedRoute = FeedRouteImport.update({
-  id: '/feed',
-  path: '/feed',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CollectionRoute = CollectionRouteImport.update({
@@ -64,59 +44,34 @@ const CollectionRoute = CollectionRouteImport.update({
   path: '/collection',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const FeedRoute = FeedRouteImport.update({
+  id: '/feed',
+  path: '/feed',
   getParentRoute: () => rootRouteImport,
 } as any)
-const RipIndexRoute = RipIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => RipRoute,
-} as any)
-const PacksIndexRoute = PacksIndexRouteImport.update({
-  id: '/packs/',
-  path: '/packs/',
+const LibraryRoute = LibraryRouteImport.update({
+  id: '/library',
+  path: '/library',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LibraryIndexRoute = LibraryIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => LibraryRoute,
+const ReadingRoute = ReadingRouteImport.update({
+  id: '/reading',
+  path: '/reading',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RipRoute = RipRouteImport.update({
+  id: '/rip',
+  path: '/rip',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignInRoute = SignInRouteImport.update({
+  id: '/sign-in',
+  path: '/sign-in',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/admin/',
   path: '/admin/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RipSlugRoute = RipSlugRouteImport.update({
-  id: '/$slug',
-  path: '/$slug',
-  getParentRoute: () => RipRoute,
-} as any)
-const PacksNewRoute = PacksNewRouteImport.update({
-  id: '/packs/new',
-  path: '/packs/new',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LibraryReadingRoute = LibraryReadingRouteImport.update({
-  id: '/reading',
-  path: '/reading',
-  getParentRoute: () => LibraryRoute,
-} as any)
-const LibraryCollectionRoute = LibraryCollectionRouteImport.update({
-  id: '/collection',
-  path: '/collection',
-  getParentRoute: () => LibraryRoute,
-} as any)
-const BookIdRoute = BookIdRouteImport.update({
-  id: '/book/$id',
-  path: '/book/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AdminIngestRoute = AdminIngestRouteImport.update({
-  id: '/admin/ingest',
-  path: '/admin/ingest',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminBooksRoute = AdminBooksRouteImport.update({
@@ -124,19 +79,59 @@ const AdminBooksRoute = AdminBooksRouteImport.update({
   path: '/admin/books',
   getParentRoute: () => rootRouteImport,
 } as any)
-const UUsernameIndexRoute = UUsernameIndexRouteImport.update({
-  id: '/u/$username/',
-  path: '/u/$username/',
+const AdminIngestRoute = AdminIngestRouteImport.update({
+  id: '/admin/ingest',
+  path: '/admin/ingest',
   getParentRoute: () => rootRouteImport,
+} as any)
+const BookIdRoute = BookIdRouteImport.update({
+  id: '/book/$id',
+  path: '/book/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibraryIndexRoute = LibraryIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => LibraryRoute,
+} as any)
+const LibraryCollectionRoute = LibraryCollectionRouteImport.update({
+  id: '/collection',
+  path: '/collection',
+  getParentRoute: () => LibraryRoute,
+} as any)
+const LibraryReadingRoute = LibraryReadingRouteImport.update({
+  id: '/reading',
+  path: '/reading',
+  getParentRoute: () => LibraryRoute,
+} as any)
+const PacksIndexRoute = PacksIndexRouteImport.update({
+  id: '/packs/',
+  path: '/packs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PacksNewRoute = PacksNewRouteImport.update({
+  id: '/packs/new',
+  path: '/packs/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RipIndexRoute = RipIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => RipRoute,
+} as any)
+const RipSlugRoute = RipSlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => RipRoute,
 } as any)
 const AdminPacksIndexRoute = AdminPacksIndexRouteImport.update({
   id: '/admin/packs/',
   path: '/admin/packs/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const UUsernameSlugRoute = UUsernameSlugRouteImport.update({
-  id: '/u/$username/$slug',
-  path: '/u/$username/$slug',
+const AdminPacksSlugRoute = AdminPacksSlugRouteImport.update({
+  id: '/admin/packs/$slug',
+  path: '/admin/packs/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PacksIdEditRoute = PacksIdEditRouteImport.update({
@@ -144,9 +139,14 @@ const PacksIdEditRoute = PacksIdEditRouteImport.update({
   path: '/packs/$id/edit',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminPacksSlugRoute = AdminPacksSlugRouteImport.update({
-  id: '/admin/packs/$slug',
-  path: '/admin/packs/$slug',
+const UUsernameIndexRoute = UUsernameIndexRouteImport.update({
+  id: '/u/$username/',
+  path: '/u/$username/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UUsernameSlugRoute = UUsernameSlugRouteImport.update({
+  id: '/u/$username/$slug',
+  path: '/u/$username/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RipUUsernameSlugRoute = RipUUsernameSlugRouteImport.update({
@@ -334,39 +334,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/sign-in': {
-      id: '/sign-in'
-      path: '/sign-in'
-      fullPath: '/sign-in'
-      preLoaderRoute: typeof SignInRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/rip': {
-      id: '/rip'
-      path: '/rip'
-      fullPath: '/rip'
-      preLoaderRoute: typeof RipRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/reading': {
-      id: '/reading'
-      path: '/reading'
-      fullPath: '/reading'
-      preLoaderRoute: typeof ReadingRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/library': {
-      id: '/library'
-      path: '/library'
-      fullPath: '/library'
-      preLoaderRoute: typeof LibraryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/feed': {
-      id: '/feed'
-      path: '/feed'
-      fullPath: '/feed'
-      preLoaderRoute: typeof FeedRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/collection': {
@@ -376,81 +348,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CollectionRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/feed': {
+      id: '/feed'
+      path: '/feed'
+      fullPath: '/feed'
+      preLoaderRoute: typeof FeedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/rip/': {
-      id: '/rip/'
-      path: '/'
-      fullPath: '/rip/'
-      preLoaderRoute: typeof RipIndexRouteImport
-      parentRoute: typeof RipRoute
-    }
-    '/packs/': {
-      id: '/packs/'
-      path: '/packs'
-      fullPath: '/packs/'
-      preLoaderRoute: typeof PacksIndexRouteImport
+    '/library': {
+      id: '/library'
+      path: '/library'
+      fullPath: '/library'
+      preLoaderRoute: typeof LibraryRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/library/': {
-      id: '/library/'
-      path: '/'
-      fullPath: '/library/'
-      preLoaderRoute: typeof LibraryIndexRouteImport
-      parentRoute: typeof LibraryRoute
+    '/reading': {
+      id: '/reading'
+      path: '/reading'
+      fullPath: '/reading'
+      preLoaderRoute: typeof ReadingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rip': {
+      id: '/rip'
+      path: '/rip'
+      fullPath: '/rip'
+      preLoaderRoute: typeof RipRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-in': {
+      id: '/sign-in'
+      path: '/sign-in'
+      fullPath: '/sign-in'
+      preLoaderRoute: typeof SignInRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/admin/': {
       id: '/admin/'
       path: '/admin'
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/rip/$slug': {
-      id: '/rip/$slug'
-      path: '/$slug'
-      fullPath: '/rip/$slug'
-      preLoaderRoute: typeof RipSlugRouteImport
-      parentRoute: typeof RipRoute
-    }
-    '/packs/new': {
-      id: '/packs/new'
-      path: '/packs/new'
-      fullPath: '/packs/new'
-      preLoaderRoute: typeof PacksNewRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/library/reading': {
-      id: '/library/reading'
-      path: '/reading'
-      fullPath: '/library/reading'
-      preLoaderRoute: typeof LibraryReadingRouteImport
-      parentRoute: typeof LibraryRoute
-    }
-    '/library/collection': {
-      id: '/library/collection'
-      path: '/collection'
-      fullPath: '/library/collection'
-      preLoaderRoute: typeof LibraryCollectionRouteImport
-      parentRoute: typeof LibraryRoute
-    }
-    '/book/$id': {
-      id: '/book/$id'
-      path: '/book/$id'
-      fullPath: '/book/$id'
-      preLoaderRoute: typeof BookIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/admin/ingest': {
-      id: '/admin/ingest'
-      path: '/admin/ingest'
-      fullPath: '/admin/ingest'
-      preLoaderRoute: typeof AdminIngestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/books': {
@@ -460,12 +397,68 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminBooksRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/u/$username/': {
-      id: '/u/$username/'
-      path: '/u/$username'
-      fullPath: '/u/$username/'
-      preLoaderRoute: typeof UUsernameIndexRouteImport
+    '/admin/ingest': {
+      id: '/admin/ingest'
+      path: '/admin/ingest'
+      fullPath: '/admin/ingest'
+      preLoaderRoute: typeof AdminIngestRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/book/$id': {
+      id: '/book/$id'
+      path: '/book/$id'
+      fullPath: '/book/$id'
+      preLoaderRoute: typeof BookIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/library/': {
+      id: '/library/'
+      path: '/'
+      fullPath: '/library/'
+      preLoaderRoute: typeof LibraryIndexRouteImport
+      parentRoute: typeof LibraryRoute
+    }
+    '/library/collection': {
+      id: '/library/collection'
+      path: '/collection'
+      fullPath: '/library/collection'
+      preLoaderRoute: typeof LibraryCollectionRouteImport
+      parentRoute: typeof LibraryRoute
+    }
+    '/library/reading': {
+      id: '/library/reading'
+      path: '/reading'
+      fullPath: '/library/reading'
+      preLoaderRoute: typeof LibraryReadingRouteImport
+      parentRoute: typeof LibraryRoute
+    }
+    '/packs/': {
+      id: '/packs/'
+      path: '/packs'
+      fullPath: '/packs/'
+      preLoaderRoute: typeof PacksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/packs/new': {
+      id: '/packs/new'
+      path: '/packs/new'
+      fullPath: '/packs/new'
+      preLoaderRoute: typeof PacksNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rip/': {
+      id: '/rip/'
+      path: '/'
+      fullPath: '/rip/'
+      preLoaderRoute: typeof RipIndexRouteImport
+      parentRoute: typeof RipRoute
+    }
+    '/rip/$slug': {
+      id: '/rip/$slug'
+      path: '/$slug'
+      fullPath: '/rip/$slug'
+      preLoaderRoute: typeof RipSlugRouteImport
+      parentRoute: typeof RipRoute
     }
     '/admin/packs/': {
       id: '/admin/packs/'
@@ -474,11 +467,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminPacksIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/u/$username/$slug': {
-      id: '/u/$username/$slug'
-      path: '/u/$username/$slug'
-      fullPath: '/u/$username/$slug'
-      preLoaderRoute: typeof UUsernameSlugRouteImport
+    '/admin/packs/$slug': {
+      id: '/admin/packs/$slug'
+      path: '/admin/packs/$slug'
+      fullPath: '/admin/packs/$slug'
+      preLoaderRoute: typeof AdminPacksSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/packs/$id/edit': {
@@ -488,11 +481,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PacksIdEditRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/packs/$slug': {
-      id: '/admin/packs/$slug'
-      path: '/admin/packs/$slug'
-      fullPath: '/admin/packs/$slug'
-      preLoaderRoute: typeof AdminPacksSlugRouteImport
+    '/u/$username/': {
+      id: '/u/$username/'
+      path: '/u/$username'
+      fullPath: '/u/$username/'
+      preLoaderRoute: typeof UUsernameIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/u/$username/$slug': {
+      id: '/u/$username/$slug'
+      path: '/u/$username/$slug'
+      fullPath: '/u/$username/$slug'
+      preLoaderRoute: typeof UUsernameSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/rip/u/$username/$slug': {

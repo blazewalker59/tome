@@ -285,7 +285,10 @@ body::after {
   z-index: -1;
   opacity: 0.1;
   background-image:
-    linear-gradient(color-mix(in oklab, var(--sea-ink) 12%, transparent) 1px, transparent 1px),
+    linear-gradient(
+      color-mix(in oklab, var(--sea-ink) 12%, transparent) 1px,
+      transparent 1px
+    ),
     linear-gradient(
       90deg,
       color-mix(in oklab, var(--sea-ink) 12%, transparent) 1px,
@@ -309,7 +312,11 @@ a:hover {
 code {
   font-size: 0.9em;
   border: 1px solid var(--line);
-  background: color-mix(in oklab, var(--surface-strong) 82%, var(--bg-base) 18%);
+  background: color-mix(
+    in oklab,
+    var(--surface-strong) 82%,
+    var(--bg-base) 18%
+  );
   border-radius: 7px;
   padding: 2px 7px;
 }
@@ -458,7 +465,8 @@ a {
   cursor: pointer;
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.18) inset,
-    0 10px 24px -10px color-mix(in oklab, var(--btn-primary-bg) 80%, transparent);
+    0 10px 24px -10px
+      color-mix(in oklab, var(--btn-primary-bg) 80%, transparent);
 }
 
 .btn-primary:hover {
@@ -489,7 +497,11 @@ a {
 .btn-secondary:hover {
   background: var(--btn-secondary-bg-hover);
   color: var(--btn-secondary-text);
-  border-color: color-mix(in oklab, var(--lagoon) 40%, var(--btn-secondary-border));
+  border-color: color-mix(
+    in oklab,
+    var(--lagoon) 40%,
+    var(--btn-secondary-border)
+  );
   transform: translateY(-1px);
 }
 
@@ -529,7 +541,11 @@ a {
 
 .chip:hover {
   color: var(--sea-ink);
-  border-color: color-mix(in oklab, var(--lagoon) 40%, var(--btn-secondary-border));
+  border-color: color-mix(
+    in oklab,
+    var(--lagoon) 40%,
+    var(--btn-secondary-border)
+  );
 }
 
 .chip[aria-pressed="true"],
@@ -571,13 +587,20 @@ a {
   scroll-snap-align: start;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
   backdrop-filter: blur(6px);
 }
 
 .view-tab:hover {
   color: var(--sea-ink);
-  border-color: color-mix(in oklab, var(--lagoon) 40%, var(--btn-secondary-border));
+  border-color: color-mix(
+    in oklab,
+    var(--lagoon) 40%,
+    var(--btn-secondary-border)
+  );
 }
 
 .view-tab.is-active,
@@ -816,13 +839,12 @@ body {
 .skeleton {
   position: relative;
   overflow: hidden;
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in oklab, var(--sand) 60%, var(--foam)) 0%,
-      color-mix(in oklab, var(--foam) 85%, var(--sand)) 50%,
-      color-mix(in oklab, var(--sand) 60%, var(--foam)) 100%
-    );
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--sand) 60%, var(--foam)) 0%,
+    color-mix(in oklab, var(--foam) 85%, var(--sand)) 50%,
+    color-mix(in oklab, var(--sand) 60%, var(--foam)) 100%
+  );
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.4s ease-in-out infinite;
 }

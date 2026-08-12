@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createFileRoute, redirect, useNavigate, useRouter } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  redirect,
+  useNavigate,
+  useRouter,
+} from "@tanstack/react-router";
 
+import type { MyPackDetail } from "@/server/user-packs";
 import { getMeFn } from "@/server/admin";
 import {
   addBookToPackDraftFn,
@@ -12,7 +18,6 @@ import {
   removeBookFromPackDraftFn,
   unpublishPackFn,
   updatePackDraftFn,
-  type MyPackDetail,
 } from "@/server/user-packs";
 import { BookSearchPanel } from "@/components/builder/BookSearchPanel";
 import { CoverImage } from "@/components/CoverImage";
@@ -142,7 +147,9 @@ function BuilderWorkspace({
               // dead weight; pass an empty set to suppress it.
               excludeBookIds={EMPTY_BOOK_ID_SET}
               onAddLocal={async (bookId) => {
-                await addBookToPackDraftFn({ data: { packId: pack.id, bookId } });
+                await addBookToPackDraftFn({
+                  data: { packId: pack.id, bookId },
+                });
                 await reload();
               }}
               onAddHardcover={async (hardcoverId) => {
@@ -200,8 +207,10 @@ function MetadataForm({
         data: {
           packId: pack.id,
           name: name.trim() || undefined,
-          description: description.trim().length > 0 ? description.trim() : null,
-          coverImageUrl: coverImageUrl.trim().length > 0 ? coverImageUrl.trim() : null,
+          description:
+            description.trim().length > 0 ? description.trim() : null,
+          coverImageUrl:
+            coverImageUrl.trim().length > 0 ? coverImageUrl.trim() : null,
           genreTags: genreTags
             .split(",")
             .map((t) => t.trim())
@@ -218,7 +227,10 @@ function MetadataForm({
   };
 
   return (
-    <form onSubmit={onSubmit} className="island-shell space-y-4 rounded-3xl p-5">
+    <form
+      onSubmit={onSubmit}
+      className="island-shell space-y-4 rounded-3xl p-5"
+    >
       <h2 className="island-kicker">Details</h2>
       <label className="block">
         <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
@@ -325,16 +337,13 @@ function CurrentBooksPanel({
       await removeBookFromPackDraftFn({ data: { packId: pack.id, bookId } });
       await onRemoved();
     } catch (err) {
-      // eslint-disable-next-line no-alert
       alert(err instanceof Error ? err.message : "Failed to remove");
     }
   };
 
   return (
     <section className="island-shell rounded-3xl p-5">
-      <h2 className="island-kicker mb-3">
-        Books · {pack.books.length}
-      </h2>
+      <h2 className="island-kicker mb-3">Books · {pack.books.length}</h2>
       {pack.books.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--sea-ink-soft)]">
           No books yet. Search above to add some.
@@ -426,20 +435,32 @@ function CompositionPanel({ pack }: { pack: MyPackDetail }) {
           check.ok ? "text-[var(--palm)]" : "text-[var(--sea-ink-soft)]"
         }`}
       >
-        {check.ok ? "Composition looks good." : "Meet every bar above to publish."}
+        {check.ok
+          ? "Composition looks good."
+          : "Meet every bar above to publish."}
       </p>
     </section>
   );
 }
 
-function Meter({ label, have, need }: { label: string; have: number; need: number }) {
+function Meter({
+  label,
+  have,
+  need,
+}: {
+  label: string;
+  have: number;
+  need: number;
+}) {
   const pct = Math.min(100, (have / Math.max(need, 1)) * 100);
   const met = have >= need;
   return (
     <li>
       <div className="flex items-center justify-between">
         <span className="text-[var(--sea-ink)]">{label}</span>
-        <span className={met ? "text-[var(--palm)]" : "text-[var(--sea-ink-soft)]"}>
+        <span
+          className={met ? "text-[var(--palm)]" : "text-[var(--sea-ink-soft)]"}
+        >
           {have}/{need}
         </span>
       </div>
@@ -458,14 +479,17 @@ function Meter({ label, have, need }: { label: string; have: number; need: numbe
 // ─────────────────────────────────────────────────────────────────────────────
 
 function UnlockPanel() {
-  const [state, setState] = useState<{ have: number; need: number } | null>(null);
+  const [state, setState] = useState<{ have: number; need: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const result = await getMyPublishUnlockFn();
-        if (!cancelled) setState({ have: result.finishedBooks, need: result.threshold });
+        if (!cancelled)
+          setState({ have: result.finishedBooks, need: result.threshold });
       } catch {
         // Swallow — the meter is advisory; failure to load just hides it.
       }
@@ -480,7 +504,11 @@ function UnlockPanel() {
     <section className="island-shell rounded-3xl p-5">
       <h2 className="island-kicker mb-3">Publish unlock</h2>
       <ul className="space-y-2 text-xs">
-        <Meter label="Books you've finished" have={state.have} need={state.need} />
+        <Meter
+          label="Books you've finished"
+          have={state.have}
+          need={state.need}
+        />
       </ul>
       <p className="mt-3 text-[11px] text-[var(--sea-ink-soft)]">
         Mark books as read in your Library to raise this.

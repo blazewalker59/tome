@@ -25,14 +25,16 @@ import { getAdminEmails, getSessionUser } from "@/lib/auth/session";
  * Never throws for "not an admin" — thrown errors are for exceptional
  * failures (e.g. auth subsystem down), not for routine branching.
  */
-export const checkAdminFn = createServerFn({ method: "GET" }).handler(async () => {
-  const user = await getSessionUser();
-  if (!user) return { signedIn: false as const, isAdmin: false as const };
-  const allowed = await getAdminEmails();
-  const email = user.email?.toLowerCase();
-  const isAdmin = Boolean(email && allowed.has(email));
-  return { signedIn: true as const, isAdmin, email: user.email ?? null };
-});
+export const checkAdminFn = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const user = await getSessionUser();
+    if (!user) return { signedIn: false as const, isAdmin: false as const };
+    const allowed = await getAdminEmails();
+    const email = user.email?.toLowerCase();
+    const isAdmin = Boolean(email && allowed.has(email));
+    return { signedIn: true as const, isAdmin, email: user.email ?? null };
+  },
+);
 
 /**
  * Read-only probe for the current session's lightweight profile.

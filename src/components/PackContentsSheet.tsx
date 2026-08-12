@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { motion, useMotionValue, animate } from "motion/react";
+import { animate, motion, useMotionValue } from "motion/react";
 import { Check, Gem, X } from "lucide-react";
-import { CoverImage } from "@/components/CoverImage";
-import { RARITY_STYLES } from "@/lib/cards/style";
 import type { BookRow } from "@/lib/cards/book-to-card";
 import type { Rarity } from "@/lib/cards/types";
+import { CoverImage } from "@/components/CoverImage";
+import { RARITY_STYLES } from "@/lib/cards/style";
 
 /**
  * Shared "contents of this pack" bottom sheet. Originally lived inside
@@ -149,7 +149,7 @@ export function PackContentsSheet({
   // title so the list reads alphabetically — gives the set a stable
   // predictable feel rather than looking randomly sorted.
   const grouped = useMemo(() => {
-    const buckets: Record<Rarity, BookRow[]> = {
+    const buckets: Record<Rarity, Array<BookRow>> = {
       common: [],
       uncommon: [],
       rare: [],
@@ -244,7 +244,10 @@ export function PackContentsSheet({
       >
         {/* Grabber handle — still decorative but now backed by a
             real dismiss gesture on the whole panel. */}
-        <div aria-hidden className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--line)]" />
+        <div
+          aria-hidden
+          className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--line)]"
+        />
 
         <div className="mb-4 flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -252,7 +255,9 @@ export function PackContentsSheet({
             <h2 className="display-title mt-0.5 truncate text-lg font-bold text-[var(--sea-ink)]">
               {packName}
             </h2>
-            <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">{resolvedSubhead}</p>
+            <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+              {resolvedSubhead}
+            </p>
           </div>
           <button
             type="button"
@@ -298,7 +303,9 @@ export function PackContentsSheet({
                     {style.label}
                   </h3>
                   <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sea-ink-soft)] tabular-nums">
-                    {ownedCount !== null ? `${ownedCount}/${entries.length}` : entries.length}
+                    {ownedCount !== null
+                      ? `${ownedCount}/${entries.length}`
+                      : entries.length}
                   </span>
                 </header>
                 <ul className="space-y-1.5">
@@ -361,7 +368,9 @@ function BookRowItem({
         <p className="truncate text-sm font-semibold leading-tight text-[var(--sea-ink)]">
           {book.title}
         </p>
-        <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">{author}</p>
+        <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
+          {author}
+        </p>
       </div>
       {owned === true && (
         <span

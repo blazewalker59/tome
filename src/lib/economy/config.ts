@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
+import type { EconomyConfig } from "@/lib/economy/defaults";
 import { getDb } from "@/db/client";
 import { economyConfig } from "@/db/schema";
-import { DEFAULTS, type EconomyConfig } from "@/lib/economy/defaults";
+import { DEFAULTS } from "@/lib/economy/defaults";
 
 /**
  * Runtime loader for the shard economy config. The singleton row
@@ -65,16 +66,22 @@ function mergeWithDefaults(raw: Partial<EconomyConfig>): EconomyConfig {
     welcomeGrant: raw.welcomeGrant ?? DEFAULTS.welcomeGrant,
     packCost: raw.packCost ?? DEFAULTS.packCost,
     dupeRefund: {
-      shardsPerDupe: raw.dupeRefund?.shardsPerDupe ?? DEFAULTS.dupeRefund.shardsPerDupe,
+      shardsPerDupe:
+        raw.dupeRefund?.shardsPerDupe ?? DEFAULTS.dupeRefund.shardsPerDupe,
     },
     transitions: {
       startReading: {
-        shards: raw.transitions?.startReading?.shards ?? DEFAULTS.transitions.startReading.shards,
+        shards:
+          raw.transitions?.startReading?.shards ??
+          DEFAULTS.transitions.startReading.shards,
         dailyCap:
-          raw.transitions?.startReading?.dailyCap ?? DEFAULTS.transitions.startReading.dailyCap,
+          raw.transitions?.startReading?.dailyCap ??
+          DEFAULTS.transitions.startReading.dailyCap,
       },
       finishReading: {
-        shards: raw.transitions?.finishReading?.shards ?? DEFAULTS.transitions.finishReading.shards,
+        shards:
+          raw.transitions?.finishReading?.shards ??
+          DEFAULTS.transitions.finishReading.shards,
         weeklyCap:
           raw.transitions?.finishReading?.weeklyCap ??
           DEFAULTS.transitions.finishReading.weeklyCap,
@@ -86,11 +93,14 @@ function mergeWithDefaults(raw: Partial<EconomyConfig>): EconomyConfig {
         DEFAULTS.publishUnlock.finishedBookThreshold,
     },
     packComposition: {
-      minBooks: raw.packComposition?.minBooks ?? DEFAULTS.packComposition.minBooks,
+      minBooks:
+        raw.packComposition?.minBooks ?? DEFAULTS.packComposition.minBooks,
       minUncommonOrAbove:
-        raw.packComposition?.minUncommonOrAbove ?? DEFAULTS.packComposition.minUncommonOrAbove,
+        raw.packComposition?.minUncommonOrAbove ??
+        DEFAULTS.packComposition.minUncommonOrAbove,
       minRareOrAbove:
-        raw.packComposition?.minRareOrAbove ?? DEFAULTS.packComposition.minRareOrAbove,
+        raw.packComposition?.minRareOrAbove ??
+        DEFAULTS.packComposition.minRareOrAbove,
     },
   };
 }

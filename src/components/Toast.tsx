@@ -85,7 +85,7 @@ export function useToast(): ToastContextValue {
 }
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [toasts, setToasts] = useState<ToastEntry[]>([]);
+  const [toasts, setToasts] = useState<Array<ToastEntry>>([]);
   // Stable id counter across renders; survives React 18 StrictMode
   // double-invokes because it's in a ref, not state.
   const nextId = useRef(1);
@@ -251,13 +251,22 @@ function ToastItem({
           style={{ background: accentSoft, color: accent }}
           aria-hidden
         >
-          <Gem className="h-4 w-4" fill={accent} fillOpacity={0.2} strokeWidth={2} />
+          <Gem
+            className="h-4 w-4"
+            fill={accent}
+            fillOpacity={0.2}
+            strokeWidth={2}
+          />
         </span>
       ) : null}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">{toast.title}</p>
+        <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
+          {toast.title}
+        </p>
         {toast.description ? (
-          <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">{toast.description}</p>
+          <p className="mt-0.5 truncate text-xs text-[var(--sea-ink-soft)]">
+            {toast.description}
+          </p>
         ) : null}
       </div>
       {toast.amount > 0 ? (

@@ -1,11 +1,9 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { Link, createFileRoute, notFound } from "@tanstack/react-router";
 
+import type { PublicPackPayload } from "@/server/user-packs";
 import { CoverImage } from "@/components/CoverImage";
 import { getMeFn } from "@/server/admin";
-import {
-  getPublicPackFn,
-  type PublicPackPayload,
-} from "@/server/user-packs";
+import { getPublicPackFn } from "@/server/user-packs";
 
 interface MeView {
   id: string;

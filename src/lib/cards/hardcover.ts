@@ -14,6 +14,7 @@
 
 import type { InferInsertModel } from "drizzle-orm";
 import type { books } from "@/db/schema";
+import { setAuthors } from "@/db/authors";
 
 /**
  * Minimal shape of a book object as returned by our ingestion query
@@ -69,10 +70,10 @@ type BookInsertRow = InferInsertModel<typeof books>;
  */
 export function extractAuthors(
   contributions: HardcoverBook["contributions"],
-): string[] {
+): Array<string> {
   if (!contributions) return [];
   const seen = new Set<string>();
-  const authors: string[] = [];
+  const authors: Array<string> = [];
   for (const c of contributions) {
     const role = c.contribution ?? "Author";
     if (role !== "Author") continue;
@@ -138,7 +139,11 @@ export function bookResponseToRow(
   return {
     hardcoverId: book.id,
     title: book.title.trim(),
-    authors: extractAuthors(book.contributions),
+    // `setAuthors` emits BOTH `authors` (the JSON array) and `authorsText`
+    // (the flattened search key). They must always be written together — see
+    // src/db/authors.ts. Every path that inserts a book goes through this
+    // function, which is what keeps the pair honest.
+    ...setAuthors(extractAuthors(book.contributions)),
     coverUrl: extractCoverUrl(book),
     description: book.description ?? null,
     pageCount: book.pages ?? null,
@@ -150,6 +155,10 @@ export function bookResponseToRow(
     averageRating: normalizeAverageRating(book.rating ?? null),
     // Full original payload for debugging / future reprocessing without
     // re-hitting the API. Bounded in practice (a book record is < 4KB).
-    rawMetadata: { source: "hardcover", fetchedAt: new Date().toISOString(), book },
+    rawMetadata: {
+      source: "hardcover",
+      fetchedAt: new Date().toISOString(),
+      book,
+    },
   };
 }

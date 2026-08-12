@@ -1,38 +1,61 @@
 import { relations, sql } from "drizzle-orm";
 import {
-  bigint,
-  boolean,
   index,
   integer,
-  jsonb,
-  pgEnum,
-  pgTable,
   primaryKey,
-  smallint,
+  sqliteTable,
   text,
-  timestamp,
   unique,
   uniqueIndex,
-  uuid,
-} from "drizzle-orm/pg-core";
+} from "drizzle-orm/sqlite-core";
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Postgres → SQLite (Cloudflare D1) type mapping
+//
+// This schema was migrated off Neon Postgres. The substitutions, once, so the
+// rest of the file reads without commentary:
+//
+//   uuid().defaultRandom()  → text().$defaultFn(crypto.randomUUID)
+//   timestamp(withTimezone) → integer({ mode: "timestamp" })  [epoch SECONDS]
+//   boolean()               → integer({ mode: "boolean" })    [0/1]
+//   jsonb()                 → text({ mode: "json" })
+//   pgEnum()                → text({ enum: [...] })
+//   bigint() / smallint()   → integer()
+//   text().array()          → text({ mode: "json" }).$type<Array<string>>()
+//
+// UUID primary keys are kept (as text) rather than switching to autoincrement
+// integers: the migrated rows carry their original ids, every FK already
+// points at them, and Better Auth is configured to mint `crypto.randomUUID()`
+// so newly-created rows match the existing shape.
+//
+// Timestamps are epoch SECONDS, not milliseconds — `mode: "timestamp"` is
+// seconds and `mode: "timestamp_ms"` is milliseconds. Everything here uses
+// seconds, and the `unixepoch()` SQL default agrees. Mixing the two silently
+// produces dates in 1970 or the year 56000, so do not change one without the
+// other.
+//
+// SQLite requires expression defaults to be parenthesised, hence
+// `sql`(unixepoch())`` rather than `sql`unixepoch()``.
+// ──────────────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Enums
+//
+// SQLite has no enum type. Drizzle's `{ enum: [...] }` is a TypeScript-level
+// constraint only — it narrows the column's type but emits no CHECK. That is
+// the same practical guarantee the app had before (values were always written
+// through typed helpers), minus database-level rejection of a bad literal.
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Genres are open-ended kebab-case strings (e.g. `science-fiction`,
-// `historical-fiction`, `biography`) so editorial curators can add new
-// genres without a schema change. Stored as plain `text` on `books`.
-
-export const cardRarity = pgEnum("card_rarity", [
+export const CARD_RARITIES = [
   "common",
   "uncommon",
   "rare",
   "foil",
   "legendary",
-]);
+] as const;
 
-export const readStatus = pgEnum("read_status", ["unread", "reading", "read"]);
+export const READ_STATUSES = ["unread", "reading", "read"] as const;
 
 /**
  * Independent reading-log state. Distinct from `collection_cards` (which
@@ -42,48 +65,49 @@ export const readStatus = pgEnum("read_status", ["unread", "reading", "read"]);
  * their reading list. The two domains overlap but are not the same.
  *
  * TBR is the user's to-read queue; `reading` is in-progress; `finished`
- * is completed. DNF / abandoned is intentionally omitted in v1 — if we
- * add it later it's a separate enum value, not a new table.
+ * is completed. DNF / abandoned is intentionally omitted in v1.
  */
-export const readingStatus = pgEnum("reading_status", [
-  "tbr",
-  "reading",
-  "finished",
-]);
+export const READING_STATUSES = ["tbr", "reading", "finished"] as const;
+
+export type CardRarity = (typeof CARD_RARITIES)[number];
+export type ReadStatusValue = (typeof READ_STATUSES)[number];
+export type ReadingStatusValue = (typeof READING_STATUSES)[number];
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Auth tables (Better Auth core schema)
 //
 // Better Auth canonical table names are singular (user, session, account,
 // verification). We keep our existing plural `users` because every FK in the
-// schema already says `user_id` → `users.id`. The mapping `user → users` is
-// done at the adapter layer in `src/lib/auth/server.ts` via
-// `user: { modelName: 'users' }`.
-//
-// We configure Better Auth to generate UUIDs (advanced.database.generateId
-// = "uuid") so all `id` columns stay `uuid` and every existing FK continues
-// to typecheck. That's a big simplification vs flipping everything to text.
+// schema already says `user_id` → `users.id`. The mapping is done at the
+// adapter layer in `src/lib/auth/server.ts` via `usePlural: true`.
 //
 // Our application-specific user fields (`username`, `display_name`,
 // `avatar_url`) live on this table as Better Auth `additionalFields`. The
 // username is derived in a `databaseHooks.user.create.before` hook on first
-// sign-in, replacing the old `handle_new_user()` SQL trigger.
+// sign-in.
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const users = pgTable("users", {
-  // Better Auth writes this; we declare it NOT NULL + PK.
-  id: uuid("id").primaryKey().defaultRandom(),
+export const users = sqliteTable("users", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
   // Better Auth core fields.
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
-  emailVerified: boolean("email_verified").notNull().default(false),
+  emailVerified: integer("email_verified", { mode: "boolean" })
+    .notNull()
+    .default(false),
   image: text("image"),
   // Our app fields.
   username: text("username").notNull().unique(),
   displayName: text("display_name"),
   avatarUrl: text("avatar_url"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
 });
 
 /**
@@ -91,19 +115,25 @@ export const users = pgTable("users", {
  * Sessions cascade-delete with the user. Expired rows are swept by
  * Better Auth itself on each `getSession()` call.
  */
-export const sessions = pgTable(
+export const sessions = sqliteTable(
   "sessions",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     token: text("token").notNull().unique(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
   },
   (t) => [index("sessions_user_idx").on(t.userId)],
 );
@@ -113,24 +143,34 @@ export const sessions = pgTable(
  * — e.g. a Google account connected to a Tome user. For email/password
  * auth this is where the password hash would live; we don't use that.
  */
-export const accounts = pgTable(
+export const accounts = sqliteTable(
   "accounts",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     accountId: text("account_id").notNull(),
     providerId: text("provider_id").notNull(),
     accessToken: text("access_token"),
     refreshToken: text("refresh_token"),
-    accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
-    refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }),
+    accessTokenExpiresAt: integer("access_token_expires_at", {
+      mode: "timestamp",
+    }),
+    refreshTokenExpiresAt: integer("refresh_token_expires_at", {
+      mode: "timestamp",
+    }),
     scope: text("scope"),
     idToken: text("id_token"),
     password: text("password"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
   },
   (t) => [
     index("accounts_user_idx").on(t.userId),
@@ -143,15 +183,21 @@ export const accounts = pgTable(
  * verification, password reset, and OAuth state. Not user-cascaded — rows
  * are transient and Better Auth cleans them up by `expiresAt`.
  */
-export const verifications = pgTable(
+export const verifications = sqliteTable(
   "verifications",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
     identifier: text("identifier").notNull(),
     value: text("value").notNull(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
   },
   (t) => [index("verifications_identifier_idx").on(t.identifier)],
 );
@@ -160,16 +206,18 @@ export const verifications = pgTable(
 // Social graph
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const follows = pgTable(
+export const follows = sqliteTable(
   "follows",
   {
-    followerId: uuid("follower_id")
+    followerId: text("follower_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    followeeId: uuid("followee_id")
+    followeeId: text("followee_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
   },
   (t) => [primaryKey({ columns: [t.followerId, t.followeeId] })],
 );
@@ -183,28 +231,48 @@ export const follows = pgTable(
  * the same suit/rarity/mood for a given book. Personal data lives on
  * `collection_cards`.
  */
-export const books = pgTable(
+export const books = sqliteTable(
   "books",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    hardcoverId: bigint("hardcover_id", { mode: "number" }).notNull().unique(),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    hardcoverId: integer("hardcover_id").notNull().unique(),
     title: text("title").notNull(),
-    authors: text("authors")
-      .array()
+    /**
+     * Was `text[]` on Postgres. SQLite has no array type, so this is a JSON
+     * array. Reads deserialize transparently through Drizzle; what it costs
+     * us is the ability to search inside it from SQL — Postgres could do
+     * `EXISTS (SELECT 1 FROM unnest(authors) a WHERE a ILIKE $1)`, and SQLite
+     * cannot without json_each gymnastics that no index can serve.
+     *
+     * `authorsText` below is the answer to that. Keep them in lockstep: every
+     * write to `authors` must write `authorsText` too. `setAuthors()` in
+     * src/db/authors.ts is the single helper that does this — use it rather
+     * than assigning either column directly.
+     */
+    authors: text("authors", { mode: "json" })
+      .$type<Array<string>>()
       .notNull()
-      .default(sql`ARRAY[]::text[]`),
+      .default(sql`'[]'`),
+    /**
+     * Denormalized, space-joined, lowercased copy of `authors`, maintained
+     * solely so author search is a plain indexable `LIKE`. Never read this
+     * for display — it is a search key, not data.
+     */
+    authorsText: text("authors_text").notNull().default(""),
     coverUrl: text("cover_url"),
     description: text("description"),
     pageCount: integer("page_count"),
-    publishedYear: smallint("published_year"),
+    publishedYear: integer("published_year"),
 
     genre: text("genre").notNull(),
-    rarity: cardRarity("rarity").notNull(),
+    rarity: text("rarity", { enum: CARD_RARITIES }).notNull(),
     /** Curated controlled vocabulary (max 3 enforced in app layer). */
-    moodTags: text("mood_tags")
-      .array()
+    moodTags: text("mood_tags", { mode: "json" })
+      .$type<Array<string>>()
       .notNull()
-      .default(sql`ARRAY[]::text[]`),
+      .default(sql`'[]'`),
 
     /** Hardcover ratings count — input to rarity bucket. */
     ratingsCount: integer("ratings_count").notNull().default(0),
@@ -217,7 +285,7 @@ export const books = pgTable(
      */
     averageRating: text("average_rating"),
 
-    rawMetadata: jsonb("raw_metadata"),
+    rawMetadata: text("raw_metadata", { mode: "json" }),
     /**
      * Who ingested this book and when. Null for admin-ingested rows
      * (the original editorial catalog) and for rows created before this
@@ -225,12 +293,16 @@ export const books = pgTable(
      * on-demand from the pack builder so we can rate-limit and, later,
      * flag user-ingested rows for admin review.
      */
-    ingestedByUserId: uuid("ingested_by_user_id").references(() => users.id, {
+    ingestedByUserId: text("ingested_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
-    ingestedAt: timestamp("ingested_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    ingestedAt: integer("ingested_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
     /**
      * Soft-delete tombstone. Null = live; non-null = removed from
      * curation surfaces (admin search defaults, builder local search,
@@ -245,7 +317,7 @@ export const books = pgTable(
      * re-ingesting a soft-deleted hardcover_id revives the row in
      * place rather than colliding on the unique constraint.
      */
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
   },
   (t) => [
     index("books_rarity_idx").on(t.rarity),
@@ -253,13 +325,17 @@ export const books = pgTable(
     // Covers the per-user throttle query: "how many books has this user
     // ingested in the last hour?" → scans by (ingested_by, ingested_at).
     index("books_ingested_by_at_idx").on(t.ingestedByUserId, t.ingestedAt),
-    // Partial index over live rows. Every catalog-facing query
-    // (admin list, builder search, addBookToPack guards) filters on
-    // `deleted_at IS NULL`; making that the index predicate keeps
-    // the index small and lets Postgres skip the tombstone scan.
+    // Serves the author search (`authors_text LIKE '%needle%'`). A trailing
+    // wildcard cannot use this index, but it keeps the scan to one narrow
+    // column instead of the whole row.
+    index("books_authors_text_idx").on(t.authorsText),
+    // Partial index over live rows. Every catalog-facing query filters on
+    // `deleted_at IS NULL`; making that the index predicate keeps the index
+    // small and lets the planner skip the tombstone scan. SQLite supports
+    // partial indexes, so this survives the migration unchanged.
     index("books_live_created_idx")
       .on(t.createdAt)
-      .where(sql`${t.deletedAt} IS NULL`),
+      .where(sql`deleted_at IS NULL`),
   ],
 );
 
@@ -274,15 +350,17 @@ export const books = pgTable(
 // not the DB, so we can still run data migrations).
 //
 // Slugs are scoped per-creator: each user has their own namespace, plus
-// the editorial namespace (creator_id IS NULL) is its own. Postgres
-// treats NULLs as distinct in ordinary unique constraints, so we use two
-// partial unique indexes instead of a single composite unique.
+// the editorial namespace (creator_id IS NULL) is its own. Like Postgres,
+// SQLite treats NULLs as distinct in ordinary unique constraints, so we
+// keep the two partial unique indexes rather than one composite unique.
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const packs = pgTable(
+export const packs = sqliteTable(
   "packs",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
     slug: text("slug").notNull(),
     name: text("name").notNull(),
     description: text("description"),
@@ -291,23 +369,27 @@ export const packs = pgTable(
      * pack. Deleting the creator nulls this out so their published packs
      * remain accessible as orphaned editorial rather than vanishing.
      */
-    creatorId: uuid("creator_id").references(() => users.id, { onDelete: "set null" }),
+    creatorId: text("creator_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     /**
      * Drafts are private to the creator. Flipping to true requires passing
      * the composition validator; un-publishing flips it back (and allows
      * edits again). Editorial packs are always public.
      */
-    isPublic: boolean("is_public").notNull().default(false),
-    publishedAt: timestamp("published_at", { withTimezone: true }),
+    isPublic: integer("is_public", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    publishedAt: integer("published_at", { mode: "timestamp" }),
     /**
      * Creator-curated genre tags (1–3) shown on the public pack page and
      * used for discovery. Distinct from per-book `books.genre` — a pack's
      * tags describe the curated collection, not any single book in it.
      */
-    genreTags: text("genre_tags")
-      .array()
+    genreTags: text("genre_tags", { mode: "json" })
+      .$type<Array<string>>()
       .notNull()
-      .default(sql`ARRAY[]::text[]`),
+      .default(sql`'[]'`),
     /**
      * Denormalized trending signal: rip count over the last 7 days.
      * Bumped by `recordRipFn`; the reset mechanism (scheduled job) is
@@ -317,7 +399,9 @@ export const packs = pgTable(
      */
     ripCountWeek: integer("rip_count_week").notNull().default(0),
     coverImageUrl: text("cover_image_url"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
   },
   (t) => [
     index("packs_creator_idx").on(t.creatorId),
@@ -333,13 +417,13 @@ export const packs = pgTable(
   ],
 );
 
-export const packBooks = pgTable(
+export const packBooks = sqliteTable(
   "pack_books",
   {
-    packId: uuid("pack_id")
+    packId: text("pack_id")
       .notNull()
       .references(() => packs.id, { onDelete: "cascade" }),
-    bookId: uuid("book_id")
+    bookId: text("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "restrict" }),
     /**
@@ -366,22 +450,29 @@ export const packBooks = pgTable(
  * ownership — a user can log a book they've never ripped. Acquiring a
  * card does not implicitly add it to the reading list, and vice versa.
  */
-export const collectionCards = pgTable(
+export const collectionCards = sqliteTable(
   "collection_cards",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    bookId: uuid("book_id")
+    bookId: text("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "restrict" }),
     quantity: integer("quantity").notNull().default(1),
-    firstAcquiredFromPackId: uuid("first_acquired_from_pack_id").references(() => packs.id, {
-      onDelete: "set null",
-    }),
-    firstAcquiredAt: timestamp("first_acquired_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    firstAcquiredFromPackId: text("first_acquired_from_pack_id").references(
+      () => packs.id,
+      { onDelete: "set null" },
+    ),
+    firstAcquiredAt: integer("first_acquired_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
   },
   (t) => [unique("collection_user_book_uq").on(t.userId, t.bookId)],
 );
@@ -399,25 +490,31 @@ export const collectionCards = pgTable(
 // a row here does not re-grant shards.
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const readingEntries = pgTable(
+export const readingEntries = sqliteTable(
   "reading_entries",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    bookId: uuid("book_id")
+    bookId: text("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "restrict" }),
-    status: readingStatus("status").notNull().default("tbr"),
+    status: text("status", { enum: READING_STATUSES }).notNull().default("tbr"),
     /** Stamped when status first transitions into `reading`. Null until then. */
-    startedAt: timestamp("started_at", { withTimezone: true }),
+    startedAt: integer("started_at", { mode: "timestamp" }),
     /** Stamped when status first transitions into `finished`. Null until then. */
-    finishedAt: timestamp("finished_at", { withTimezone: true }),
-    rating: smallint("rating"), // 1..5, validated in app
+    finishedAt: integer("finished_at", { mode: "timestamp" }),
+    rating: integer("rating"), // 1..5, validated in app
     note: text("note"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
   },
   (t) => [
     unique("reading_entries_user_book_uq").on(t.userId, t.bookId),
@@ -435,19 +532,28 @@ export const readingEntries = pgTable(
 // Pack rips (audit log + bonus tracking)
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const packRips = pgTable(
+export const packRips = sqliteTable(
   "pack_rips",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    packId: uuid("pack_id")
+    packId: text("pack_id")
       .notNull()
       .references(() => packs.id, { onDelete: "restrict" }),
-    rippedAt: timestamp("ripped_at", { withTimezone: true }).notNull().defaultNow(),
-    /** Snapshot of the rip result so animations can replay & we can audit. */
-    pulledBookIds: uuid("pulled_book_ids").array().notNull(),
+    rippedAt: integer("ripped_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    /**
+     * Snapshot of the rip result so animations can replay & we can audit.
+     * Was `uuid[]`; now a JSON array of id strings.
+     */
+    pulledBookIds: text("pulled_book_ids", { mode: "json" })
+      .$type<Array<string>>()
+      .notNull(),
     duplicates: integer("duplicates").notNull().default(0),
     shardsAwarded: integer("shards_awarded").notNull().default(0),
   },
@@ -455,11 +561,8 @@ export const packRips = pgTable(
     index("pack_rips_user_idx").on(t.userId, t.rippedAt),
     // Supports the trending sort on Discover: "public packs ordered by
     // rip count over the last 7 days." The query filters on
-    // `pack_id IN (...) AND ripped_at > now() - 7d`, which is a
-    // textbook (pack_id, ripped_at) lookup. Without this index the
-    // planner falls back to a seq scan over the whole rip log every
-    // time /rip loads — fine while the table is tiny, but it'll bite
-    // the moment community packs see real traffic.
+    // `pack_id IN (...) AND ripped_at > <cutoff>`, which is a textbook
+    // (pack_id, ripped_at) lookup.
     index("pack_rips_pack_idx").on(t.packId, t.rippedAt),
   ],
 );
@@ -471,14 +574,13 @@ export const packRips = pgTable(
 // purchases, dupe refunds — is a row in `shard_events`. Balance and cap
 // windows are derived from the ledger:
 //
-//   balance   = SUM(delta) WHERE user_id = $1
-//   daily cap = COUNT(*)  WHERE user_id = $1 AND reason = $2
-//                                AND created_at > now() - interval '1 day'
+//   balance   = SUM(delta) WHERE user_id = ?
+//   daily cap = COUNT(*)  WHERE user_id = ? AND reason = ?
+//                                AND created_at > unixepoch('now', '-1 day')
 //
 // `shard_balances` survives as a write-through cache so the Header can
-// read balance in one indexed row without a reduction. Every write to
-// the ledger bumps the cache inside the same transaction; the cache
-// is always reconstructible from the ledger if it drifts.
+// read balance in one indexed row without a reduction. The cache is
+// always reconstructible from the ledger if it drifts.
 //
 // The partial unique index on (user_id, reason, ref_book_id) enforces
 // "each book earns each transition at most once, ever" at the database
@@ -487,11 +589,13 @@ export const packRips = pgTable(
 // the table but skip this constraint (different reasons).
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const shardEvents = pgTable(
+export const shardEvents = sqliteTable(
   "shard_events",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     /**
@@ -500,10 +604,9 @@ export const shardEvents = pgTable(
      */
     delta: integer("delta").notNull(),
     /**
-     * String enum (kept as `text` rather than a pgEnum so we can add new
-     * reasons without a migration). App-layer validation keeps this tight.
-     * Current reasons: welcome_grant, start_reading, finish_reading,
-     * dupe_refund, rip.
+     * String enum kept as free `text` so new reasons don't require a
+     * migration. App-layer validation keeps this tight. Current reasons:
+     * welcome_grant, start_reading, finish_reading, dupe_refund, rip.
      */
     reason: text("reason").notNull(),
     /**
@@ -512,24 +615,35 @@ export const shardEvents = pgTable(
      * specific rip row. Nullable because not every reason ties back to a
      * specific row (welcome_grant, future manual adjustments).
      */
-    refBookId: uuid("ref_book_id").references(() => books.id, {
+    refBookId: text("ref_book_id").references(() => books.id, {
       onDelete: "set null",
     }),
-    refPackId: uuid("ref_pack_id").references(() => packs.id, {
+    refPackId: text("ref_pack_id").references(() => packs.id, {
       onDelete: "set null",
     }),
-    refRipId: uuid("ref_rip_id").references(() => packRips.id, {
+    refRipId: text("ref_rip_id").references(() => packRips.id, {
       onDelete: "set null",
     }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
   },
   (t) => [
     // Cap-window queries scan by (user, reason, time). This covers
     // them and the balance sum (which needs only `user_id`).
-    index("shard_events_user_reason_created_idx").on(t.userId, t.reason, t.createdAt),
+    index("shard_events_user_reason_created_idx").on(
+      t.userId,
+      t.reason,
+      t.createdAt,
+    ),
     // Enforces once-ever-per-book for the two reasons that need it.
     // Partial index so rip debits / dupe refunds (same book, many times)
     // don't conflict.
+    //
+    // SQLite matches an upsert's conflict target against a partial index by
+    // the target columns plus the WHERE predicate, exactly as Postgres did,
+    // so `onConflictDoNothing` in src/lib/economy/ledger.ts must keep
+    // repeating this predicate verbatim. Keep the two in sync.
     uniqueIndex("shard_events_once_per_book_uq")
       .on(t.userId, t.reason, t.refBookId)
       .where(sql`reason in ('start_reading', 'finish_reading')`),
@@ -537,17 +651,19 @@ export const shardEvents = pgTable(
 );
 
 /**
- * Running balance cache — one row per user. Derived state: updated
- * inside the same transaction as every ledger insert. If this ever
- * drifts from the ledger, the ledger wins and the cache can be rebuilt
- * via `SELECT user_id, SUM(delta) FROM shard_events GROUP BY user_id`.
+ * Running balance cache — one row per user. Derived state, updated on every
+ * ledger insert. If this ever drifts from the ledger, the ledger wins and the
+ * cache can be rebuilt via
+ * `SELECT user_id, SUM(delta) FROM shard_events GROUP BY user_id`.
  */
-export const shardBalances = pgTable("shard_balances", {
-  userId: uuid("user_id")
+export const shardBalances = sqliteTable("shard_balances", {
+  userId: text("user_id")
     .primaryKey()
     .references(() => users.id, { onDelete: "cascade" }),
   shards: integer("shards").notNull().default(0),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
 });
 
 /**
@@ -558,13 +674,14 @@ export const shardBalances = pgTable("shard_balances", {
  *
  * We read through a per-isolate cache rather than hitting this table
  * on every server-fn call — config is read hundreds of times more
- * often than it's written. When we add an admin UI for editing it,
- * the cache is invalidated by bumping `updatedAt`.
+ * often than it's written.
  */
-export const economyConfig = pgTable("economy_config", {
+export const economyConfig = sqliteTable("economy_config", {
   key: text("key").primaryKey(),
-  value: jsonb("value").notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  value: text("value", { mode: "json" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -627,20 +744,23 @@ export const packBooksRelations = relations(packBooks, ({ one }) => ({
   }),
 }));
 
-export const collectionCardsRelations = relations(collectionCards, ({ one }) => ({
-  user: one(users, {
-    fields: [collectionCards.userId],
-    references: [users.id],
+export const collectionCardsRelations = relations(
+  collectionCards,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [collectionCards.userId],
+      references: [users.id],
+    }),
+    book: one(books, {
+      fields: [collectionCards.bookId],
+      references: [books.id],
+    }),
+    firstAcquiredFromPack: one(packs, {
+      fields: [collectionCards.firstAcquiredFromPackId],
+      references: [packs.id],
+    }),
   }),
-  book: one(books, {
-    fields: [collectionCards.bookId],
-    references: [books.id],
-  }),
-  firstAcquiredFromPack: one(packs, {
-    fields: [collectionCards.firstAcquiredFromPackId],
-    references: [packs.id],
-  }),
-}));
+);
 
 export const readingEntriesRelations = relations(readingEntries, ({ one }) => ({
   user: one(users, {
@@ -675,5 +795,8 @@ export const shardEventsRelations = relations(shardEvents, ({ one }) => ({
   user: one(users, { fields: [shardEvents.userId], references: [users.id] }),
   book: one(books, { fields: [shardEvents.refBookId], references: [books.id] }),
   pack: one(packs, { fields: [shardEvents.refPackId], references: [packs.id] }),
-  rip: one(packRips, { fields: [shardEvents.refRipId], references: [packRips.id] }),
+  rip: one(packRips, {
+    fields: [shardEvents.refRipId],
+    references: [packRips.id],
+  }),
 }));

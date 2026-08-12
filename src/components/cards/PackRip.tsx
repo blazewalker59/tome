@@ -1,8 +1,40 @@
-import { type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion, useMotionValue, useTransform, type PanInfo } from "motion/react";
-import type { CardData } from "@/lib/cards/types";
-import { packGradient, packBoxShadow, packHeroBoxShadow } from "@/lib/packs/gradient";
+import { useEffect, useRef, useState } from "react";
+import {
+  AnimatePresence,
+  motion,
+  useMotionValue,
+  useTransform,
+} from "motion/react";
 import { Card } from "./Card";
+import type { ReactNode, PointerEvent as ReactPointerEvent } from "react";
+import type { PanInfo, Variants } from "motion/react";
+import type { CardData } from "@/lib/cards/types";
+import {
+  packBoxShadow,
+  packGradient,
+  packHeroBoxShadow,
+} from "@/lib/packs/gradient";
+
+/**
+ * Reveal animation for the card currently on top of the stack.
+ *
+ * `exit` is a function of the swipe direction passed down via `custom`, so the
+ * card flies out the way it was thrown (and floats up when advanced by the
+ * button, where `dir` is 0). Motion only accepts a dynamic variant inside a
+ * `variants` map — an inline `exit={(dir) => ...}` is a type error, because
+ * the direction has nowhere to come from without the variant indirection.
+ */
+const cardVariants: Variants = {
+  initial: { opacity: 0, y: 30, scale: 0.92 },
+  animate: { opacity: 1, y: 0, scale: 1 },
+  exit: (dir: -1 | 0 | 1) => ({
+    opacity: 0,
+    x: dir === 0 ? 0 : dir * 320,
+    y: dir === 0 ? -30 : 0,
+    scale: 0.96,
+    transition: { duration: 0.28, ease: [0.4, 0, 0.2, 1] },
+  }),
+};
 
 export interface PackRipProps {
   cards: ReadonlyArray<CardData>;
@@ -56,7 +88,16 @@ const SWIPE_VELOCITY = 500;
  * Motion's drag-vs-tap heuristic handles the distinction natively: small
  * pointer movements pass through as clicks, larger ones become drags.
  */
-export function PackRip({ cards, packName, packSlug, packGenreTags, packCoverImageUrl, onComplete, onRipAnother, summary }: PackRipProps) {
+export function PackRip({
+  cards,
+  packName,
+  packSlug,
+  packGenreTags,
+  packCoverImageUrl,
+  onComplete,
+  onRipAnother,
+  summary,
+}: PackRipProps) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [revealedCount, setRevealedCount] = useState(0);
   // Direction the current card should fly off-screen: -1 left, 1 right, 0 up.
@@ -76,7 +117,7 @@ export function PackRip({ cards, packName, packSlug, packGenreTags, packCoverIma
   // user never sees an image fade in mid-reveal.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const preloaded: HTMLImageElement[] = [];
+    const preloaded: Array<HTMLImageElement> = [];
     for (const card of cards) {
       const img = new Image();
       img.decoding = "async";
@@ -123,7 +164,12 @@ export function PackRip({ cards, packName, packSlug, packGenreTags, packCoverIma
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center gap-4 px-4 pb-4">
         <div className="card-stage">
-          <PackSealDrag packName={packName} gradient={gradient} coverImageUrl={packCoverImageUrl} onRip={startRip} />
+          <PackSealDrag
+            packName={packName}
+            gradient={gradient}
+            coverImageUrl={packCoverImageUrl}
+            onRip={startRip}
+          />
         </div>
         <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--sea-ink-soft)]">
           Drag across the perforation to rip
@@ -155,7 +201,9 @@ export function PackRip({ cards, packName, packSlug, packGenreTags, packCoverIma
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4">
         <div className="text-center">
-          <p className="display-title text-lg font-bold text-[var(--sea-ink)]">Pack opened</p>
+          <p className="display-title text-lg font-bold text-[var(--sea-ink)]">
+            Pack opened
+          </p>
           {summary && <div className="mt-2">{summary}</div>}
         </div>
         {/* Internal scroll keeps the page itself locked. */}
@@ -197,15 +245,10 @@ export function PackRip({ cards, packName, packSlug, packGenreTags, packCoverIma
               dragConstraints={{ left: 0, right: 0 }}
               dragElastic={0.4}
               onDragEnd={handleDragEnd}
-              initial={{ opacity: 0, y: 30, scale: 0.92 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={(dir: -1 | 0 | 1) => ({
-                opacity: 0,
-                x: dir === 0 ? 0 : dir * 320,
-                y: dir === 0 ? -30 : 0,
-                scale: 0.96,
-                transition: { duration: 0.28, ease: [0.4, 0, 0.2, 1] },
-              })}
+              variants={cardVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
               transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
               className="card-fit cursor-grab active:cursor-grabbing"
             >
@@ -273,7 +316,12 @@ interface PackSealDragProps {
  *     the tear back to 0 so the user can try again.
  *   - Haptic pulses at the commit boundary on supporting devices.
  */
-function PackSealDrag({ packName, gradient, coverImageUrl, onRip }: PackSealDragProps) {
+function PackSealDrag({
+  packName,
+  gradient,
+  coverImageUrl,
+  onRip,
+}: PackSealDragProps) {
   const packRef = useRef<HTMLDivElement | null>(null);
   const hasCover = Boolean(coverImageUrl);
   // 0 = sealed, 1 = fully torn. Drives the visual via useTransform below
@@ -449,7 +497,9 @@ function PackSealDrag({ packName, gradient, coverImageUrl, onRip }: PackSealDrag
           user interacts with the perforation. */}
       <div className="relative flex h-full flex-col items-center justify-center p-6 text-center text-[var(--on-accent)]">
         <div>
-          <h2 className="display-title text-2xl font-bold leading-tight">{packName}</h2>
+          <h2 className="display-title text-2xl font-bold leading-tight">
+            {packName}
+          </h2>
           <p className="mt-2 text-xs uppercase tracking-[0.18em] text-[var(--on-accent)]/70">
             5 books
           </p>

@@ -26,9 +26,10 @@
  *      `src/lib/cards/hardcover.ts` in lockstep.
  */
 
-import { getEnv } from "@/lib/env";
 import type { HardcoverBook } from "@/lib/cards/hardcover";
-import { rankSearchHits, type DemoteReason } from "@/lib/hardcover/rank";
+import type { DemoteReason } from "@/lib/hardcover/rank";
+import { getEnv } from "@/lib/env";
+import { rankSearchHits } from "@/lib/hardcover/rank";
 
 const HARDCOVER_GRAPHQL = "https://api.hardcover.app/v1/graphql";
 
@@ -197,7 +198,9 @@ export async function searchBooks(
 ): Promise<HardcoverSearchResult> {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
-    throw new HardcoverError(`Search query must be at least 2 characters; got "${query}"`);
+    throw new HardcoverError(
+      `Search query must be at least 2 characters; got "${query}"`,
+    );
   }
   const page = Math.max(1, Math.floor(opts.page ?? 1));
   const perPage = Math.max(1, Math.min(50, Math.floor(opts.perPage ?? 20)));
@@ -244,13 +247,14 @@ export function parseSearchResults(
   }
   const env = raw as TypesenseEnvelope;
   const found = typeof env.found === "number" ? env.found : 0;
-  const hits: HardcoverSearchHit[] = [];
+  const hits: Array<HardcoverSearchHit> = [];
   for (const h of env.hits ?? []) {
     const d = h.document ?? {};
     const idRaw = (d as { id?: unknown }).id;
     // Typesense ships ids as strings; Hardcover's `books_by_pk` wants an
     // Int. Convert here so the UI can pass the id straight to ingest.
-    const id = typeof idRaw === "string" ? Number.parseInt(idRaw, 10) : Number(idRaw);
+    const id =
+      typeof idRaw === "string" ? Number.parseInt(idRaw, 10) : Number(idRaw);
     if (!Number.isInteger(id) || id <= 0) continue;
 
     const title = pickString(d, "title");
@@ -381,7 +385,9 @@ async function hardcoverRequest<T>(
       );
     }
     if (!json.data) {
-      throw new HardcoverError(`Hardcover response missing data for ${operationName}`);
+      throw new HardcoverError(
+        `Hardcover response missing data for ${operationName}`,
+      );
     }
     return json.data;
   });

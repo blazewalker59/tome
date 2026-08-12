@@ -7,20 +7,19 @@
  * are camelCase).
  */
 
-import type { Rarity } from './types'
-import type { CardData } from './types'
+import type { CardData, Rarity } from "./types";
 
 export interface BookRow {
-  id: string
-  title: string
-  authors: ReadonlyArray<string>
-  coverUrl: string | null
-  description: string | null
-  pageCount: number | null
-  publishedYear: number | null
-  genre: string
-  rarity: Rarity
-  moodTags: ReadonlyArray<string>
+  id: string;
+  title: string;
+  authors: ReadonlyArray<string>;
+  coverUrl: string | null;
+  description: string | null;
+  pageCount: number | null;
+  publishedYear: number | null;
+  genre: string;
+  rarity: Rarity;
+  moodTags: ReadonlyArray<string>;
 }
 
 export function bookRowToCardData(row: BookRow): CardData {
@@ -34,11 +33,11 @@ export function bookRowToCardData(row: BookRow): CardData {
     coverUrl:
       row.coverUrl ??
       'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>',
-    description: row.description ?? '',
+    description: row.description ?? "",
     pageCount: row.pageCount ?? 0,
     publishedYear: row.publishedYear ?? 0,
     genre: row.genre,
     rarity: row.rarity,
     moodTags: row.moodTags,
-  }
+  };
 }

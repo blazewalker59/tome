@@ -11,16 +11,16 @@
  * can pull it in without creating import cycles. Exact shape mirrors
  * the original inline version in `src/server/collection.ts`.
  */
-export function withErrorLogging<Args extends unknown[], R>(
+export function withErrorLogging<TArgs extends Array<unknown>, TResult>(
   label: string,
-  fn: (...args: Args) => Promise<R>,
-): (...args: Args) => Promise<R> {
-  return async (...args: Args) => {
+  fn: (...args: TArgs) => Promise<TResult>,
+): (...args: TArgs) => Promise<TResult> {
+  return async (...args: TArgs) => {
     try {
       return await fn(...args);
     } catch (err) {
       const cause = (err as { cause?: unknown }).cause;
-      // eslint-disable-next-line no-console
+
       console.error(
         `[${label}]`,
         err instanceof Error ? err.message : err,

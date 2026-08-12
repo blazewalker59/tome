@@ -28,7 +28,9 @@ describe("parseCollectionSearch", () => {
   it("ignores non-string param types", () => {
     // Query params can technically arrive as arrays (?view=a&view=b)
     // or other junk from malicious input; we only trust strings.
-    expect(parseCollectionSearch({ view: 42, sort: { nested: "yes" } })).toEqual({});
+    expect(
+      parseCollectionSearch({ view: 42, sort: { nested: "yes" } }),
+    ).toEqual({});
   });
 
   it("keeps the search query, dropping empty/whitespace-only values", () => {
