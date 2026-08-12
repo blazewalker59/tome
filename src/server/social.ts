@@ -1237,4 +1237,12 @@ export const _internals = {
   sortRipCards,
   RARITY_ORDER,
   SUGGESTED_CREATOR_LOOKBACK_DAYS,
+  // The three feed loaders, exposed for the D1 integration tests. They carry
+  // the queries that changed most in the Postgres -> SQLite migration —
+  // json_each in place of LATERAL unnest, json_group_array in place of
+  // jsonb_agg — and the enclosing server functions can't be invoked from a
+  // test without TanStack's request context, so the loaders are the seam.
+  loadFeedSuggestions,
+  loadPackPublishedEvents,
+  loadLegendaryPullEvents,
 };
