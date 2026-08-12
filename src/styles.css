@@ -527,6 +527,66 @@ a {
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--lagoon) 24%, transparent);
 }
 
+/*
+ * iOS focus zoom, fixed once for every text-entry element.
+ *
+ * Mobile Safari zooms the layout viewport whenever a focused input, textarea,
+ * or select renders below 16px — and it does NOT zoom back out on blur, so the
+ * user is left stranded mid-page having to pinch out by hand. Every sub-16px
+ * field is a small trap of this kind.
+ *
+ * Done centrally rather than by sprinkling `text-base sm:text-sm` across the
+ * ~35 affected elements. The per-element approach is what let this spread in
+ * the first place: every new input silently reintroduces it, and nothing
+ * fails when someone forgets.
+ *
+ * Targeted by ELEMENT rather than by the shared `.input-field` class. Three
+ * text-entry elements don't carry that class, and giving it to them was not
+ * the right fix: two are checkboxes (which cannot zoom, and which would gain
+ * an input background and border they should not have), and the third is the
+ * rarity `<select>`, styled as a colored pill that `.input-field` would
+ * overwrite. Selecting the elements themselves covers all of them, and —
+ * more importantly — covers every input added from here on without anyone
+ * having to remember a class.
+ *
+ * The `:not(...)` list is the input types iOS never zooms for. They are
+ * excluded rather than swept in because forcing 16px on a checkbox or a
+ * range slider changes its rendered size for no benefit.
+ *
+ * WHY THIS OVERRIDES THE UTILITY CLASSES, since it is not obvious and a
+ * refactor could quietly break it: this rule is UNLAYERED, while Tailwind v4
+ * emits `text-sm` / `text-xs` / `text-[10px]` into `@layer utilities`.
+ * Unlayered normal declarations outrank every layered one regardless of
+ * specificity — which is why a bare element selector beats a class here, and
+ * why no `!important` is needed. Wrapping this in a layer would silently
+ * reverse it. Verified against the compiled CSS, and asserted by
+ * src/__tests__/routes/ios-focus-zoom.test.ts.
+ *
+ * Scoped below `sm` (Tailwind's 40rem) on purpose. An unscoped rule would
+ * also flatten the deliberately dense desktop sizing — down to `text-[10px]`
+ * on some admin selects — which is a visual regression, not a fix.
+ *
+ * `maximum-scale=1` / `user-scalable=no` would suppress the symptom too, but
+ * it disables pinch-zoom for everyone and fails WCAG 1.4.4. The viewport meta
+ * in src/routes/__root.tsx stays as it is.
+ */
+@media (max-width: 39.99rem) {
+  input:not(
+    [type="checkbox"],
+    [type="radio"],
+    [type="range"],
+    [type="color"],
+    [type="submit"],
+    [type="button"],
+    [type="reset"],
+    [type="file"]
+  ),
+  textarea,
+  select {
+    font-size: 1rem;
+  }
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
